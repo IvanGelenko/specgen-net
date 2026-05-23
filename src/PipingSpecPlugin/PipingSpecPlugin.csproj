@@ -1,0 +1,65 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- AutoCAD 2026 ships .NET 8 managed wrappers (AcCoreMgd Version=25.1.0.0
+         references System.Runtime 8.0.0.0). Match it exactly: anything older
+         fails at load with CS1705 / FileLoadException at runtime. -->
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputType>Library</OutputType>
+    <RootNamespace>PipingSpecPlugin</RootNamespace>
+    <AssemblyName>PipingSpecPlugin</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <!-- net8.0-windows already means Windows-only; silence the platform
+         compatibility analyzer for WinForms / WPF call sites. -->
+    <NoWarn>CA1416</NoWarn>
+    <!-- AutoCAD loads our DLL into its own process; suppress its private deps. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+  </PropertyGroup>
+
+  <!-- Override with: msbuild /p:AcadInstallDir="D:\Autodesk\AutoCAD 2026" -->
+  <PropertyGroup>
+    <AcadInstallDir Condition=" '$(AcadInstallDir)' == '' ">C:\Program Files\Autodesk\AutoCAD 2026</AcadInstallDir>
+    <Plnt3DDir>$(AcadInstallDir)\PLNT3D</Plnt3DDir>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Core AutoCAD managed API. Private=False so the DLLs aren't copied
+         into our output: AutoCAD already loads its own copy. -->
+    <Reference Include="AcCoreMgd">
+      <HintPath>$(AcadInstallDir)\AcCoreMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcDbMgd">
+      <HintPath>$(AcadInstallDir)\AcDbMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="AcMgd">
+      <HintPath>$(AcadInstallDir)\AcMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+
+    <!-- Plant 3D managed APIs. PnP.dll is native ARX (no metadata), do not
+         reference it. The *Mgd suffix denotes managed wrappers. -->
+    <Reference Include="PnP3dMain">
+      <HintPath>$(Plnt3DDir)\PnP3dMain.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnP3dProjectPartsMgd">
+      <HintPath>$(Plnt3DDir)\PnP3dProjectPartsMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnP3dObjectsMgd">
+      <HintPath>$(Plnt3DDir)\PnP3dObjectsMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

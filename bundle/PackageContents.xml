@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ApplicationPackage SchemaVersion="1.0"
+                    AutodeskProduct="AutoCAD"
+                    ProductType="Application"
+                    Name="PipingSpecPlugin"
+                    AppVersion="__APPVERSION__"
+                    Description="Piping spec generator for Plant 3D"
+                    Author="In-house"
+                    ProductCode="{B5E20C42-5C4D-4F1B-9B7C-1D5E2B0A8C03}"
+                    UpgradeCode="{B5E20C42-5C4D-4F1B-9B7C-1D5E2B0A8C04}">
+
+  <CompanyDetails Name="In-house" Email="" Phone="" Url=""/>
+
+  <Components>
+    <RuntimeRequirements OS="Win64"
+                         Platform="AutoCAD*"
+                         SeriesMin="R25.0"
+                         SeriesMax="R30.0"
+                         SupportPath="./Contents/Windows/"/>
+    <ComponentEntry AppName="PipingSpecPlugin"
+                    ModuleName="./Contents/Windows/PipingSpecPlugin.dll"
+                    AppDescription="Piping specification generator"
+                    LoadOnAutoCADStartup="True"
+                    PerDocument="True"/>
+  </Components>
+</ApplicationPackage>

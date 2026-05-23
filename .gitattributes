@@ -1,0 +1,16 @@
+# Windows-specific tools that misparse LF
+*.cmd  text eol=crlf
+*.bat  text eol=crlf
+*.iss  text eol=crlf
+*.xml  text eol=crlf
+*.sln  text eol=crlf
+
+# Plain text
+VERSION text eol=lf
+*.md    text
+
+# Binary
+*.docx binary
+*.png  binary
+*.dll  binary
+*.exe  binary

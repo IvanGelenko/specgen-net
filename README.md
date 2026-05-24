@@ -9,7 +9,8 @@ talks to `Piping.dcf` directly via SQLite; this edition talks to the live
 Plant 3D in-memory model through the `PnP*Mgd` APIs, so it sees unsaved
 changes and can register a ribbon button natively without `.cuix` plumbing.
 
-Status: **early scaffold**. Available commands: `PSPING`, `GENSPEC`.
+Status: **early scaffold**. Available commands: `PSPING`, `GENSPEC`,
+`LISTPARTS`, `SPECUI`.
 
 ## Targets
 
@@ -44,6 +45,21 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
    name, folder, `.xml` file, and the current drawing path. If no Plant 3D
    project is open it prints a `No Plant 3D project is currently open`
    notice — that's expected on a plain AutoCAD drawing.
+6. Type `LISTPARTS` → the editor should print the total row count for the
+   active drawing followed by a breakdown by category (top-level class)
+   and the top-15 full class names. Empty/non-Plant 3D drawings get an
+   explanatory notice instead.
+7. Type `SPECUI` → a modal WPF window opens with the same data as
+   `LISTPARTS` shown in two trees. Close it with the **Close** button or
+   <kbd>Esc</kbd>. This is a smoke test of WPF in-process under AutoCAD,
+   not the final UI.
+
+> **Rebuild while AutoCAD is open?** AutoCAD locks `PipingSpecPlugin.dll`
+> for the rest of the session after `NETLOAD`, so a second `dotnet build`
+> into `bin\Release\` will fail with MSB3026. Either close AutoCAD before
+> rebuilding, or pass `-p:OutDir=bin/Release-vNEXT/` and `NETLOAD` the
+> versioned copy. AutoCAD doesn't notice you replaced the file — you
+> *must* restart it to reload an updated DLL.
 
 ## Roadmap
 

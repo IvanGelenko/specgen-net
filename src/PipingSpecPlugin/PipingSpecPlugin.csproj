@@ -28,6 +28,8 @@
   <PropertyGroup>
     <AcadInstallDir Condition=" '$(AcadInstallDir)' == '' ">C:\Program Files\Autodesk\AutoCAD 2026</AcadInstallDir>
     <Plnt3DDir>$(AcadInstallDir)\PLNT3D</Plnt3DDir>
+    <!-- PnPDataLinks / PnPDataObjects live directly under the AutoCAD root,
+         NOT under PLNT3D. Don't conflate them when adding new references. -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -65,6 +67,14 @@
     </Reference>
     <Reference Include="PnPProjectManagerMgd">
       <HintPath>$(Plnt3DDir)\PnPProjectManagerMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnPDataLinks">
+      <HintPath>$(AcadInstallDir)\PnPDataLinks.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnPDataObjects">
+      <HintPath>$(AcadInstallDir)\PnPDataObjects.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

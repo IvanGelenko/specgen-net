@@ -48,11 +48,15 @@ namespace PipingSpecPlugin.Commands
             // will pick "whole project" anyway. If they pick "active dwg"
             // we filter the records in-memory rather than re-reading.
             editor.WriteMessage("\n[WRITESPEC] Scanning project...");
-            var (projectRecords, ownedPnPIds) = CollectFromProject(project, editor);
-            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project"
-                + (ownedPnPIds.Count > 0
-                    ? $"; {ownedPnPIds.Count} owned by equipment (will be excluded)."
-                    : "."));
+            var (projectRecords, ownedPnPIds, topology) = CollectFromProject(project, editor);
+            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
+
+            // Discover valve companions up-front so we can show the user
+            // the count before they generate. The actual exclusion happens
+            // only when the checkbox is on, but we always run the search.
+            var companionIds = ValveCompanionFinder.Discover(projectRecords, topology);
+            if (companionIds.Count > 0)
+                editor.WriteMessage($"\n[WRITESPEC] Valve-companion candidates found: {companionIds.Count} (flange/gasket/bolt-set tuples).");
 
             // ProjectFacts drives the picker's checkbox counts. Strip the
             // owned-by-equipment rows now so what the user sees in the UI
@@ -96,6 +100,7 @@ namespace PipingSpecPlugin.Commands
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
                 EquipmentOwnedPnPIds = ownedPnPIds,
+                ValveCompanionPnPIds = companionIds,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
@@ -171,7 +176,8 @@ namespace PipingSpecPlugin.Commands
 
         // --- project-wide collection -------------------------------------
 
-        static (List<PartRecord> records, HashSet<int> ownedPnPIds) CollectFromProject(
+        static (List<PartRecord> records, HashSet<int> ownedPnPIds,
+                Dictionary<int, List<int>> topology) CollectFromProject(
             PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
         {
             Project piping = null;
@@ -181,7 +187,8 @@ namespace PipingSpecPlugin.Commands
             if (piping == null)
             {
                 editor.WriteMessage("\n[WRITESPEC] Project has no Piping discipline.");
-                return (new List<PartRecord>(), new HashSet<int>());
+                return (new List<PartRecord>(), new HashSet<int>(),
+                        new Dictionary<int, List<int>>());
             }
 
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
@@ -193,6 +200,7 @@ namespace PipingSpecPlugin.Commands
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
             var all = new List<PartRecord>();
             var owned = new HashSet<int>();
+            var topology = new Dictionary<int, List<int>>();
             foreach (var f in dwgFiles)
             {
                 string path = null;
@@ -217,13 +225,23 @@ namespace PipingSpecPlugin.Commands
                     }
                     all.AddRange(result.Records);
                     foreach (var id in result.EquipmentOwnedPnPIds) owned.Add(id);
+                    foreach (var kv in result.Topology)
+                    {
+                        // Different drawings can describe the same part
+                        // with disjoint neighbours; union them.
+                        if (!topology.TryGetValue(kv.Key, out var existing))
+                            topology[kv.Key] = new List<int>(kv.Value);
+                        else
+                            foreach (var id in kv.Value)
+                                if (!existing.Contains(id)) existing.Add(id);
+                    }
                 }
                 catch (System.Exception ex)
                 {
                     editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}");
                 }
             }
-            return (all, owned);
+            return (all, owned, topology);
         }
     }
 }

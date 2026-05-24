@@ -29,6 +29,11 @@ namespace PipingSpecPlugin.Spec
         // — they belong to the vessel/pump, not the piping. Populated by
         // PartReader; empty if reader didn't see any equipment.
         public ISet<int> EquipmentOwnedPnPIds = null;
+
+        // PnPIDs flagged by ValveCompanionFinder as the matching flange/
+        // gasket/bolt set of a valve. Only excluded when
+        // ExcludeValveCompanions is also true.
+        public ISet<int> ValveCompanionPnPIds = null;
     }
 
     /// <summary>
@@ -81,6 +86,14 @@ namespace PipingSpecPlugin.Spec
                 // AssetOwnership SQLite table.
                 if (_opts.EquipmentOwnedPnPIds != null
                     && _opts.EquipmentOwnedPnPIds.Contains(r.PnPID))
+                    continue;
+
+                // Valve companions (flange + gasket + bolt set that sit
+                // immediately on either side of a valve) — only excluded
+                // when the user ticks the matching checkbox.
+                if (_opts.ExcludeValveCompanions
+                    && _opts.ValveCompanionPnPIds != null
+                    && _opts.ValveCompanionPnPIds.Contains(r.PnPID))
                     continue;
 
                 var category = NormalizeCategory(r);

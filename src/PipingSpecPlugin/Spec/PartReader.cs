@@ -15,6 +15,12 @@ namespace PipingSpecPlugin.Spec
     {
         public List<PartRecord> Records = new();
         public HashSet<int> EquipmentOwnedPnPIds = new();
+        // PnPID -> neighbouring PnPIDs through P3dPartConnection. Built
+        // by calling DataLinksManager.GetRelatedRowIds on every row;
+        // includes connectors (Buttweld, Universal) as standalone nodes
+        // so valve-companion discovery can walk Valve → Connector →
+        // Flange the same way the Python edition's SQL does.
+        public Dictionary<int, List<int>> Topology = new();
     }
 
     /// <summary>
@@ -52,23 +58,35 @@ namespace PipingSpecPlugin.Spec
                 if (rec == null) continue;
                 result.Records.Add(rec);
 
-                // Equipment ⇒ everything related to it is "owned" and
-                // should be excluded from the spec (nozzles, manways,
-                // internal supports). The Python edition does this via
-                // SELECT Owned FROM AssetOwnership; on managed API we
-                // pull related rowIds directly.
+                // Build the topology graph: every row's neighbours through
+                // P3dPartConnection. This is what valve-companion discovery
+                // walks (Valve → Connector → Flange). GetRelatedRowIds is
+                // a best-effort call — if it throws, the part just becomes
+                // a graph leaf and detection will fall back to fallback_key.
+                try
+                {
+                    var related = dlm.GetRelatedRowIds(rowId);
+                    if (related != null)
+                    {
+                        var ids = new List<int>();
+                        foreach (int id in related)
+                            if (id != rowId) ids.Add(id);
+                        if (ids.Count > 0) result.Topology[rowId] = ids;
+                    }
+                }
+                catch { /* best-effort */ }
+
+                // Equipment-owned exclusion (manways, internal supports
+                // attached to vessels). Plant 3D doesn't always populate
+                // a separate "Equipment" PartCategory — vessels often go
+                // through with empty/null category. The companion-flange
+                // exclusion handled below catches the case the user cares
+                // about most (nozzle-style flanges attached to valves or
+                // equipment), so this path stays as a safety net only.
                 if (string.Equals(rec.PartCategory, "Equipment",
                                   System.StringComparison.OrdinalIgnoreCase))
                 {
-                    try
-                    {
-                        var related = dlm.GetRelatedRowIds(rowId);
-                        if (related != null)
-                            foreach (int ownedId in related)
-                                if (ownedId != rowId)
-                                    result.EquipmentOwnedPnPIds.Add(ownedId);
-                    }
-                    catch { /* relationship lookup is best-effort */ }
+                    CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds);
                 }
             }
             return result;
@@ -78,6 +96,55 @@ namespace PipingSpecPlugin.Spec
         // that don't care about the owned-by-equipment set.
         public static IEnumerable<PartRecord> ReadRows(Database db)
             => Read(db).Records;
+
+        /// <summary>
+        /// Populate <paramref name="ownedIds"/> with PnPIDs the given
+        /// equipment row owns. Tries the AssetOwnership relationship
+        /// explicitly first, then falls back to the bare related-rows
+        /// query — Plant 3D's wrappers don't expose the schema so we
+        /// can't pick a single overload with certainty.
+        /// </summary>
+        static void CollectAssetOwnership(DataLinksManager dlm, int rowId, HashSet<int> ownedIds)
+        {
+            // Try the explicit relationship overload with several names
+            // it could plausibly be registered under. AcceptedRelations
+            // is empirical — Plant 3D's docs don't list them and the
+            // taxonomy varies between releases.
+            string[] candidates =
+            {
+                "AssetOwnership", "EquipmentOwnership",
+                "PnPRelationshipDef:AssetOwnership",
+            };
+            foreach (var rel in candidates)
+            {
+                try
+                {
+                    var related = dlm.GetRelatedRowIds("EngineeringItems",
+                                                       "EngineeringItems",
+                                                       rowId, rel);
+                    if (related != null && related.Count > 0)
+                    {
+                        foreach (int id in related)
+                            if (id != rowId) ownedIds.Add(id);
+                        return;
+                    }
+                }
+                catch { /* try the next candidate */ }
+            }
+
+            // Fallback: bare related-rows. Includes other connection
+            // types but is better than nothing — at worst we exclude a
+            // couple of parts that touch the vessel through pipe runs,
+            // which still belong with the vessel anyway.
+            try
+            {
+                var related = dlm.GetRelatedRowIds(rowId);
+                if (related == null) return;
+                foreach (int id in related)
+                    if (id != rowId) ownedIds.Add(id);
+            }
+            catch { }
+        }
 
         static PartRecord BuildRecord(int rowId,
             List<System.Collections.Generic.KeyValuePair<string, string>> props)
@@ -116,6 +183,15 @@ namespace PipingSpecPlugin.Spec
                 LineNumberTag = Get("LineNumberTag"),
                 ContentIsoSymbolDefinition = Get("ContentIsoSymbolDefinition"),
                 EquipTag = Get("Tag"),
+                PositionX = Get("Position X"),
+                PositionY = Get("Position Y"),
+                PositionZ = Get("Position Z"),
+                CogX = Get("COG X"),
+                CogY = Get("COG Y"),
+                CogZ = Get("COG Z"),
+                PnPClassName = Get("PnPClassName"),
+                PressureClass = Get("PressureClass"),
+                Facing = Get("Facing"),
             };
         }
     }

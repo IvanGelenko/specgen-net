@@ -31,5 +31,27 @@ namespace PipingSpecPlugin.Spec
         public string LineNumberTag;
         public string ContentIsoSymbolDefinition;  // used to detect supports
         public string EquipTag;        // for Equipment naming; rarely populated outside Equipment
+
+        // Position / centre-of-gravity coordinates as raw strings from
+        // DataLinks. Used by valve-companion detection for the 3D
+        // proximity match — keep them strings, the discovery code parses
+        // them on demand only when needed.
+        public string PositionX;
+        public string PositionY;
+        public string PositionZ;
+        public string CogX;
+        public string CogY;
+        public string CogZ;
+
+        // Filled by PnPClassName (e.g. "Pipe", "P3dConnector", "Equipment");
+        // we need this in addition to PartCategory to recognise connectors
+        // — their PartCategory is empty but the class is "P3dConnector".
+        public string PnPClassName;
+
+        // Optional pressure class / facing (used by valve-companion fallback
+        // match — Python's "fallback_key" relies on Spec + NominalDiameter,
+        // but we keep these around for future refinements).
+        public string PressureClass;
+        public string Facing;
     }
 }

@@ -8,11 +8,13 @@ namespace PipingSpecPlugin.Spec
 {
     public class SpecBuilderOptions
     {
-        // null = include all statuses (default for the .NET edition since
-        // we don't have the GUI status picker yet); empty = include none;
-        // non-empty = include only those listed. Use null until the user
-        // narrows it explicitly via settings.
+        // For Statuses/Categories/Lines, null = no filter (include all).
+        // For Categories use SpecConstants.NullCategory to include rows
+        // with empty PartCategory; for Lines use SpecConstants.NullLine
+        // to include rows not attached to any LineGroup.
         public IEnumerable<string> Statuses = null;
+        public IEnumerable<string> Categories = null;
+        public IEnumerable<string> Lines = null;
         public bool GroupByLine = false;
         public bool ExcludeEquipment = true;
         public bool ExcludeConnectors = true;
@@ -49,6 +51,12 @@ namespace PipingSpecPlugin.Spec
             if (_opts.Statuses != null)
                 statusSet = new HashSet<string>(_opts.Statuses,
                                                 StringComparer.OrdinalIgnoreCase);
+            HashSet<string> catSet = null;
+            if (_opts.Categories != null)
+                catSet = new HashSet<string>(_opts.Categories, StringComparer.Ordinal);
+            HashSet<string> lineSet = null;
+            if (_opts.Lines != null)
+                lineSet = new HashSet<string>(_opts.Lines, StringComparer.Ordinal);
 
             var buckets = new Dictionary<BucketKey, Bucket>();
             var seenPids = new Dictionary<int, string>();   // pid -> first-seen LineTag
@@ -65,12 +73,22 @@ namespace PipingSpecPlugin.Spec
                 if (_opts.ExcludeConnectors && IsConnector(category, r)) continue;
                 if (string.IsNullOrEmpty(category)) continue;
 
+                // Category filter — using Plant 3D's category key (not the
+                // localized label). NullCategory sentinel lets the user
+                // include rows where PartCategory is empty.
+                if (catSet != null)
+                {
+                    var catKey = string.IsNullOrEmpty(category) ? SpecConstants.NullCategory : category;
+                    if (!catSet.Contains(catKey)) continue;
+                }
+
                 // Dedup by PnPID. A part can be linked to multiple lines
                 // (multi-membership in P3dLineGroupPartRelationship); we
                 // count it once but warn the user.
                 var rawLine = string.IsNullOrEmpty(r.LineNumberTag)
                     ? SpecConstants.NullLine
                     : r.LineNumberTag;
+                if (lineSet != null && !lineSet.Contains(rawLine)) continue;
                 var currentLine = _opts.GroupByLine ? rawLine : "";
                 if (seenPids.TryGetValue(r.PnPID, out var oldLine))
                 {

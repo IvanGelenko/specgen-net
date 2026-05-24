@@ -2,33 +2,31 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Windows.Interop;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.PlantInstance;
 using Autodesk.ProcessPower.ProjectManager;
 using PipingSpecPlugin.Settings;
 using PipingSpecPlugin.Spec;
+using PipingSpecPlugin.UI;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using WinForms = System.Windows.Forms;
 
 namespace PipingSpecPlugin.Commands
 {
     /// <summary>
-    /// Generates a full piping spec .docx from the active Plant 3D
-    /// project. By default the scope is the whole project (matches the
-    /// Python edition's default); pass <c>WRITESPECDWG</c> instead to
-    /// limit it to the active drawing. The template path comes from the
-    /// user's settings if set, otherwise the user is prompted.
+    /// Entry point users invoke from the ribbon. Reads all PartRecords
+    /// from the current project once, opens the picker so the user can
+    /// choose statuses / categories / lines / exclude flags, then runs
+    /// SpecRowBuilder + SpecTemplateWriter with the picked filters.
+    /// Saves user choices back to settings.json so the picker remembers
+    /// the last selection.
     /// </summary>
     public class WriteSpecCommand
     {
         [CommandMethod("WRITESPEC")]
-        public void RunProject() => Run(projectScope: true);
-
-        [CommandMethod("WRITESPECDWG")]
-        public void RunActiveDwg() => Run(projectScope: false);
-
-        static void Run(bool projectScope)
+        public void Run()
         {
             var editor = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
             if (editor == null) return;
@@ -41,45 +39,55 @@ namespace PipingSpecPlugin.Commands
             }
 
             var settings = PluginSettings.Load();
-            var templatePath = ResolveTemplatePath(settings);
-            if (string.IsNullOrEmpty(templatePath))
+            var activeDoc = AcadApp.DocumentManager.MdiActiveDocument;
+            var dwgLeaf = activeDoc != null && !string.IsNullOrEmpty(activeDoc.Name)
+                ? Path.GetFileName(activeDoc.Name) : "";
+
+            // Read everything once: the picker needs project-level facts
+            // (statuses / categories / lines with counts), and most users
+            // will pick "whole project" anyway. If they pick "active dwg"
+            // we filter the records in-memory rather than re-reading.
+            editor.WriteMessage("\n[WRITESPEC] Scanning project...");
+            var projectRecords = CollectFromProject(project, editor).ToList();
+            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
+
+            var facts = ProjectFacts.From(projectRecords);
+
+            var picker = new SpecPickerWindow(facts, project.Name, dwgLeaf,
+                                              settings,
+                                              activeDrawingAvailable: !string.IsNullOrEmpty(dwgLeaf));
+            new WindowInteropHelper(picker).Owner = AcadApp.MainWindow.Handle;
+            var ok = picker.ShowDialog();
+            if (ok != true)
             {
-                editor.WriteMessage("\n[WRITESPEC] Aborted — no template selected.");
+                editor.WriteMessage("\n[WRITESPEC] Cancelled.");
                 return;
             }
+            var result = picker.Result;
 
-            editor.WriteMessage($"\n[WRITESPEC] Template: {templatePath}");
-            editor.WriteMessage(projectScope
-                ? "\n[WRITESPEC] Scope: whole project"
-                : "\n[WRITESPEC] Scope: active drawing only");
-
-            var parts = (projectScope
-                ? CollectFromProject(project, editor)
-                : CollectFromActiveDrawing(editor)).ToList();
-
-            // Histogram of statuses — helps the user notice when a parts'
-            // bulk sits under a status they didn't intend to filter out.
-            var statusHist = parts.GroupBy(p => string.IsNullOrEmpty(p.Status) ? "<empty>" : p.Status)
-                                   .OrderByDescending(g => g.Count())
-                                   .ToList();
-            editor.WriteMessage($"\n[WRITESPEC] {parts.Count} raw row(s); status histogram:");
-            foreach (var g in statusHist)
-                editor.WriteMessage($"\n    {g.Count(),6}  {g.Key}");
+            // Narrow the input set if the user picked active-drawing scope.
+            // We do this in-memory rather than re-running PartReader so the
+            // counts the user saw in the picker line up with what we feed
+            // to the builder.
+            IEnumerable<PartRecord> input = projectRecords;
+            if (result.Scope == "dwg" && activeDoc != null)
+            {
+                var dwgRecords = PartReader.ReadRows(activeDoc.Database).ToList();
+                var activeIds = new HashSet<int>(dwgRecords.Select(r => r.PnPID));
+                input = projectRecords.Where(r => activeIds.Contains(r.PnPID));
+            }
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
             {
-                // settings.Statuses == null means "include all statuses",
-                // which is the .NET edition's default until we ship the
-                // GUI status picker that mirrors the Python edition's
-                // checkboxes.
-                Statuses = settings.Statuses,
-                GroupByLine = settings.GroupByLine,
+                Statuses = result.Statuses,
+                Categories = result.Categories,
+                Lines = result.Lines,
+                GroupByLine = result.GroupByLine,
+                ExcludeEquipment = result.ExcludeEquipment,
+                ExcludeConnectors = result.ExcludeConnectors,
+                ExcludeValveCompanions = result.ExcludeValveCompanions,
             });
-            if (settings.Statuses == null)
-                editor.WriteMessage("\n[WRITESPEC] Status filter: all statuses included");
-            else
-                editor.WriteMessage("\n[WRITESPEC] Status filter: " + string.Join(", ", settings.Statuses));
-            var specRows = builder.Build(parts);
+            var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
                 editor.WriteMessage("\n  [WARN] " + w);
 
@@ -95,8 +103,8 @@ namespace PipingSpecPlugin.Commands
             string outputPath;
             using (var dlg = new WinForms.SaveFileDialog
             {
-                Title = "Save spec output",
-                Filter = "Word document (*.docx)|*.docx",
+                Title = "Сохранить спецификацию",
+                Filter = "Word документ (*.docx)|*.docx",
                 FileName = $"{project.Name}.docx",
                 InitialDirectory = initialDir,
             })
@@ -107,8 +115,8 @@ namespace PipingSpecPlugin.Commands
 
             try
             {
-                SpecTemplateWriter.Write(templatePath, outputPath, specRows,
-                                         groupByLine: settings.GroupByLine);
+                SpecTemplateWriter.Write(result.TemplatePath, outputPath, specRows,
+                                         groupByLine: result.GroupByLine);
             }
             catch (System.Exception ex)
             {
@@ -117,39 +125,41 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
+            // Persist user prefs after a successful run only — a failed
+            // run should not pin broken selections (matches Python).
             settings.LastOutputDir = Path.GetDirectoryName(outputPath);
-            settings.TemplatePath = templatePath;
+            settings.TemplatePath = result.TemplatePath;
+            settings.Scope = result.Scope;
+            settings.Statuses = result.Statuses?.ToArray();
+            settings.Categories = result.Categories?.ToArray();
+            settings.Lines = result.Lines?.ToArray();
+            settings.GroupByLine = result.GroupByLine;
+            settings.ExcludeValveCompanions = result.ExcludeValveCompanions;
+            settings.ExcludeEquipment = result.ExcludeEquipment;
+            settings.ExcludeConnectors = result.ExcludeConnectors;
             settings.Save();
 
             editor.WriteMessage($"\n[WRITESPEC] Wrote {specRows.Count} spec row(s) to {outputPath}");
+            TryOpenInWord(outputPath, editor);
         }
 
-        // --- template resolution ----------------------------------------
-
-        static string ResolveTemplatePath(PluginSettings settings)
+        static void TryOpenInWord(string path, Autodesk.AutoCAD.EditorInput.Editor editor)
         {
-            if (!string.IsNullOrEmpty(settings.TemplatePath)
-                && File.Exists(settings.TemplatePath))
-                return settings.TemplatePath;
-
-            using var dlg = new WinForms.OpenFileDialog
+            try
             {
-                Title = "Select spec template (.docx)",
-                Filter = "Word template (*.docx)|*.docx",
-                CheckFileExists = true,
-            };
-            return dlg.ShowDialog() == WinForms.DialogResult.OK ? dlg.FileName : null;
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = path,
+                    UseShellExecute = true,
+                });
+            }
+            catch (System.Exception ex)
+            {
+                editor.WriteMessage($"\n[WRITESPEC] Could not auto-open: {ex.Message}");
+            }
         }
 
-        // --- data collection --------------------------------------------
-
-        static IEnumerable<PartRecord> CollectFromActiveDrawing(
-            Autodesk.AutoCAD.EditorInput.Editor editor)
-        {
-            var doc = AcadApp.DocumentManager.MdiActiveDocument;
-            if (doc == null) return Array.Empty<PartRecord>();
-            return PartReader.ReadRows(doc.Database).ToList();
-        }
+        // --- project-wide collection (re-used from LISTPROJECT) -----------
 
         static IEnumerable<PartRecord> CollectFromProject(
             PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
@@ -169,8 +179,6 @@ namespace PipingSpecPlugin.Commands
                 .Where(f => !string.IsNullOrEmpty(f.Name)
                             && f.Name.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
                 .ToList();
-
-            editor.WriteMessage($"\n[WRITESPEC] Scanning {dwgFiles.Count} drawing(s)...");
 
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
             var all = new List<PartRecord>();

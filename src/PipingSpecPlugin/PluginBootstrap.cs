@@ -65,23 +65,17 @@ namespace PipingSpecPlugin
 
             var tab = new RibbonTab
             {
-                Title = "Spec Generator",
+                Title = "Спецификация",
                 Id = tabId,
             };
 
-            var panelSource = new RibbonPanelSource { Title = "Spec" };
-            panelSource.Items.Add(MakeButton("Spec (project)", "WRITESPEC",
-                "Write a piping specification .docx for the whole project."));
-            panelSource.Items.Add(MakeButton("Spec (drawing)", "WRITESPECDWG",
-                "Write a piping specification .docx for the active drawing only."));
-            panelSource.Items.Add(MakeButton("Template...", "SPECTEMPLATE",
-                "Pick or change the spec .docx template used for generation."));
-            panelSource.Items.Add(MakeButton("Preview", "SPECUI",
-                "Show a quick preview of category counts."));
-            panelSource.Items.Add(MakeButton("Project info", "GENSPEC",
-                "Print the active Plant 3D project name and paths."));
-            panelSource.Items.Add(MakeButton("Project totals", "LISTPROJECT",
-                "Tally part counts across every drawing in the project."));
+            var panelSource = new RibbonPanelSource { Title = "Спецификация" };
+            panelSource.Items.Add(MakeButton("Сгенерировать", "WRITESPEC",
+                "Открыть окно выбора фильтров и сгенерировать спецификацию (.docx)."));
+            panelSource.Items.Add(MakeButton("Информация", "GENSPEC",
+                "Показать имя активного проекта Plant 3D и пути к файлам."));
+            panelSource.Items.Add(MakeButton("Подсчёт партов", "LISTPROJECT",
+                "Вывести в редактор количество партов по категориям для всего проекта."));
 
             tab.Panels.Add(new RibbonPanel { Source = panelSource });
             ribbon.Tabs.Add(tab);

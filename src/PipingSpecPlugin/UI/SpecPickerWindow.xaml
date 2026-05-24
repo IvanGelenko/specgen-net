@@ -1,0 +1,117 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PipingSpecPlugin.UI.SpecPickerWindow"
+        Title="Генератор спецификации Plant 3D"
+        Height="700" Width="1100"
+        MinHeight="600" MinWidth="900"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        FontFamily="Segoe UI" FontSize="13">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />  <!-- context + scope -->
+            <RowDefinition Height="Auto" />  <!-- template -->
+            <RowDefinition Height="*" />     <!-- two-column body -->
+            <RowDefinition Height="Auto" />  <!-- bottom bar -->
+        </Grid.RowDefinitions>
+
+        <!-- Row 0: project context + scope -->
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Grid.Column="0" Header="Контекст" Padding="10" Margin="0,0,5,0">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Проект: " FontWeight="Bold"/>
+                        <TextBlock x:Name="ProjectNameText"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="Чертёж: " FontWeight="Bold"/>
+                        <TextBlock x:Name="DwgNameText"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Область выборки" Padding="10" Margin="5,0,0,0">
+                <StackPanel>
+                    <RadioButton x:Name="ScopeProject" GroupName="Scope" Content="Весь проект" IsChecked="True"/>
+                    <RadioButton x:Name="ScopeDrawing" GroupName="Scope" Content="Только текущий чертёж" Margin="0,4,0,0"/>
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+
+        <!-- Row 1: template -->
+        <GroupBox Grid.Row="1" Header="Шаблон спецификации" Padding="10" Margin="0,0,0,10">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" x:Name="BrowseTemplateButton"
+                        Content="Обзор..." Width="80" Margin="8,0,0,0"
+                        Click="BrowseTemplateButton_Click"/>
+                <TextBox x:Name="TemplatePathBox" VerticalContentAlignment="Center"/>
+            </DockPanel>
+        </GroupBox>
+
+        <!-- Row 2: left = filters, right = lines -->
+        <Grid Grid.Row="2" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0" Margin="0,0,5,0">
+                <GroupBox DockPanel.Dock="Top" Header="Статусы (из проекта)" Padding="10" Margin="0,0,0,10">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="160">
+                        <ItemsControl x:Name="StatusList"/>
+                    </ScrollViewer>
+                </GroupBox>
+                <GroupBox DockPanel.Dock="Top" Header="Категории компонентов" Padding="10" Margin="0,0,0,10">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" MaxHeight="200">
+                        <ItemsControl x:Name="CategoryList"/>
+                    </ScrollViewer>
+                </GroupBox>
+                <GroupBox Header="Дополнительные правила" Padding="10">
+                    <StackPanel>
+                        <CheckBox x:Name="ExcludeValveCompanionsChk"
+                                  Content="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)"
+                                  IsChecked="True" Margin="0,2,0,2"/>
+                        <CheckBox x:Name="ExcludeEquipmentChk"
+                                  Content="Исключить оборудование"
+                                  IsChecked="True" Margin="0,2,0,2"/>
+                        <CheckBox x:Name="ExcludeConnectorsChk"
+                                  Content="Исключить сварные швы и коннекторы (Buttweld, Universal и др.)"
+                                  IsChecked="True" Margin="0,2,0,2"/>
+                    </StackPanel>
+                </GroupBox>
+            </DockPanel>
+            <GroupBox Grid.Column="1" Header="Линии (P3dLineGroup.Tag)" Padding="10" Margin="5,0,0,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <Button x:Name="SelectAllLinesButton" Content="Выбрать все" Width="100"
+                                    Click="SelectAllLines_Click"/>
+                            <Button x:Name="DeselectAllLinesButton" Content="Снять все" Width="100" Margin="6,0,0,0"
+                                    Click="DeselectAllLines_Click"/>
+                        </StackPanel>
+                        <Separator Margin="0,8,0,4"/>
+                        <CheckBox x:Name="GroupByLineChk"
+                                  Content="Группировать по линиям (отдельный подраздел на каждую)"/>
+                    </StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="LineList"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </GroupBox>
+        </Grid>
+
+        <!-- Row 3: bottom bar -->
+        <DockPanel Grid.Row="3">
+            <Button DockPanel.Dock="Right" x:Name="GenerateButton"
+                    Content="Сгенерировать" Width="140" Height="32"
+                    Click="GenerateButton_Click" IsDefault="True"/>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                       Foreground="Gray" FontStyle="Italic" Text="Готов"/>
+            <TextBlock VerticalAlignment="Center" Margin="20,0,0,0"
+                       FontSize="11" FontStyle="Italic" Foreground="Brown"
+                       Text="⚠️ Для гарантии точности сохраните изменения в Plant 3D перед генерацией."/>
+        </DockPanel>
+    </Grid>
+</Window>

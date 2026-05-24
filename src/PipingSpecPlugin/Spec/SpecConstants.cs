@@ -14,6 +14,9 @@ namespace PipingSpecPlugin.Spec
 
         public const string NullCategory = "__NULL__";
         public const string OtherCategoryLabel = "Прочее";
+        public const string NullStatus = "__NULL_STATUS__";
+        public const string NullStatusLabel = "Без статуса";
+        public const string NullCategoryLabel = "Без категории";
 
         public const string NullLine = "__NO_LINE__";
         public const string NullLineLabel = "Без номера линии";

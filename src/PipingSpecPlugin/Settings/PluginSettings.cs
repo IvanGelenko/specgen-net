@@ -30,6 +30,15 @@ namespace PipingSpecPlugin.Settings
         // Stored as nullable so settings.json can omit the key for the
         // "all statuses" case rather than serialise an empty array.
         public string[] Statuses { get; set; } = null;
+        public string[] Categories { get; set; } = null;
+        public string[] Lines { get; set; } = null;
+
+        // "proj" or "dwg" — restored on next picker open.
+        public string Scope { get; set; } = "proj";
+
+        public bool ExcludeValveCompanions { get; set; } = true;
+        public bool ExcludeEquipment { get; set; } = true;
+        public bool ExcludeConnectors { get; set; } = true;
 
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

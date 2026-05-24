@@ -14,8 +14,8 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: ComVisible(false)]
 [assembly: Guid("B5E20C42-5C4D-4F1B-9B7C-1D5E2B0A8C02")]
 
-[assembly: AssemblyVersion("0.9.2.0")]
-[assembly: AssemblyFileVersion("0.9.2.0")]
+[assembly: AssemblyVersion("0.10.0.0")]
+[assembly: AssemblyFileVersion("0.10.0.0")]
 
 // Tells AutoCAD which classes carry [CommandMethod] attributes. Each class
 // hosting commands must be listed explicitly — without this, AutoCAD ignores
@@ -26,5 +26,4 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SpecUiCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.WriteSpecCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ListProjectCommand))]
-[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SpecTemplateCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

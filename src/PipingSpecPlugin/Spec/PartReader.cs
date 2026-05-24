@@ -42,7 +42,23 @@ namespace PipingSpecPlugin.Spec
             catch { return result; }
             if (dlm == null) return result;
 
-            var rowIds = dlm.SelectAcPpRowIds(db);
+            // GetRelatedRowIds on a side-database resolves its data through
+            // the native AcPp layer which keys off HostApplicationServices.
+            // WorkingDatabase — if we leave the working DB pointing at the
+            // active document we get RowNotInThisDatabase exceptions on the
+            // side rows. Swap it for the duration of the read.
+            var prevWorking = HostApplicationServices.WorkingDatabase;
+            var swapped = false;
+            if (db != prevWorking)
+            {
+                try { HostApplicationServices.WorkingDatabase = db; swapped = true; }
+                catch { /* not always allowed — fall back to per-row try/catch */ }
+            }
+            try
+            {
+            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
+            try { rowIds = dlm.SelectAcPpRowIds(db); }
+            catch { return result; }
             if (rowIds == null) return result;
 
             foreach (int rowId in rowIds)
@@ -90,6 +106,14 @@ namespace PipingSpecPlugin.Spec
                 }
             }
             return result;
+            }
+            finally
+            {
+                if (swapped)
+                {
+                    try { HostApplicationServices.WorkingDatabase = prevWorking; } catch { }
+                }
+            }
         }
 
         // Back-compat helper for diagnostic commands (LISTPARTS / LISTPROJECT)

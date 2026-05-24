@@ -238,7 +238,9 @@ namespace PipingSpecPlugin.Commands
                 }
                 catch (System.Exception ex)
                 {
-                    editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}");
+                    editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
+                    if (ex.InnerException != null)
+                        editor.WriteMessage($"\n    inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
             }
             return (all, owned, topology);

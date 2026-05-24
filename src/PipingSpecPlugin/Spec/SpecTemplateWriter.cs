@@ -185,14 +185,34 @@ namespace PipingSpecPlugin.Spec
 
         static void WriteSubHeader(TableRow row, string text)
         {
-            // Section headers in this template are single-merged cells.
-            // If the row already has 9 separate cells (because we cloned
-            // a data-row stencil), merge them on the fly by writing into
-            // the first cell and emptying the rest. We can't fully merge
-            // cells without rewriting tcPr — leaving them empty matches
-            // what the Python edition does and Word renders it acceptably.
+            // Section headers span all 9 columns. Word's horizontal merge
+            // works by giving the first cell HorizontalMergeValues.Restart
+            // and every subsequent cell HorizontalMergeValues.Continue —
+            // the cells stay in the XML (so column widths are preserved)
+            // but render as one. We must also strip any pre-existing
+            // hMerge from the stencil before applying our own so cloned
+            // data-row cells (which have no merge) don't accidentally
+            // inherit one from a previous run.
             var cells = row.Elements<TableCell>().ToList();
             if (cells.Count == 0) return;
+
+            for (var i = 0; i < cells.Count; i++)
+            {
+                var tcPr = cells[i].Elements<TableCellProperties>().FirstOrDefault();
+                if (tcPr == null)
+                {
+                    tcPr = new TableCellProperties();
+                    cells[i].InsertAt(tcPr, 0);
+                }
+                var existing = tcPr.Elements<HorizontalMerge>().ToList();
+                foreach (var hm in existing) hm.Remove();
+                tcPr.AppendChild(new HorizontalMerge
+                {
+                    Val = i == 0
+                        ? MergedCellValues.Restart
+                        : MergedCellValues.Continue,
+                });
+            }
             SetCellText(cells[0], text, bold: true);
             for (var i = 1; i < cells.Count; i++)
                 SetCellText(cells[i], "", bold: false);
@@ -202,6 +222,16 @@ namespace PipingSpecPlugin.Spec
         {
             var cells = row.Elements<TableCell>().ToList();
             if (cells.Count < 9) return;
+            // Cells cloned from the stencil might carry a residual hMerge
+            // from a previous header insertion — strip it so data rows
+            // always render as 9 separate cells.
+            foreach (var c in cells)
+            {
+                var tcPr = c.Elements<TableCellProperties>().FirstOrDefault();
+                if (tcPr == null) continue;
+                foreach (var hm in tcPr.Elements<HorizontalMerge>().ToList())
+                    hm.Remove();
+            }
             // Columns (from the template):
             //  0 Поз.  1 Наименование  2 Тип/марка  3 Код  4 Поставщик
             //  5 Ед. изм.  6 Кол.  7 Масса 1 ед., кг  8 Примечание

@@ -37,6 +37,7 @@ namespace PipingSpecPlugin.Spec
             var statusCounts = new Dictionary<string, int>();
             foreach (var r in list)
             {
+                if (IsConnector(r)) continue;
                 var key = string.IsNullOrEmpty(r.Status) ? SpecConstants.NullStatus : r.Status;
                 statusCounts.TryGetValue(key, out var c);
                 statusCounts[key] = c + 1;
@@ -77,6 +78,8 @@ namespace PipingSpecPlugin.Spec
                 var key = string.IsNullOrEmpty(r.LineNumberTag)
                     ? SpecConstants.NullLine
                     : r.LineNumberTag;
+                if (key == SpecConstants.NullLine && IsConnector(r))
+                    continue;
                 if (!lineToPids.TryGetValue(key, out var set))
                     lineToPids[key] = set = new HashSet<int>();
                 set.Add(r.PnPID);
@@ -88,6 +91,23 @@ namespace PipingSpecPlugin.Spec
                 .ToList();
 
             return facts;
+        }
+
+        static bool IsConnector(PartRecord r)
+        {
+            var cat = NormalizeCategoryPublic(r);
+            if (cat == "P3dConnector") return true;
+            if (!(string.IsNullOrEmpty(cat)
+                  || cat == SpecConstants.NullCategory
+                  || cat == "Fasteners"))
+                return false;
+            foreach (var fld in new[] { r.ShortDescription, r.PartSizeLongDesc, r.PartFamilyLongDesc })
+            {
+                var t = (fld ?? "").ToLowerInvariant();
+                foreach (var kw in SpecConstants.ConnectorKeywords)
+                    if (t.Contains(kw)) return true;
+            }
+            return false;
         }
 
         // Mirrors SpecRowBuilder.NormalizeCategory, exposed so this class

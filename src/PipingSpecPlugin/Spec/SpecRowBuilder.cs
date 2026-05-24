@@ -224,7 +224,13 @@ namespace PipingSpecPlugin.Spec
                         ? qparsed.Value : 1.0;
                     b.Qty += pieces;
                     var w = ParseNullableDouble(r.Weight);
-                    if (w.HasValue) b.Weights.Add(w.Value * toKg);
+                    if (w.HasValue)
+                    {
+                        // In Plant 3D, the Weight property of multi-piece entities (like BoltSets)
+                        // represents the total weight of the set. To get the unit weight of a single
+                        // piece ("шт."), we divide the total weight by the quantity in the set.
+                        b.Weights.Add(w.Value * toKg / pieces);
+                    }
                 }
             }
 
@@ -381,7 +387,7 @@ namespace PipingSpecPlugin.Spec
             if (category == "Equipment" && !string.IsNullOrWhiteSpace(r.EquipTag))
             {
                 var tag = r.EquipTag.Trim();
-                var desc = FirstNonEmpty(r.PartFamilyLongDesc, r.PartSizeLongDesc, r.ShortDescription) ?? "";
+                var desc = FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "";
                 desc = desc.Trim();
                 string name;
                 if (!string.IsNullOrEmpty(desc))
@@ -390,21 +396,16 @@ namespace PipingSpecPlugin.Spec
                     name = tag;
                 return CollapseWs(name);
             }
-            // PartSizeLongDesc already contains size formatted as Plant 3D
-            // shows it (e.g. '4" ND'); prefer it as-is.
             var n = FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "";
             return CollapseWs(n);
         }
 
         static string BuildTypeMark(PartRecord r)
         {
-            var parts = new List<string>();
-            foreach (var s in new[] { r.DesignStd, r.CompatibleStandard, r.Spec })
-            {
-                var v = (s ?? "").Trim();
-                if (v.Length > 0 && !parts.Contains(v)) parts.Add(v);
-            }
-            return string.Join(" / ", parts);
+            var std = !string.IsNullOrWhiteSpace(r.DesignStd) ? r.DesignStd.Trim() : "";
+            if (string.IsNullOrEmpty(std))
+                std = !string.IsNullOrWhiteSpace(r.CompatibleStandard) ? r.CompatibleStandard.Trim() : "";
+            return std;
         }
 
         static string FirstNonEmpty(params string[] xs)

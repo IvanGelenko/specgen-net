@@ -20,6 +20,7 @@ namespace PipingSpecPlugin.UI
     public partial class SpecPickerWindow : Window
     {
         readonly ProjectFacts _facts;
+        readonly ProjectFacts _activeFacts;
         readonly PluginSettings _settings;
         readonly bool _activeDrawingAvailable;
 
@@ -27,6 +28,7 @@ namespace PipingSpecPlugin.UI
         public SpecPickerResult Result { get; private set; }
 
         public SpecPickerWindow(ProjectFacts facts,
+                                ProjectFacts activeFacts,
                                 string projectName,
                                 string dwgName,
                                 PluginSettings settings,
@@ -34,6 +36,7 @@ namespace PipingSpecPlugin.UI
         {
             InitializeComponent();
             _facts = facts;
+            _activeFacts = activeFacts;
             _settings = settings;
             _activeDrawingAvailable = activeDrawingAvailable;
 
@@ -46,50 +49,54 @@ namespace PipingSpecPlugin.UI
             ApplySavedScope();
             TemplatePathBox.Text = settings.TemplatePath ?? "";
 
-            PopulateStatuses();
-            PopulateCategories();
-            PopulateLines();
+            PopulateFilters();
 
             GroupByLineChk.IsChecked = settings.GroupByLine;
             ApplySavedExclusions();
-            UpdateBlockingReason();
         }
 
         // ----- population ----------------------------------------------------
 
-        void PopulateStatuses()
+        void PopulateFilters()
         {
-            // No saved selection ⇒ no preselection (user sees what's there
-            // and ticks what they want). With a saved selection from a
-            // previous run, restore exactly that set so cross-session
-            // behaviour matches Python.
-            var saved = _settings.Statuses == null
-                ? null
-                : new HashSet<string>(_settings.Statuses);
-            foreach (var (key, count) in _facts.Statuses)
+            // 1. Save currently checked states if lists are already populated.
+            HashSet<string> currentStatuses = null;
+            HashSet<string> currentCategories = null;
+            HashSet<string> currentLines = null;
+
+            if (StatusList.Items.Count > 0)
+                currentStatuses = GetCheckedKeys(StatusList);
+            if (CategoryList.Items.Count > 0)
+                currentCategories = GetCheckedKeys(CategoryList);
+            if (LineList.Items.Count > 0)
+                currentLines = GetCheckedKeys(LineList);
+
+            // 2. Clear lists.
+            StatusList.Items.Clear();
+            CategoryList.Items.Clear();
+            LineList.Items.Clear();
+
+            // 3. Choose which facts to use.
+            var activeFacts = (ScopeDrawing.IsChecked == true) ? _activeFacts : _facts;
+
+            // 4. Populate Statuses.
+            var statusSaved = currentStatuses ?? (_settings.Statuses == null ? null : new HashSet<string>(_settings.Statuses));
+            foreach (var (key, count) in activeFacts.Statuses)
             {
-                var label = key == SpecConstants.NullStatus
-                    ? SpecConstants.NullStatusLabel
-                    : key;
+                var label = key == SpecConstants.NullStatus ? SpecConstants.NullStatusLabel : key;
                 var cb = new CheckBox
                 {
                     Content = $"{label}  ({count})",
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = saved == null ? true : saved.Contains(key),
+                    IsChecked = statusSaved == null ? true : statusSaved.Contains(key),
                 };
                 StatusList.Items.Add(cb);
             }
-        }
 
-        void PopulateCategories()
-        {
-            // First run: every category except the NullCategory bucket
-            // ticked. Restoring a saved set picks up where the user left.
-            var saved = _settings.Categories == null
-                ? null
-                : new HashSet<string>(_settings.Categories);
-            foreach (var (key, count) in _facts.Categories)
+            // 5. Populate Categories.
+            var catSaved = currentCategories ?? (_settings.Categories == null ? null : new HashSet<string>(_settings.Categories));
+            foreach (var (key, count) in activeFacts.Categories)
             {
                 var label = key == SpecConstants.NullCategory
                     ? SpecConstants.NullCategoryLabel
@@ -100,18 +107,14 @@ namespace PipingSpecPlugin.UI
                     Content = $"{label}  ({count})",
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = saved != null ? saved.Contains(key) : defaultOn,
+                    IsChecked = catSaved != null ? catSaved.Contains(key) : defaultOn,
                 };
                 CategoryList.Items.Add(cb);
             }
-        }
 
-        void PopulateLines()
-        {
-            var saved = _settings.Lines == null
-                ? null
-                : new HashSet<string>(_settings.Lines);
-            foreach (var (key, count) in _facts.Lines)
+            // 6. Populate Lines.
+            var lineSaved = currentLines ?? (_settings.Lines == null ? null : new HashSet<string>(_settings.Lines));
+            foreach (var (key, count) in activeFacts.Lines)
             {
                 var label = key == SpecConstants.NullLine
                     ? $"{SpecConstants.NullLineLabel}  ({count})"
@@ -121,10 +124,29 @@ namespace PipingSpecPlugin.UI
                     Content = label,
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = saved != null ? saved.Contains(key) : true,
+                    IsChecked = lineSaved != null ? lineSaved.Contains(key) : true,
                 };
                 LineList.Items.Add(cb);
             }
+
+            UpdateBlockingReason();
+        }
+
+        static HashSet<string> GetCheckedKeys(ItemsControl list)
+        {
+            var keys = new HashSet<string>();
+            foreach (var item in list.Items)
+                if (item is CheckBox cb && cb.IsChecked == true && cb.Tag is string key)
+                    keys.Add(key);
+            return keys;
+        }
+
+        private void Scope_Checked(object sender, RoutedEventArgs e)
+        {
+            if (_facts == null || _activeFacts == null)
+                return;
+
+            PopulateFilters();
         }
 
         void ApplySavedScope()
@@ -147,19 +169,22 @@ namespace PipingSpecPlugin.UI
 
         void UpdateBlockingReason()
         {
-            // Mirror the Python edition: if the project genuinely has no
-            // candidates the user can pick, disable the run button and
-            // explain why instead of letting them press it and get a
-            // "select at least one X" warning.
+            var activeFacts = (ScopeDrawing.IsChecked == true) ? _activeFacts : _facts;
             string reason = null;
-            if (_facts.Statuses.Count == 0)
-                reason = "В проекте не найдено компонентов ни с одним статусом.";
-            else if (_facts.Categories.Count == 0)
-                reason = "В проекте нет компонентов в поддерживаемых категориях.";
+            if (activeFacts.Statuses.Count == 0)
+                reason = "В выбранной области не найдено компонентов ни с одним статусом.";
+            else if (activeFacts.Categories.Count == 0)
+                reason = "В выбранной области нет компонентов в поддерживаемых категориях.";
+
             if (reason != null)
             {
                 GenerateButton.IsEnabled = false;
                 StatusText.Text = reason;
+            }
+            else
+            {
+                GenerateButton.IsEnabled = true;
+                StatusText.Text = "Готов";
             }
         }
 

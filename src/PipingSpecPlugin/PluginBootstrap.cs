@@ -35,24 +35,24 @@ namespace PipingSpecPlugin
 
         static void TryRegisterRibbon()
         {
-            // ComponentManager.Ribbon can be null when AutoCAD is still
-            // starting; in that case AutoCAD raises ItemInitialized once
-            // the ribbon is live. Hook that and retry.
+            // Subscribe to ItemInitialized and keep it active so workspace
+            // changes or ribbon resets reconstruct our custom tab if it disappears.
+            ComponentManager.ItemInitialized += OnRibbonReady;
+            
             var ribbon = ComponentManager.Ribbon;
-            if (ribbon == null)
+            if (ribbon != null)
             {
-                ComponentManager.ItemInitialized += OnRibbonReady;
-                return;
+                BuildTab(ribbon);
             }
-            BuildTab(ribbon);
         }
 
         static void OnRibbonReady(object sender, RibbonItemEventArgs e)
         {
             var ribbon = ComponentManager.Ribbon;
-            if (ribbon == null) return;
-            ComponentManager.ItemInitialized -= OnRibbonReady;
-            BuildTab(ribbon);
+            if (ribbon != null)
+            {
+                BuildTab(ribbon);
+            }
         }
 
         static void BuildTab(RibbonControl ribbon)

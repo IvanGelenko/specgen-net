@@ -35,8 +35,8 @@
             </GroupBox>
             <GroupBox Grid.Column="1" Header="Область выборки" Padding="10" Margin="5,0,0,0">
                 <StackPanel>
-                    <RadioButton x:Name="ScopeProject" GroupName="Scope" Content="Весь проект" IsChecked="True"/>
-                    <RadioButton x:Name="ScopeDrawing" GroupName="Scope" Content="Только текущий чертёж" Margin="0,4,0,0"/>
+                    <RadioButton x:Name="ScopeProject" GroupName="Scope" Content="Весь проект" IsChecked="True" Checked="Scope_Checked"/>
+                    <RadioButton x:Name="ScopeDrawing" GroupName="Scope" Content="Только текущий чертёж" Margin="0,4,0,0" Checked="Scope_Checked"/>
                 </StackPanel>
             </GroupBox>
         </Grid>

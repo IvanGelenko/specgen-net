@@ -5,6 +5,7 @@ using System.Linq;
 using System.Windows.Interop;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
+using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.PlantInstance;
 using Autodesk.ProcessPower.ProjectManager;
 using PipingSpecPlugin.Settings;
@@ -34,7 +35,10 @@ namespace PipingSpecPlugin.Commands
             var project = PlantApplication.CurrentProject;
             if (project == null)
             {
-                editor.WriteMessage("\n[WRITESPEC] No Plant 3D project is currently open.");
+                var msg = "Не найден открытый проект AutoCAD Plant 3D. Пожалуйста, откройте проект перед генерацией спецификации.";
+                editor.WriteMessage("\n[WRITESPEC] " + msg);
+                WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
                 return;
             }
 
@@ -48,13 +52,24 @@ namespace PipingSpecPlugin.Commands
             // will pick "whole project" anyway. If they pick "active dwg"
             // we filter the records in-memory rather than re-reading.
             editor.WriteMessage("\n[WRITESPEC] Scanning project...");
-            var (projectRecords, ownedPnPIds, topology, eqCount, eqNbrCount)
+            var (projectRecords, activeDwgRecords, ownedPnPIds, topology, eqCount, eqNbrCount, failedCount)
                 = CollectFromProject(project, editor);
             editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
             editor.WriteMessage(
                 $"\n[WRITESPEC] Equipment entities seen: {eqCount}; "
               + $"connection-neighbours: {eqNbrCount}; "
               + $"owned PnPIDs (incl. connector hops): {ownedPnPIds.Count}.");
+
+            if (failedCount > 0)
+            {
+                WinForms.MessageBox.Show(
+                    $"При сканировании проекта были пропущены некоторые чертежи ({failedCount} шт.).\n" +
+                    "Детали ошибок выведены в командную строку AutoCAD.\n\n" +
+                    "Сгенерированная спецификация может быть неполной.",
+                    "Предупреждение",
+                    WinForms.MessageBoxButtons.OK,
+                    WinForms.MessageBoxIcon.Warning);
+            }
 
             // Discover valve companions up-front so we can show the user
             // the count before they generate. The actual exclusion happens
@@ -110,7 +125,12 @@ namespace PipingSpecPlugin.Commands
                 : projectRecords;
             var facts = ProjectFacts.From(visibleRecords);
 
-            var picker = new SpecPickerWindow(facts, project.Name, dwgLeaf,
+            var visibleActiveRecords = ownedPnPIds.Count > 0
+                ? activeDwgRecords.Where(r => !ownedPnPIds.Contains(r.PnPID)).ToList()
+                : activeDwgRecords;
+            var activeFacts = ProjectFacts.From(visibleActiveRecords);
+
+            var picker = new SpecPickerWindow(facts, activeFacts, project.Name, dwgLeaf,
                                               settings,
                                               activeDrawingAvailable: !string.IsNullOrEmpty(dwgLeaf));
             new WindowInteropHelper(picker).Owner = AcadApp.MainWindow.Handle;
@@ -122,16 +142,32 @@ namespace PipingSpecPlugin.Commands
             }
             var result = picker.Result;
 
+            // Re-scan drawing databases at the moment of clicking Generate to ensure absolute data freshness
+            editor.WriteMessage("\n[WRITESPEC] Recalculating and scanning project for final generation...");
+            var (freshProjectRecords, freshActiveDwgRecords, freshOwnedPnPIds, freshTopology, freshEqCount, freshEqNbrCount, freshFailedCount)
+                = CollectFromProject(project, editor);
+            editor.WriteMessage($"\n[WRITESPEC] Found {freshProjectRecords.Count} part record(s) on recalculation.");
+
+            if (freshFailedCount > 0)
+            {
+                WinForms.MessageBox.Show(
+                    $"При финальном сканировании проекта были пропущены некоторые чертежи ({freshFailedCount} шт.).\n" +
+                    "Детали ошибок выведены в командную строку AutoCAD.\n\n" +
+                    "Сгенерированная спецификация может быть неполной.",
+                    "Предупреждение",
+                    WinForms.MessageBoxButtons.OK,
+                    WinForms.MessageBoxIcon.Warning);
+            }
+
+            // Re-discover valve companions based on fresh topology
+            var freshCompanionIds = ValveCompanionFinder.Discover(freshProjectRecords, freshTopology);
+
             // Narrow the input set if the user picked active-drawing scope.
-            // We do this in-memory rather than re-running PartReader so the
-            // counts the user saw in the picker line up with what we feed
-            // to the builder.
-            IEnumerable<PartRecord> input = projectRecords;
+            IEnumerable<PartRecord> input = freshProjectRecords;
             if (result.Scope == "dwg" && activeDoc != null)
             {
-                var dwgRecords = PartReader.ReadRows(activeDoc.Database).ToList();
-                var activeIds = new HashSet<int>(dwgRecords.Select(r => r.PnPID));
-                input = projectRecords.Where(r => activeIds.Contains(r.PnPID));
+                var activeIds = new HashSet<int>(freshActiveDwgRecords.Select(r => r.PnPID));
+                input = freshProjectRecords.Where(r => activeIds.Contains(r.PnPID));
             }
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
@@ -143,8 +179,8 @@ namespace PipingSpecPlugin.Commands
                 ExcludeEquipment = result.ExcludeEquipment,
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
-                EquipmentOwnedPnPIds = ownedPnPIds,
-                ValveCompanionPnPIds = companionIds,
+                EquipmentOwnedPnPIds = freshOwnedPnPIds,
+                ValveCompanionPnPIds = freshCompanionIds,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
@@ -158,7 +194,10 @@ namespace PipingSpecPlugin.Commands
 
             if (specRows.Count == 0)
             {
-                editor.WriteMessage("\n[WRITESPEC] No spec rows produced — nothing to write.");
+                var msg = "Спецификация пуста. Выбранные фильтры исключили все компоненты.";
+                editor.WriteMessage("\n[WRITESPEC] " + msg);
+                WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
                 return;
             }
 
@@ -187,6 +226,11 @@ namespace PipingSpecPlugin.Commands
             {
                 editor.WriteMessage("\n[WRITESPEC] FAILED: "
                     + ex.GetType().Name + ": " + ex.Message);
+                WinForms.MessageBox.Show(
+                    $"Ошибка сохранения спецификации:\n\n{ex.Message}",
+                    "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK,
+                    WinForms.MessageBoxIcon.Error);
                 return;
             }
 
@@ -226,9 +270,9 @@ namespace PipingSpecPlugin.Commands
 
         // --- project-wide collection -------------------------------------
 
-        static (List<PartRecord> records, HashSet<int> ownedPnPIds,
+        static (List<PartRecord> records, List<PartRecord> activeDwgRecords, HashSet<int> ownedPnPIds,
                 Dictionary<int, List<int>> topology,
-                int equipmentCount, int equipmentNeighbourCount) CollectFromProject(
+                int equipmentCount, int equipmentNeighbourCount, int failedCount) CollectFromProject(
             PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
         {
             Project piping = null;
@@ -238,8 +282,8 @@ namespace PipingSpecPlugin.Commands
             if (piping == null)
             {
                 editor.WriteMessage("\n[WRITESPEC] Project has no Piping discipline.");
-                return (new List<PartRecord>(), new HashSet<int>(),
-                        new Dictionary<int, List<int>>(), 0, 0);
+                return (new List<PartRecord>(), new List<PartRecord>(), new HashSet<int>(),
+                        new Dictionary<int, List<int>>(), 0, 0, 0);
             }
 
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
@@ -249,27 +293,69 @@ namespace PipingSpecPlugin.Commands
                 .ToList();
 
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
+            var projectDlm = piping.DataLinksManager;
             var all = new List<PartRecord>();
+            var activeDwgRecs = new List<PartRecord>();
             var owned = new HashSet<int>();
             var topology = new Dictionary<int, List<int>>();
             var eqCount = 0;
             var eqNbrCount = 0;
+            var count = 0;
+            var failedCount = 0;
             foreach (var f in dwgFiles)
             {
+                count++;
+                if (count % 5 == 0 || count == dwgFiles.Count)
+                {
+                    editor.WriteMessage($"\n[WRITESPEC] Сканирование: {count} из {dwgFiles.Count} чертежей...");
+                    System.Windows.Forms.Application.DoEvents();
+                }
+
                 string path = null;
                 try { path = !string.IsNullOrEmpty(f.ResolvedFilePath) ? f.ResolvedFilePath : f.AbsoluteFileName; }
                 catch { }
-                if (string.IsNullOrEmpty(path) || !File.Exists(path)) continue;
+                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                {
+                    failedCount++;
+                    continue;
+                }
 
                 try
                 {
-                    PartReadResult result;
-                    if (string.Equals(path, activeDocPath, StringComparison.OrdinalIgnoreCase))
+                    PartReadResult result = null;
+
+                    // Try to locate open document to get unsaved in-memory changes
+                    Autodesk.AutoCAD.ApplicationServices.Document openDoc = null;
+                    try
                     {
-                        var doc = AcadApp.DocumentManager.MdiActiveDocument;
-                        result = PartReader.Read(doc.Database);
+                        foreach (Autodesk.AutoCAD.ApplicationServices.Document doc in AcadApp.DocumentManager)
+                        {
+                            if (doc != null && PathEquals(doc.Name, path))
+                            {
+                                openDoc = doc;
+                                break;
+                            }
+                        }
                     }
-                    else
+                    catch { }
+
+                    if (openDoc != null)
+                    {
+                        try
+                        {
+                            result = PartReader.Read(openDoc.Database, projectDlm);
+                            if (PathEquals(path, activeDocPath))
+                            {
+                                activeDwgRecs.AddRange(result.Records);
+                            }
+                        }
+                        catch (System.Exception ex)
+                        {
+                            editor.WriteMessage($"\n  [WARN] Не удалось прочитать открытый чертеж {Path.GetFileName(path)} из памяти, пробуем с диска: {ex.Message}");
+                        }
+                    }
+
+                    if (result == null)
                     {
                         using var db = new Database(false, true);
                         // FileShare.ReadWrite (not just Read) is required
@@ -280,7 +366,11 @@ namespace PipingSpecPlugin.Commands
                         // project's parts.
                         db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
                         db.CloseInput(true);
-                        result = PartReader.Read(db);
+                        result = PartReader.Read(db, projectDlm);
+                        if (PathEquals(path, activeDocPath))
+                        {
+                            activeDwgRecs.AddRange(result.Records);
+                        }
                     }
                     all.AddRange(result.Records);
                     foreach (var id in result.EquipmentOwnedPnPIds) owned.Add(id);
@@ -301,10 +391,131 @@ namespace PipingSpecPlugin.Commands
                 {
                     editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
                     if (ex.InnerException != null)
-                        editor.WriteMessage($"\n    inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                         editor.WriteMessage($"\n    inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    failedCount++;
                 }
             }
-            return (all, owned, topology, eqCount, eqNbrCount);
+            return (all, activeDwgRecs, owned, topology, eqCount, eqNbrCount, failedCount);
+        }
+
+        [CommandMethod("TESTREL")]
+        public void TestRel()
+        {
+            var editor = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
+            if (editor == null) return;
+
+            try
+            {
+                var db = AcadApp.DocumentManager.MdiActiveDocument.Database;
+                var dlm = DataLinksManager.GetManager(db);
+                if (dlm == null)
+                {
+                    editor.WriteMessage("\nDataLinksManager is null.");
+                    return;
+                }
+
+                var rowIds = dlm.SelectAcPpRowIds(db);
+                if (rowIds == null || rowIds.Count == 0)
+                {
+                    editor.WriteMessage("\nNo parts found in active database.");
+                    return;
+                }
+
+                editor.WriteMessage($"\nTotal parts: {rowIds.Count}");
+
+                int targetRowId = 0;
+                string cachedTag = null;
+                foreach (int rowId in rowIds)
+                {
+                    var props = dlm.GetAllProperties(rowId, true);
+                    if (props == null) continue;
+                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                    foreach (var kv in props)
+                        if (kv.Key != null && !dict.ContainsKey(kv.Key)) dict.Add(kv.Key, kv.Value);
+
+                    if (dict.TryGetValue("LineNumberTag", out var val) && !string.IsNullOrEmpty(val))
+                    {
+                        targetRowId = rowId;
+                        cachedTag = val;
+                        break;
+                    }
+                }
+
+                if (targetRowId == 0)
+                {
+                    foreach (int id in rowIds)
+                    {
+                        targetRowId = id;
+                        break;
+                    }
+                }
+
+                editor.WriteMessage($"\nTarget RowId: {targetRowId}, cached LineNumberTag: '{cachedTag ?? "null"}'");
+
+                try
+                {
+                    var related = dlm.GetRelatedRowIds(targetRowId);
+                    editor.WriteMessage($"\nRelatedRowIds(rowId) count: {related?.Count ?? 0}");
+                    if (related != null)
+                    {
+                        foreach (int rId in related)
+                        {
+                            var rProps = dlm.GetAllProperties(rId, true);
+                            var rClass = rProps?.FirstOrDefault(kv => kv.Key.Equals("PnPClassName", StringComparison.OrdinalIgnoreCase)).Value;
+                            var rTag = rProps?.FirstOrDefault(kv => kv.Key.Equals("Tag", StringComparison.OrdinalIgnoreCase)).Value;
+                            editor.WriteMessage($"\n  -> Related RowId: {rId}, Class: '{rClass}', Tag: '{rTag}'");
+                        }
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    editor.WriteMessage($"\nError querying bare GetRelatedRowIds: {ex.Message}");
+                }
+
+                string[] relationshipNames = { "P3dLineGroupPartRelationship", "LineGroupPartRelationship", "P3dLineGroupPart" };
+                foreach (var relName in relationshipNames)
+                {
+                    try
+                    {
+                        var relatedIds = dlm.GetRelatedRowIds(relName, "Part", targetRowId, "LineGroup");
+                        editor.WriteMessage($"\nQuery: {relName} (Part -> LineGroup): count={relatedIds?.Count ?? 0}");
+                        if (relatedIds != null)
+                        {
+                            foreach (int lgId in relatedIds)
+                            {
+                                var lgProps = dlm.GetAllProperties(lgId, true);
+                                var lgTag = lgProps?.FirstOrDefault(kv => kv.Key.Equals("Tag", StringComparison.OrdinalIgnoreCase)).Value;
+                                editor.WriteMessage($"\n    -> RowId {lgId}, Tag: '{lgTag}'");
+                            }
+                        }
+                    }
+                    catch (System.Exception ex)
+                    {
+                        editor.WriteMessage($"\nError querying {relName}: {ex.Message}");
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                editor.WriteMessage($"\nFatal error in TESTREL: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        static bool PathEquals(string path1, string path2)
+        {
+            if (string.IsNullOrEmpty(path1) || string.IsNullOrEmpty(path2)) return false;
+            try
+            {
+                var p1 = Path.GetFullPath(path1).Replace('/', '\\').TrimEnd('\\');
+                var p2 = Path.GetFullPath(path2).Replace('/', '\\').TrimEnd('\\');
+                return string.Equals(p1, p2, StringComparison.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return string.Equals(path1.Replace('/', '\\').TrimEnd('\\'), 
+                                     path2.Replace('/', '\\').TrimEnd('\\'), 
+                                     StringComparison.OrdinalIgnoreCase);
+            }
         }
     }
 }

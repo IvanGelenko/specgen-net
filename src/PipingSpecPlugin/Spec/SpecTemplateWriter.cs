@@ -51,7 +51,11 @@ namespace PipingSpecPlugin.Spec
             {
                 if (IsHeaderRow(trs[i])) { reservedEnd = i; break; }
             }
-            var reserved = Enumerable.Range(reservedStart, reservedEnd - reservedStart).ToList();
+            var reserved = new List<TableRow>();
+            for (var i = reservedStart; i < reservedEnd; i++)
+            {
+                reserved.Add(trs[i]);
+            }
 
             // Pick a 9-cell row anywhere in the table as the data-row
             // stencil. Anywhere — not just below the header — because
@@ -110,10 +114,7 @@ namespace PipingSpecPlugin.Spec
             // blank in the output).
             for (var i = cursor; i < reserved.Count; i++)
             {
-                var idx = reserved[i];
-                // Need fresh row reference since insertions above may have
-                // shifted indices in the live element list.
-                var tr = table.Elements<TableRow>().ElementAtOrDefault(idx);
+                var tr = reserved[i];
                 tr?.Remove();
             }
 
@@ -189,12 +190,11 @@ namespace PipingSpecPlugin.Spec
         /// otherwise we clone the stencil and append it after the last
         /// inserted row so column widths and borders carry over.
         /// </summary>
-        static TableRow NextRow(Table table, List<int> reserved, ref int cursor, TableRow stencil)
+        static TableRow NextRow(Table table, List<TableRow> reserved, ref int cursor, TableRow stencil)
         {
             if (cursor < reserved.Count)
             {
-                var idx = reserved[cursor++];
-                var tr = table.Elements<TableRow>().ElementAt(idx);
+                var tr = reserved[cursor++];
                 // Reserved rows in the ГОСТ template inherit the same
                 // vertical-text / tall-row formatting as the stencil; we
                 // want data behaviour on them too.
@@ -297,18 +297,43 @@ namespace PipingSpecPlugin.Spec
             // Drop any existing paragraphs (we keep the first one's pPr
             // through ClearRowText so style is preserved) and put one
             // paragraph with a single run holding the text.
+            // Also preserve the first Run's RunProperties (rPr) so font, size
+            // and color from the stencil template are kept.
             var existing = cell.Elements<Paragraph>().FirstOrDefault();
             ParagraphProperties pPr = null;
+            RunProperties originalRPr = null;
+
             if (existing != null)
             {
                 pPr = existing.Elements<ParagraphProperties>().FirstOrDefault();
                 pPr = pPr != null ? (ParagraphProperties)pPr.CloneNode(true) : null;
+
+                var firstRun = existing.Elements<Run>().FirstOrDefault();
+                if (firstRun != null)
+                {
+                    var rPr = firstRun.Elements<RunProperties>().FirstOrDefault();
+                    originalRPr = rPr != null ? (RunProperties)rPr.CloneNode(true) : null;
+                }
                 existing.Remove();
             }
+
             var p = new Paragraph();
             if (pPr != null) p.AppendChild(pPr);
+
             var run = new Run();
-            if (bold) run.AppendChild(new RunProperties(new Bold()));
+            if (originalRPr != null)
+            {
+                run.AppendChild(originalRPr);
+                if (bold && !originalRPr.Elements<Bold>().Any())
+                {
+                    originalRPr.AppendChild(new Bold());
+                }
+            }
+            else if (bold)
+            {
+                run.AppendChild(new RunProperties(new Bold()));
+            }
+
             run.AppendChild(new Text(text) { Space = SpaceProcessingModeValues.Preserve });
             p.AppendChild(run);
             cell.AppendChild(p);

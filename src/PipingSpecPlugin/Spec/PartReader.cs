@@ -40,13 +40,15 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public static class PartReader
     {
-        public static PartReadResult Read(Database db)
+        public static PartReadResult Read(Database db, DataLinksManager projectDlm = null)
         {
             var result = new PartReadResult();
             DataLinksManager dlm;
             try { dlm = DataLinksManager.GetManager(db); }
             catch { return result; }
             if (dlm == null) return result;
+
+            var lineGroupCache = new Dictionary<int, string>();
 
             // GetRelatedRowIds on a side-database resolves its data through
             // the native AcPp layer which keys off HostApplicationServices.
@@ -60,6 +62,20 @@ namespace PipingSpecPlugin.Spec
                 try { HostApplicationServices.WorkingDatabase = db; swapped = true; }
                 catch { /* not always allowed — fall back to per-row try/catch */ }
             }
+
+            bool prevCaching = true;
+            try { prevCaching = dlm.EnableCaching; } catch { }
+            try { dlm.EnableCaching = false; } catch { }
+            try { dlm.ReloadLinkMap(); } catch { }
+
+            bool prevProjCaching = true;
+            if (projectDlm != null)
+            {
+                try { prevProjCaching = projectDlm.EnableCaching; } catch { }
+                try { projectDlm.EnableCaching = false; } catch { }
+                try { projectDlm.ReloadLinkMap(); } catch { }
+            }
+
             try
             {
             Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
@@ -74,7 +90,7 @@ namespace PipingSpecPlugin.Spec
                 {
                     var props = dlm.GetAllProperties(rowId, true);
                     if (props == null) continue;
-                    rec = BuildRecord(rowId, props);
+                    rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache);
                 }
                 catch { /* skip broken rows */ }
                 if (rec == null) continue;
@@ -105,6 +121,11 @@ namespace PipingSpecPlugin.Spec
             }
             finally
             {
+                try { dlm.EnableCaching = prevCaching; } catch { }
+                if (projectDlm != null)
+                {
+                    try { projectDlm.EnableCaching = prevProjCaching; } catch { }
+                }
                 if (swapped)
                 {
                     try { HostApplicationServices.WorkingDatabase = prevWorking; } catch { }
@@ -144,6 +165,12 @@ namespace PipingSpecPlugin.Spec
 
                 foreach (ObjectId entId in ms)
                 {
+                    // Fast filter: skip native AutoCAD entities (like lines, circles, blocks)
+                    // by checking their class name prefix. All Plant 3D entities start with "AcPp".
+                    var className = entId.ObjectClass?.Name;
+                    if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
+                        continue;
+
                     int fromRowId = 0;
                     try { fromRowId = dlm.FindAcPpRowId(entId); }
                     catch { /* not a Plant 3D entity */ }
@@ -334,16 +361,84 @@ namespace PipingSpecPlugin.Spec
         }
 
         static PartRecord BuildRecord(int rowId,
-            List<System.Collections.Generic.KeyValuePair<string, string>> props)
+            List<System.Collections.Generic.KeyValuePair<string, string>> props,
+            DataLinksManager dlm,
+            DataLinksManager projectDlm,
+            Dictionary<int, string> lineGroupCache)
         {
-            // Linear scan: there are ~90 properties per row, and the cost
-            // of building a dictionary every time outweighs the lookup
-            // savings on this many fields.
+            // O(1) Lookup: convert list to dictionary to avoid 35+ linear scans
+            // of ~90 items per row. Keeps the first occurrence if keys duplicate.
+            var propDict = new Dictionary<string, string>(System.StringComparer.Ordinal);
+            foreach (var kv in props)
+            {
+                if (kv.Key != null && !propDict.ContainsKey(kv.Key))
+                    propDict.Add(kv.Key, kv.Value);
+            }
+
             string Get(string key)
             {
-                foreach (var kv in props)
-                    if (kv.Key == key) return kv.Value;
-                return null;
+                propDict.TryGetValue(key, out var val);
+                return val;
+            }
+
+            // Retrieve live LineNumberTag from relationship
+            string resolvedLineNumberTag = null;
+            try
+            {
+                // Query relationship on drawing-local DLM since it is guaranteed to have the part rowId
+                var relatedIds = dlm.GetRelatedRowIds("P3dLineGroupPartRelationship", "Part", rowId, "LineGroup");
+                if (relatedIds != null && relatedIds.Count > 0)
+                {
+                    int lgRowId = -1;
+                    foreach (int id in relatedIds)
+                    {
+                        lgRowId = id;
+                        break;
+                    }
+                    if (lgRowId != -1)
+                    {
+                        if (!lineGroupCache.TryGetValue(lgRowId, out resolvedLineNumberTag))
+                        {
+                            List<System.Collections.Generic.KeyValuePair<string, string>> lgProps = null;
+                            
+                            // Try to get live properties from project-wide DLM first (authoritative for renames)
+                            if (projectDlm != null)
+                            {
+                                try { lgProps = projectDlm.GetAllProperties(lgRowId, true); }
+                                catch { }
+                            }
+                            
+                            // Fall back to drawing-local DLM if project-wide query failed or wasn't available
+                            if (lgProps == null)
+                            {
+                                try { lgProps = dlm.GetAllProperties(lgRowId, true); }
+                                catch { }
+                            }
+
+                            if (lgProps != null)
+                            {
+                                foreach (var kv in lgProps)
+                                {
+                                    if (string.Equals(kv.Key, "Tag", System.StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        resolvedLineNumberTag = kv.Value;
+                                        break;
+                                    }
+                                }
+                            }
+                            lineGroupCache[lgRowId] = resolvedLineNumberTag;
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore and fall back
+            }
+
+            if (string.IsNullOrEmpty(resolvedLineNumberTag))
+            {
+                resolvedLineNumberTag = Get("LineNumberTag");
             }
 
             return new PartRecord
@@ -367,7 +462,7 @@ namespace PipingSpecPlugin.Spec
                 WeightUnit = Get("WeightUnit"),
                 Length = Get("Length"),
                 LinearWeight = Get("LinearWeight"),
-                LineNumberTag = Get("LineNumberTag"),
+                LineNumberTag = resolvedLineNumberTag,
                 ContentIsoSymbolDefinition = Get("ContentIsoSymbolDefinition"),
                 EquipTag = Get("Tag"),
                 PositionX = Get("Position X"),

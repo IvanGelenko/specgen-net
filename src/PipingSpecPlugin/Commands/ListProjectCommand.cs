@@ -55,20 +55,35 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            var drawings = pipingProject.GetPnPDrawingFiles();
-            editor.WriteMessage($"\n[LISTPROJECT] Scanning {drawings.Count} drawing(s)...");
+            // PnPProjectDrawing.Folder is a GUID into the logical project
+            // tree, NOT a filesystem path — we tried building paths from
+            // it in 0.7.x and got phantom GUID-named directories. The
+            // PipingProject.ProjectFiles collection, on the other hand,
+            // has AbsoluteFileName already populated for each .dwg, so
+            // use that as the source of truth instead.
+            var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)pipingProject)
+                .ProjectFiles
+                .Where(f => !string.IsNullOrEmpty(f.Name)
+                            && f.Name.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            editor.WriteMessage($"\n[LISTPROJECT] Scanning {dwgFiles.Count} drawing(s)...");
 
             var byCategory = new Dictionary<string, int>();
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
             var scanned = 0;
             var failed = 0;
-            foreach (var pdrw in drawings)
+            foreach (var f in dwgFiles)
             {
-                string path;
-                try { path = pipingProject.ComposeDwgName(pdrw); }
-                catch { failed++; continue; }
-                if (string.IsNullOrEmpty(path) || !File.Exists(path))
+                var path = ResolveDrawingPath(f, editor);
+                if (string.IsNullOrEmpty(path))
                 {
+                    failed++;
+                    continue;
+                }
+                if (!File.Exists(path))
+                {
+                    editor.WriteMessage($"\n  ! file not found: {path}");
                     failed++;
                     continue;
                 }
@@ -83,7 +98,7 @@ namespace PipingSpecPlugin.Commands
                 }
                 catch (System.Exception ex)
                 {
-                    editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}");
+                    editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
                     failed++;
                 }
             }
@@ -93,6 +108,36 @@ namespace PipingSpecPlugin.Commands
                 + (failed > 0 ? $" ({failed} skipped)" : ""));
             foreach (var kv in byCategory.OrderByDescending(kv => kv.Value))
                 editor.WriteMessage($"\n    {kv.Value,6}  {kv.Key}");
+        }
+
+        /// <summary>
+        /// PnPProjectFile carries AbsoluteFileName / ResolvedFilePath
+        /// already resolved against the project root, so we don't have
+        /// to walk the project tree ourselves. Try ResolvedFilePath
+        /// first (it follows document-management redirection on cloud
+        /// projects), then AbsoluteFileName.
+        /// </summary>
+        static string ResolveDrawingPath(PnPProjectFile f,
+                                          Autodesk.AutoCAD.EditorInput.Editor editor)
+        {
+            try
+            {
+                var resolved = f.ResolvedFilePath;
+                if (!string.IsNullOrEmpty(resolved) && File.Exists(resolved))
+                    return resolved;
+            }
+            catch { /* fall through to AbsoluteFileName */ }
+
+            try
+            {
+                var abs = f.AbsoluteFileName;
+                if (!string.IsNullOrEmpty(abs)) return abs;
+            }
+            catch (System.Exception ex)
+            {
+                editor.WriteMessage($"\n  ! {f.Name}: AbsoluteFileName threw {ex.GetType().Name}");
+            }
+            return null;
         }
 
         static void CountFromActiveDoc(Dictionary<string, int> byCategory)

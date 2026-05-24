@@ -57,10 +57,20 @@ namespace PipingSpecPlugin.Spec
             // stencil. Anywhere — not just below the header — because
             // some templates have zero reserved rows and the only 9-cell
             // example lives elsewhere.
-            var stencil = trs.FirstOrDefault(r => r.Elements<TableCell>().Count() == 9
-                                                  && !IsHeaderRow(r))
+            var stencilSrc = trs.FirstOrDefault(r => r.Elements<TableCell>().Count() == 9
+                                                     && !IsHeaderRow(r))
                 ?? throw new InvalidOperationException(
                     "Template has no 9-cell row to use as a data-row stencil.");
+            // Take an isolated copy and strip vertical text + fixed-height
+            // properties before using it as the source of new rows. Some
+            // templates (including the ГОСТ one) keep a single tall row
+            // with btLr text direction in column 5 as the master sample;
+            // cloning that verbatim makes every data row tall and turns
+            // "шт." sideways. We don't touch the original stencil row in
+            // the template body, only this working copy.
+            var stencil = (TableRow)stencilSrc.CloneNode(deep: true);
+            NormalizeStencilCells(stencil);
+            NormalizeStencilHeight(stencil);
 
             var groups = GroupRows(rows, groupByLine);
             var pos = 1;
@@ -133,6 +143,37 @@ namespace PipingSpecPlugin.Spec
         static bool IsHeaderRow(TableRow row)
             => row.Elements<TableCell>().Count() == 1;
 
+        /// <summary>
+        /// Strip stencil-only properties that would otherwise propagate
+        /// to every data row: vertical text direction (cell-level) and
+        /// any vertical merge marker. Borders, shading, widths and
+        /// alignment stay — those define the table's look.
+        /// </summary>
+        static void NormalizeStencilCells(TableRow row)
+        {
+            foreach (var c in row.Elements<TableCell>())
+            {
+                var tcPr = c.Elements<TableCellProperties>().FirstOrDefault();
+                if (tcPr == null) continue;
+                foreach (var td in tcPr.Elements<TextDirection>().ToList()) td.Remove();
+                foreach (var vm in tcPr.Elements<VerticalMerge>().ToList()) vm.Remove();
+                foreach (var hm in tcPr.Elements<HorizontalMerge>().ToList()) hm.Remove();
+            }
+        }
+
+        /// <summary>
+        /// Drop any fixed row-height the stencil came with so each data
+        /// row auto-sizes to its content. Plant 3D's ГОСТ template keeps
+        /// the master row tall (about 1400 twentieths-of-a-point) for
+        /// vertical text — that's a stencil artefact, not a layout rule.
+        /// </summary>
+        static void NormalizeStencilHeight(TableRow row)
+        {
+            var trPr = row.Elements<TableRowProperties>().FirstOrDefault();
+            if (trPr == null) return;
+            foreach (var h in trPr.Elements<TableRowHeight>().ToList()) h.Remove();
+        }
+
         static string RowText(TableRow row)
         {
             var sb = new System.Text.StringBuilder();
@@ -154,6 +195,11 @@ namespace PipingSpecPlugin.Spec
             {
                 var idx = reserved[cursor++];
                 var tr = table.Elements<TableRow>().ElementAt(idx);
+                // Reserved rows in the ГОСТ template inherit the same
+                // vertical-text / tall-row formatting as the stencil; we
+                // want data behaviour on them too.
+                NormalizeStencilCells(tr);
+                NormalizeStencilHeight(tr);
                 ClearRowText(tr);
                 return tr;
             }

@@ -23,6 +23,12 @@ namespace PipingSpecPlugin.Spec
         // false here keeps behaviour close to the Python default for the
         // common case (the test project has no companion valves either).
         public bool ExcludeValveCompanions = false;
+
+        // PnPIDs of parts that are owned by equipment (nozzles, manways,
+        // internal supports) and must therefore never appear in the spec
+        // — they belong to the vessel/pump, not the piping. Populated by
+        // PartReader; empty if reader didn't see any equipment.
+        public ISet<int> EquipmentOwnedPnPIds = null;
     }
 
     /// <summary>
@@ -66,6 +72,15 @@ namespace PipingSpecPlugin.Spec
             foreach (var r in rows)
             {
                 if (statusSet != null && !statusSet.Contains(r.Status ?? ""))
+                    continue;
+
+                // Owned by equipment (nozzles, manways, internal supports):
+                // always excluded — they belong to the vessel/pump, not
+                // to the piping, and double-counting them in the spec is
+                // a known gotcha. Python edition does the same via the
+                // AssetOwnership SQLite table.
+                if (_opts.EquipmentOwnedPnPIds != null
+                    && _opts.EquipmentOwnedPnPIds.Contains(r.PnPID))
                     continue;
 
                 var category = NormalizeCategory(r);

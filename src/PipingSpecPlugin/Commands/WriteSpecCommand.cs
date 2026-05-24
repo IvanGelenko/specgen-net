@@ -48,10 +48,19 @@ namespace PipingSpecPlugin.Commands
             // will pick "whole project" anyway. If they pick "active dwg"
             // we filter the records in-memory rather than re-reading.
             editor.WriteMessage("\n[WRITESPEC] Scanning project...");
-            var projectRecords = CollectFromProject(project, editor).ToList();
-            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
+            var (projectRecords, ownedPnPIds) = CollectFromProject(project, editor);
+            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project"
+                + (ownedPnPIds.Count > 0
+                    ? $"; {ownedPnPIds.Count} owned by equipment (will be excluded)."
+                    : "."));
 
-            var facts = ProjectFacts.From(projectRecords);
+            // ProjectFacts drives the picker's checkbox counts. Strip the
+            // owned-by-equipment rows now so what the user sees in the UI
+            // matches what actually ends up in the spec.
+            var visibleRecords = ownedPnPIds.Count > 0
+                ? projectRecords.Where(r => !ownedPnPIds.Contains(r.PnPID)).ToList()
+                : projectRecords;
+            var facts = ProjectFacts.From(visibleRecords);
 
             var picker = new SpecPickerWindow(facts, project.Name, dwgLeaf,
                                               settings,
@@ -86,6 +95,7 @@ namespace PipingSpecPlugin.Commands
                 ExcludeEquipment = result.ExcludeEquipment,
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
+                EquipmentOwnedPnPIds = ownedPnPIds,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
@@ -159,9 +169,9 @@ namespace PipingSpecPlugin.Commands
             }
         }
 
-        // --- project-wide collection (re-used from LISTPROJECT) -----------
+        // --- project-wide collection -------------------------------------
 
-        static IEnumerable<PartRecord> CollectFromProject(
+        static (List<PartRecord> records, HashSet<int> ownedPnPIds) CollectFromProject(
             PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
         {
             Project piping = null;
@@ -171,7 +181,7 @@ namespace PipingSpecPlugin.Commands
             if (piping == null)
             {
                 editor.WriteMessage("\n[WRITESPEC] Project has no Piping discipline.");
-                return Array.Empty<PartRecord>();
+                return (new List<PartRecord>(), new HashSet<int>());
             }
 
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
@@ -182,6 +192,7 @@ namespace PipingSpecPlugin.Commands
 
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
             var all = new List<PartRecord>();
+            var owned = new HashSet<int>();
             foreach (var f in dwgFiles)
             {
                 string path = null;
@@ -191,25 +202,28 @@ namespace PipingSpecPlugin.Commands
 
                 try
                 {
+                    PartReadResult result;
                     if (string.Equals(path, activeDocPath, StringComparison.OrdinalIgnoreCase))
                     {
                         var doc = AcadApp.DocumentManager.MdiActiveDocument;
-                        all.AddRange(PartReader.ReadRows(doc.Database));
+                        result = PartReader.Read(doc.Database);
                     }
                     else
                     {
                         using var db = new Database(false, true);
                         db.ReadDwgFile(path, FileShare.Read, true, "");
                         db.CloseInput(true);
-                        all.AddRange(PartReader.ReadRows(db));
+                        result = PartReader.Read(db);
                     }
+                    all.AddRange(result.Records);
+                    foreach (var id in result.EquipmentOwnedPnPIds) owned.Add(id);
                 }
                 catch (System.Exception ex)
                 {
                     editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}");
                 }
             }
-            return all;
+            return (all, owned);
         }
     }
 }

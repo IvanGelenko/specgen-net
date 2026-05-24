@@ -5,6 +5,19 @@ using Autodesk.ProcessPower.DataLinks;
 namespace PipingSpecPlugin.Spec
 {
     /// <summary>
+    /// PartReader output: the row records plus a set of PnPIDs that are
+    /// owned by Equipment in the same drawing (nozzles, manways, internal
+    /// supports, etc.). The Python edition gets the latter from the
+    /// AssetOwnership SQLite table; on managed API we get the same data
+    /// via DataLinksManager.GetRelatedRowIds on Equipment rows.
+    /// </summary>
+    public class PartReadResult
+    {
+        public List<PartRecord> Records = new();
+        public HashSet<int> EquipmentOwnedPnPIds = new();
+    }
+
+    /// <summary>
     /// Pulls PartRecord instances out of a Plant 3D drawing's DataLinks
     /// blob. Iterating SelectAcPpRowIds gives us rowIds for every
     /// EngineeringItem in that drawing; GetAllProperties(rowId, true)
@@ -15,15 +28,16 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public static class PartReader
     {
-        public static IEnumerable<PartRecord> ReadRows(Database db)
+        public static PartReadResult Read(Database db)
         {
+            var result = new PartReadResult();
             DataLinksManager dlm;
             try { dlm = DataLinksManager.GetManager(db); }
-            catch { yield break; }
-            if (dlm == null) yield break;
+            catch { return result; }
+            if (dlm == null) return result;
 
             var rowIds = dlm.SelectAcPpRowIds(db);
-            if (rowIds == null) yield break;
+            if (rowIds == null) return result;
 
             foreach (int rowId in rowIds)
             {
@@ -35,9 +49,35 @@ namespace PipingSpecPlugin.Spec
                     rec = BuildRecord(rowId, props);
                 }
                 catch { /* skip broken rows */ }
-                if (rec != null) yield return rec;
+                if (rec == null) continue;
+                result.Records.Add(rec);
+
+                // Equipment ⇒ everything related to it is "owned" and
+                // should be excluded from the spec (nozzles, manways,
+                // internal supports). The Python edition does this via
+                // SELECT Owned FROM AssetOwnership; on managed API we
+                // pull related rowIds directly.
+                if (string.Equals(rec.PartCategory, "Equipment",
+                                  System.StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var related = dlm.GetRelatedRowIds(rowId);
+                        if (related != null)
+                            foreach (int ownedId in related)
+                                if (ownedId != rowId)
+                                    result.EquipmentOwnedPnPIds.Add(ownedId);
+                    }
+                    catch { /* relationship lookup is best-effort */ }
+                }
             }
+            return result;
         }
+
+        // Back-compat helper for diagnostic commands (LISTPARTS / LISTPROJECT)
+        // that don't care about the owned-by-equipment set.
+        public static IEnumerable<PartRecord> ReadRows(Database db)
+            => Read(db).Records;
 
         static PartRecord BuildRecord(int rowId,
             List<System.Collections.Generic.KeyValuePair<string, string>> props)

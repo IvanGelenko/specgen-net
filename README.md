@@ -9,8 +9,10 @@ talks to `Piping.dcf` directly via SQLite; this edition talks to the live
 Plant 3D in-memory model through the `PnP*Mgd` APIs, so it sees unsaved
 changes and can register a ribbon button natively without `.cuix` plumbing.
 
-Status: **early scaffold**. Available commands: `PSPING`, `GENSPEC`,
-`LISTPARTS`, `LISTPROJECT`, `SPECUI`, `WRITESPEC`.
+Status: **feature parity with Python edition (in progress)**. Available
+commands: `WRITESPEC` (whole project), `WRITESPECDWG` (active drawing),
+`SPECTEMPLATE` (pick/change template), plus the diagnostic helpers
+`PSPING`, `GENSPEC`, `LISTPARTS`, `LISTPROJECT`, `SPECUI`.
 
 ## Targets
 

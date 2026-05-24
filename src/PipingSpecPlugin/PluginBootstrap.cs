@@ -70,8 +70,12 @@ namespace PipingSpecPlugin
             };
 
             var panelSource = new RibbonPanelSource { Title = "Spec" };
-            panelSource.Items.Add(MakeButton("Generate", "WRITESPEC",
-                "Write a piping specification .docx for the active drawing."));
+            panelSource.Items.Add(MakeButton("Spec (project)", "WRITESPEC",
+                "Write a piping specification .docx for the whole project."));
+            panelSource.Items.Add(MakeButton("Spec (drawing)", "WRITESPECDWG",
+                "Write a piping specification .docx for the active drawing only."));
+            panelSource.Items.Add(MakeButton("Template...", "SPECTEMPLATE",
+                "Pick or change the spec .docx template used for generation."));
             panelSource.Items.Add(MakeButton("Preview", "SPECUI",
                 "Show a quick preview of category counts."));
             panelSource.Items.Add(MakeButton("Project info", "GENSPEC",

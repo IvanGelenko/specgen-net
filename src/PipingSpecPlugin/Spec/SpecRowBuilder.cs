@@ -1,0 +1,358 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Text.RegularExpressions;
+
+namespace PipingSpecPlugin.Spec
+{
+    public class SpecBuilderOptions
+    {
+        public IEnumerable<string> Statuses = SpecConstants.DefaultActiveStatuses;
+        public bool GroupByLine = false;
+        public bool ExcludeEquipment = true;
+        public bool ExcludeConnectors = true;
+        // ExcludeValveCompanions is a Python edition feature that needs a
+        // separate AssetOwnership-style query we don't have wired up yet;
+        // false here keeps behaviour close to the Python default for the
+        // common case (the test project has no companion valves either).
+        public bool ExcludeValveCompanions = false;
+    }
+
+    /// <summary>
+    /// Aggregates raw PartRecords into SpecRows ready for the docx
+    /// template. Mirrors the logic in the Python edition's fetch_rows()
+    /// — including the dedup-by-PnPID step, the pipe length conversion,
+    /// the weight-variance warning and the 10% pipe margin note. Keep
+    /// names and order in sync with that function so behaviour stays
+    /// comparable across the two editions.
+    /// </summary>
+    public class SpecRowBuilder
+    {
+        readonly SpecBuilderOptions _opts;
+        readonly List<string> _warnings = new List<string>();
+        public IReadOnlyList<string> Warnings => _warnings;
+
+        public SpecRowBuilder(SpecBuilderOptions opts = null)
+        {
+            _opts = opts ?? new SpecBuilderOptions();
+        }
+
+        public List<SpecRow> Build(IEnumerable<PartRecord> rows)
+        {
+            var statusSet = new HashSet<string>(_opts.Statuses ?? new string[0],
+                                                StringComparer.OrdinalIgnoreCase);
+
+            var buckets = new Dictionary<BucketKey, Bucket>();
+            var seenPids = new Dictionary<int, string>();   // pid -> first-seen LineTag
+            var multiLine = new HashSet<int>();
+            var zeroPipes = 0;
+
+            foreach (var r in rows)
+            {
+                // Status filter — match Python's status_clause.
+                if (statusSet.Count > 0 && !statusSet.Contains(r.Status ?? ""))
+                    continue;
+
+                var category = NormalizeCategory(r);
+                if (_opts.ExcludeEquipment && category == "Equipment") continue;
+                if (_opts.ExcludeConnectors && IsConnector(category, r)) continue;
+                if (string.IsNullOrEmpty(category)) continue;
+
+                // Dedup by PnPID. A part can be linked to multiple lines
+                // (multi-membership in P3dLineGroupPartRelationship); we
+                // count it once but warn the user.
+                var rawLine = string.IsNullOrEmpty(r.LineNumberTag)
+                    ? SpecConstants.NullLine
+                    : r.LineNumberTag;
+                var currentLine = _opts.GroupByLine ? rawLine : "";
+                if (seenPids.TryGetValue(r.PnPID, out var oldLine))
+                {
+                    if (oldLine != rawLine && !multiLine.Contains(r.PnPID))
+                    {
+                        multiLine.Add(r.PnPID);
+                        _warnings.Add(_opts.GroupByLine
+                            ? $"Компонент PnPID {r.PnPID} связан с несколькими линиями: '{oldLine}' и '{rawLine}'. Учтен только в '{oldLine}'."
+                            : $"Компонент PnPID {r.PnPID} связан с несколькими линиями ('{oldLine}', '{rawLine}', ...). Учтен один раз.");
+                    }
+                    continue;
+                }
+                seenPids[r.PnPID] = rawLine;
+
+                var isPipe = category == "Pipe";
+                var name = BuildName(category, r);
+                var typeMark = BuildTypeMark(r);
+                var ndVal = ParseDouble(r.NominalDiameter);
+                var nomUnit = (r.NominalUnit ?? "").Trim().ToLowerInvariant();
+                var material = (r.Material ?? "").Trim();
+                var spec = (r.Spec ?? "").Trim();
+                var itemCode = (r.ItemCode ?? "").Trim();
+                var manuf = (r.Manufacturer ?? "").Trim();
+
+                // Pipes with zero/empty length are skipped — they show
+                // up in the DB but represent stubs the spec shouldn't
+                // try to quantify.
+                if (isPipe)
+                {
+                    var lenRaw = ParseDouble(r.Length);
+                    if (lenRaw <= 0.0)
+                    {
+                        zeroPipes++;
+                        seenPids.Remove(r.PnPID);
+                        continue;
+                    }
+                }
+
+                var toMeters = LengthFactor(r.LengthUnit);
+                var toKg = WeightFactor(r.WeightUnit);
+
+                var key = new BucketKey(category, name, ndVal, nomUnit, material,
+                                        spec, typeMark, itemCode, manuf, currentLine);
+                if (!buckets.TryGetValue(key, out var b))
+                {
+                    b = new Bucket { LineTag = currentLine };
+                    buckets[key] = b;
+                }
+
+                if (isPipe)
+                {
+                    b.Qty += ParseDouble(r.Length) * toMeters;
+                    var lw = ParseNullableDouble(r.LinearWeight);
+                    if (lw.HasValue)
+                    {
+                        b.Weights.Add(lw.Value * toKg);
+                    }
+                    else
+                    {
+                        var w = ParseNullableDouble(r.Weight);
+                        var l = ParseNullableDouble(r.Length);
+                        if (w.HasValue && l.HasValue && l.Value > 0)
+                        {
+                            var lenM = l.Value * toMeters;
+                            if (lenM > 0) b.Weights.Add(w.Value * toKg / lenM);
+                        }
+                    }
+                }
+                else
+                {
+                    b.Qty += 1;
+                    var w = ParseNullableDouble(r.Weight);
+                    if (w.HasValue) b.Weights.Add(w.Value * toKg);
+                }
+            }
+
+            if (zeroPipes > 0)
+                _warnings.Add($"Исключено {zeroPipes} сегментов труб с нулевой или пустой длиной.");
+
+            var result = new List<SpecRow>();
+            foreach (var kv in buckets)
+            {
+                var k = kv.Key;
+                var b = kv.Value;
+                var isPipe = k.Category == "Pipe";
+
+                double weight = 0;
+                string weightWarning = "";
+                if (b.Weights.Count > 0)
+                {
+                    var min = b.Weights.Min();
+                    var max = b.Weights.Max();
+                    if (min > 0 && (max - min) / min > 0.05)
+                    {
+                        weightWarning = $"Внимание: разный вес {min:g}..{max:g} кг";
+                        weight = b.Weights.Average();
+                        _warnings.Add(
+                            $"Разнородные веса в группе '{k.Name}': {min:g}..{max:g} кг. Использовано среднее: {weight:F3} кг.");
+                    }
+                    else
+                    {
+                        weight = b.Weights[0];
+                    }
+                }
+
+                double qty;
+                string note;
+                if (isPipe)
+                {
+                    // Round up to nearest 0.1 m so the spec never under-
+                    // reports the required length, then add a 10% safety
+                    // note for procurement.
+                    qty = Math.Ceiling(b.Qty * 10.0) / 10.0;
+                    var margin = (int)Math.Ceiling(qty * 1.1);
+                    var noteParts = new List<string> { $"с учетом 10% запаса: {margin} м" };
+                    if (!string.IsNullOrEmpty(weightWarning)) noteParts.Add(weightWarning);
+                    note = string.Join("; ", noteParts);
+                }
+                else
+                {
+                    qty = b.Qty;
+                    note = weightWarning;
+                }
+
+                result.Add(new SpecRow
+                {
+                    Category = k.Category,
+                    Name = k.Name,
+                    TypeMark = k.TypeMark,
+                    ItemCode = k.ItemCode,
+                    Manufacturer = k.Manufacturer,
+                    Unit = isPipe ? "м" : "шт.",
+                    Qty = Math.Round(qty, 2),
+                    Weight = Math.Round(weight, 3),
+                    Note = note,
+                    LineTag = k.LineTag,
+                });
+            }
+
+            result.Sort((a, b) =>
+            {
+                var lc = string.Compare(a.LineTag ?? "", b.LineTag ?? "", StringComparison.Ordinal);
+                if (lc != 0) return lc;
+                var ai = Array.IndexOf(SpecConstants.CategoryOrder, a.Category);
+                var bi = Array.IndexOf(SpecConstants.CategoryOrder, b.Category);
+                if (ai < 0) ai = 999;
+                if (bi < 0) bi = 999;
+                if (ai != bi) return ai.CompareTo(bi);
+                return string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.Ordinal);
+            });
+            return result;
+        }
+
+        // ---- helpers ----------------------------------------------------
+
+        static readonly Regex WsRun = new Regex(@"\s+", RegexOptions.Compiled);
+        static string CollapseWs(string s) => WsRun.Replace(s ?? "", " ").Trim();
+
+        static string NormalizeCategory(PartRecord r)
+        {
+            // Match Python's CATEGORY_SQL: equipment is detected via the
+            // AssetOwnership table (we don't have it; use PartCategory as-is)
+            // and supports via the iso symbol definition substring.
+            if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
+                && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "Supports";
+            return r.PartCategory ?? "";
+        }
+
+        static bool IsConnector(string category, PartRecord r)
+        {
+            if (!(string.IsNullOrEmpty(category)
+                  || category == SpecConstants.NullCategory
+                  || category == "Fasteners"))
+                return false;
+            foreach (var fld in new[] { r.ShortDescription, r.PartSizeLongDesc, r.PartFamilyLongDesc })
+            {
+                var t = (fld ?? "").ToLowerInvariant();
+                foreach (var kw in SpecConstants.ConnectorKeywords)
+                    if (t.Contains(kw)) return true;
+            }
+            return false;
+        }
+
+        static string BuildName(string category, PartRecord r)
+        {
+            if (category == "Equipment" && !string.IsNullOrWhiteSpace(r.EquipTag))
+            {
+                var tag = r.EquipTag.Trim();
+                var desc = FirstNonEmpty(r.PartFamilyLongDesc, r.PartSizeLongDesc, r.ShortDescription) ?? "";
+                desc = desc.Trim();
+                string name;
+                if (!string.IsNullOrEmpty(desc))
+                    name = desc.Contains(tag) ? desc : $"{desc} {tag}";
+                else
+                    name = tag;
+                return CollapseWs(name);
+            }
+            // PartSizeLongDesc already contains size formatted as Plant 3D
+            // shows it (e.g. '4" ND'); prefer it as-is.
+            var n = FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "";
+            return CollapseWs(n);
+        }
+
+        static string BuildTypeMark(PartRecord r)
+        {
+            var parts = new List<string>();
+            foreach (var s in new[] { r.DesignStd, r.CompatibleStandard, r.Spec })
+            {
+                var v = (s ?? "").Trim();
+                if (v.Length > 0 && !parts.Contains(v)) parts.Add(v);
+            }
+            return string.Join(" / ", parts);
+        }
+
+        static string FirstNonEmpty(params string[] xs)
+        {
+            foreach (var x in xs)
+                if (!string.IsNullOrWhiteSpace(x)) return x;
+            return null;
+        }
+
+        static double ParseDouble(string s)
+            => ParseNullableDouble(s) ?? 0.0;
+
+        static double? ParseNullableDouble(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            // Plant 3D writes numbers with '.' decimal regardless of
+            // Windows locale, so force invariant parsing.
+            if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v))
+                return v;
+            return null;
+        }
+
+        static double LengthFactor(string unit)
+        {
+            var u = (unit ?? "").Trim().ToLowerInvariant();
+            switch (u)
+            {
+                case "":
+                case "mm": return 0.001;
+                case "cm": return 0.01;
+                case "m":  return 1.0;
+                case "in": return 0.0254;
+                case "ft": return 0.3048;
+                default:   return 0.001;
+            }
+        }
+
+        static double WeightFactor(string unit)
+        {
+            var u = (unit ?? "").Trim().ToLowerInvariant();
+            switch (u)
+            {
+                case "":
+                case "kg":
+                case "kg/m": return 1.0;
+                case "g":    return 0.001;
+                case "lb":   return 0.45359237;
+                case "lb/ft":return 1.488163943;
+                default:     return 1.0;
+            }
+        }
+
+        sealed class Bucket
+        {
+            public double Qty;
+            public readonly List<double> Weights = new List<double>();
+            public string LineTag;
+        }
+
+        readonly struct BucketKey : IEquatable<BucketKey>
+        {
+            public readonly string Category, Name, NomUnit, Material, Spec, TypeMark, ItemCode, Manufacturer, LineTag;
+            public readonly double NdVal;
+            public BucketKey(string c, string n, double nd, string nu, string m, string s,
+                             string tm, string ic, string mf, string lt)
+            { Category=c; Name=n; NdVal=nd; NomUnit=nu; Material=m; Spec=s; TypeMark=tm; ItemCode=ic; Manufacturer=mf; LineTag=lt; }
+            public bool Equals(BucketKey o)
+                => Category==o.Category && Name==o.Name && NdVal.Equals(o.NdVal)
+                && NomUnit==o.NomUnit && Material==o.Material && Spec==o.Spec
+                && TypeMark==o.TypeMark && ItemCode==o.ItemCode
+                && Manufacturer==o.Manufacturer && LineTag==o.LineTag;
+            public override bool Equals(object o) => o is BucketKey k && Equals(k);
+            public override int GetHashCode() => HashCode.Combine(
+                Category, Name, NdVal, NomUnit, Material, Spec,
+                HashCode.Combine(TypeMark, ItemCode, Manufacturer, LineTag));
+        }
+    }
+}

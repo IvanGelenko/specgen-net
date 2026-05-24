@@ -1,0 +1,82 @@
+using System.Collections.Generic;
+using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.ProcessPower.DataLinks;
+
+namespace PipingSpecPlugin.Spec
+{
+    /// <summary>
+    /// Pulls PartRecord instances out of a Plant 3D drawing's DataLinks
+    /// blob. Iterating SelectAcPpRowIds gives us rowIds for every
+    /// EngineeringItem in that drawing; GetAllProperties(rowId, true)
+    /// returns the inherited property bag we then map onto PartRecord
+    /// by name. Skipping a row when properties throw (corrupted link,
+    /// stale row) is intentional — one broken part should not kill
+    /// the whole spec.
+    /// </summary>
+    public static class PartReader
+    {
+        public static IEnumerable<PartRecord> ReadRows(Database db)
+        {
+            DataLinksManager dlm;
+            try { dlm = DataLinksManager.GetManager(db); }
+            catch { yield break; }
+            if (dlm == null) yield break;
+
+            var rowIds = dlm.SelectAcPpRowIds(db);
+            if (rowIds == null) yield break;
+
+            foreach (int rowId in rowIds)
+            {
+                PartRecord rec = null;
+                try
+                {
+                    var props = dlm.GetAllProperties(rowId, true);
+                    if (props == null) continue;
+                    rec = BuildRecord(rowId, props);
+                }
+                catch { /* skip broken rows */ }
+                if (rec != null) yield return rec;
+            }
+        }
+
+        static PartRecord BuildRecord(int rowId,
+            List<System.Collections.Generic.KeyValuePair<string, string>> props)
+        {
+            // Linear scan: there are ~90 properties per row, and the cost
+            // of building a dictionary every time outweighs the lookup
+            // savings on this many fields.
+            string Get(string key)
+            {
+                foreach (var kv in props)
+                    if (kv.Key == key) return kv.Value;
+                return null;
+            }
+
+            return new PartRecord
+            {
+                PnPID = rowId,
+                Status = Get("Status"),
+                PartCategory = Get("PartCategory"),
+                PartFamilyLongDesc = Get("PartFamilyLongDesc"),
+                PartSizeLongDesc = Get("PartSizeLongDesc"),
+                ShortDescription = Get("ShortDescription"),
+                NominalDiameter = Get("NominalDiameter"),
+                NominalUnit = Get("NominalUnit"),
+                Material = Get("Material"),
+                Spec = Get("Spec"),
+                ItemCode = Get("ItemCode"),
+                Manufacturer = Get("Manufacturer"),
+                DesignStd = Get("DesignStd"),
+                CompatibleStandard = Get("CompatibleStandard"),
+                Weight = Get("Weight"),
+                LengthUnit = Get("LengthUnit"),
+                WeightUnit = Get("WeightUnit"),
+                Length = Get("Length"),
+                LinearWeight = Get("LinearWeight"),
+                LineNumberTag = Get("LineNumberTag"),
+                ContentIsoSymbolDefinition = Get("ContentIsoSymbolDefinition"),
+                EquipTag = Get("Tag"),
+            };
+        }
+    }
+}

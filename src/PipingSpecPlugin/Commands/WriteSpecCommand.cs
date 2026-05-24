@@ -66,20 +66,36 @@ namespace PipingSpecPlugin.Commands
                                            StringComparison.OrdinalIgnoreCase))
                 .ToList();
             editor.WriteMessage($"\n[WRITESPEC] Topology graph: {topology.Count} nodes; {valves.Count} valve(s) seen.");
+            string Tag(int id) => byId.TryGetValue(id, out var rr)
+                ? $"{id}[{rr.PartCategory ?? "?"}/{rr.PnPClassName ?? "?"}]"
+                : $"{id}[?]";
             foreach (var v in valves.Take(3))
             {
                 topology.TryGetValue(v.PnPID, out var nbrs);
-                var nbrStr = nbrs == null
-                    ? "(no neighbours)"
-                    : string.Join(", ", nbrs.Select(id =>
-                        byId.TryGetValue(id, out var rr)
-                            ? $"{id}[{rr.PartCategory ?? "?"}/{rr.PnPClassName ?? "?"}]"
-                            : $"{id}[?]"));
-                editor.WriteMessage($"\n    valve#{v.PnPID} -> {nbrStr}");
+                editor.WriteMessage($"\n    valve#{v.PnPID} immediate -> "
+                    + (nbrs == null ? "(no neighbours)"
+                                    : string.Join(", ", nbrs.Select(Tag))));
+                // Hop +1: for each immediate neighbour print what it sees.
+                if (nbrs != null)
+                {
+                    foreach (var n1 in nbrs)
+                    {
+                        topology.TryGetValue(n1, out var n2s);
+                        editor.WriteMessage($"\n      {Tag(n1)} -> "
+                            + (n2s == null ? "(leaf)"
+                                           : string.Join(", ", n2s.Where(x => x != v.PnPID).Select(Tag))));
+                    }
+                }
             }
 
             var companionIds = ValveCompanionFinder.Discover(projectRecords, topology);
             editor.WriteMessage($"\n[WRITESPEC] Valve-companion candidates found: {companionIds.Count}.");
+            if (companionIds.Count > 0)
+            {
+                editor.WriteMessage("\n  companion PnPIDs: "
+                    + string.Join(", ", companionIds.Take(20).Select(Tag))
+                    + (companionIds.Count > 20 ? $" (+{companionIds.Count - 20} more)" : ""));
+            }
 
             // ProjectFacts drives the picker's checkbox counts. Strip the
             // owned-by-equipment rows now so what the user sees in the UI

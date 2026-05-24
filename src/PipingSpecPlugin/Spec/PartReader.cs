@@ -108,14 +108,28 @@ namespace PipingSpecPlugin.Spec
         }
 
         /// <summary>
-        /// Iterate every entity in model space, ask the connection-iterator
-        /// for its neighbours, and translate the ObjectIds back to rowIds
-        /// (PnPIDs). Builds a bidirectional adjacency dictionary suitable
-        /// for the Walk in ValveCompanionFinder.
+        /// Iterate every entity in model space and ask ConnectionManager
+        /// for its *direct* P3dPartConnection neighbours. Each Connection
+        /// is a single record with ObjectId1/ObjectId2 — the two ports
+        /// that physically touch. This is the managed equivalent of the
+        /// Python edition's P3dPartConnection SQL join.
+        ///
+        /// Earlier attempt used ConnectionIterator, which (empirically)
+        /// walked the *transitive closure* of the network from the
+        /// starting part — every Pipe / Connector / Flange ever reachable
+        /// from a valve came back as its neighbour. That produced false
+        /// positives in companion detection (every flange in the
+        /// connected network got dropped). GetConnections returns just
+        /// the immediate edges, so two-hop Valve → Connector → Flange
+        /// works the same way as Python's two-JOIN walk.
         /// </summary>
         static void BuildTopology(Database db, DataLinksManager dlm,
                                   PartReadResult result)
         {
+            ConnectionManager cm;
+            try { cm = new ConnectionManager(); }
+            catch { return; }
+
             using var tr = db.TransactionManager.StartTransaction();
             try
             {
@@ -130,26 +144,29 @@ namespace PipingSpecPlugin.Spec
                     catch { continue; }
                     if (fromRowId == 0) continue;
 
-                    ConnectionIterator it = null;
-                    try { it = ConnectionIterator.NewIterator(entId); }
+                    ConnectionCollection conns;
+                    try { conns = cm.GetConnections(entId); }
                     catch { continue; }
-                    if (it == null) continue;
-                    try { it.Start(); } catch { continue; }
-                    while (!it.Done())
+                    if (conns == null) continue;
+
+                    // ConnectionCollection exposes only an indexer + Item
+                    // property, no Count. Try indices until it throws.
+                    for (var i = 0; ; i++)
                     {
-                        var otherId = it.ObjectId;
-                        if (!otherId.IsNull && otherId != entId)
-                        {
-                            int toRowId = 0;
-                            try { toRowId = dlm.FindAcPpRowId(otherId); }
-                            catch { /* skip this neighbour */ }
-                            if (toRowId != 0 && toRowId != fromRowId)
-                            {
-                                AddEdge(result.Topology, fromRowId, toRowId);
-                                AddEdge(result.Topology, toRowId, fromRowId);
-                            }
-                        }
-                        try { if (!it.Next()) break; } catch { break; }
+                        Connection c;
+                        try { c = conns[i]; }
+                        catch { break; }
+                        if (c == null) break;
+                        var otherId = c.ObjectId1 == entId
+                            ? c.ObjectId2
+                            : (c.ObjectId2 == entId ? c.ObjectId1 : ObjectId.Null);
+                        if (otherId.IsNull) continue;
+                        int toRowId = 0;
+                        try { toRowId = dlm.FindAcPpRowId(otherId); }
+                        catch { continue; }
+                        if (toRowId == 0 || toRowId == fromRowId) continue;
+                        AddEdge(result.Topology, fromRowId, toRowId);
+                        AddEdge(result.Topology, toRowId, fromRowId);
                     }
                 }
             }

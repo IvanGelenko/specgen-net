@@ -47,7 +47,10 @@
     </Reference>
 
     <!-- Plant 3D managed APIs. PnP.dll is native ARX (no metadata), do not
-         reference it. The *Mgd suffix denotes managed wrappers. -->
+         reference it. The *Mgd suffix denotes managed wrappers.
+         PnPProjectManagerMgd hosts Autodesk.ProcessPower.PlantInstance.PlantApplication
+         (the singleton-style host with the static CurrentProject accessor) and
+         Autodesk.ProcessPower.ProjectManager.PlantProject. -->
     <Reference Include="PnP3dMain">
       <HintPath>$(Plnt3DDir)\PnP3dMain.dll</HintPath>
       <Private>False</Private>
@@ -58,6 +61,10 @@
     </Reference>
     <Reference Include="PnP3dObjectsMgd">
       <HintPath>$(Plnt3DDir)\PnP3dObjectsMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnPProjectManagerMgd">
+      <HintPath>$(Plnt3DDir)\PnPProjectManagerMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

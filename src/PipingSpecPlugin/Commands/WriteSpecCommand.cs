@@ -144,6 +144,12 @@ namespace PipingSpecPlugin.Commands
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
                 editor.WriteMessage("\n  [WARN] " + w);
+            if (builder.DropReasons.Count > 0)
+            {
+                editor.WriteMessage("\n[WRITESPEC] Filter audit (drops by reason):");
+                foreach (var kv in builder.DropReasons.OrderByDescending(kv => kv.Value))
+                    editor.WriteMessage($"\n    {kv.Value,6}  {kv.Key}");
+            }
 
             if (specRows.Count == 0)
             {

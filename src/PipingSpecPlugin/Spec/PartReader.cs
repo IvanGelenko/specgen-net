@@ -284,6 +284,12 @@ namespace PipingSpecPlugin.Spec
                 PnPClassName = Get("PnPClassName"),
                 PressureClass = Get("PressureClass"),
                 Facing = Get("Facing"),
+                // Bolt sets and gasket multi-packs carry their piece count
+                // under one of several names depending on the part family.
+                // Try in order, fall through to null if none populated.
+                Quantity = Get("Quantity") ?? Get("NumBolts")
+                            ?? Get("BoltCount") ?? Get("Count")
+                            ?? Get("NumberOfBolts"),
             };
         }
     }

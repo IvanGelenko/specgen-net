@@ -53,5 +53,11 @@ namespace PipingSpecPlugin.Spec
         // but we keep these around for future refinements).
         public string PressureClass;
         public string Facing;
+
+        // For multi-piece parts (bolt sets carry a "Quantity" of physical
+        // bolts in the set). Builder multiplies the row count by this so
+        // a single BoltSet PnPID with Quantity=8 lands as qty=8 in the
+        // spec. Falls back to 1 when the property is missing.
+        public string Quantity;
     }
 }

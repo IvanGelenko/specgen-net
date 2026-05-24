@@ -50,6 +50,16 @@ namespace PipingSpecPlugin.Spec
         readonly List<string> _warnings = new List<string>();
         public IReadOnlyList<string> Warnings => _warnings;
 
+        // Diagnostic: counts of rows dropped at each gate. Populated by
+        // Build(); WRITESPEC prints it so users can see exactly which
+        // filter ate their parts.
+        public Dictionary<string, int> DropReasons { get; } = new();
+        void Drop(string reason)
+        {
+            DropReasons.TryGetValue(reason, out var c);
+            DropReasons[reason] = c + 1;
+        }
+
         public SpecRowBuilder(SpecBuilderOptions opts = null)
         {
             _opts = opts ?? new SpecBuilderOptions();
@@ -77,29 +87,24 @@ namespace PipingSpecPlugin.Spec
             foreach (var r in rows)
             {
                 if (statusSet != null && !statusSet.Contains(r.Status ?? ""))
-                    continue;
+                { Drop("status"); continue; }
 
-                // Owned by equipment (nozzles, manways, internal supports):
-                // always excluded — they belong to the vessel/pump, not
-                // to the piping, and double-counting them in the spec is
-                // a known gotcha. Python edition does the same via the
-                // AssetOwnership SQLite table.
                 if (_opts.EquipmentOwnedPnPIds != null
                     && _opts.EquipmentOwnedPnPIds.Contains(r.PnPID))
-                    continue;
+                { Drop("equipment-owned"); continue; }
 
-                // Valve companions (flange + gasket + bolt set that sit
-                // immediately on either side of a valve) — only excluded
-                // when the user ticks the matching checkbox.
                 if (_opts.ExcludeValveCompanions
                     && _opts.ValveCompanionPnPIds != null
                     && _opts.ValveCompanionPnPIds.Contains(r.PnPID))
-                    continue;
+                { Drop("valve-companion"); continue; }
 
                 var category = NormalizeCategory(r);
-                if (_opts.ExcludeEquipment && category == "Equipment") continue;
-                if (_opts.ExcludeConnectors && IsConnector(category, r)) continue;
-                if (string.IsNullOrEmpty(category)) continue;
+                if (_opts.ExcludeEquipment && category == "Equipment")
+                { Drop("equipment-category"); continue; }
+                if (_opts.ExcludeConnectors && IsConnector(category, r))
+                { Drop("connector-keyword"); continue; }
+                if (string.IsNullOrEmpty(category))
+                { Drop("empty-category"); continue; }
 
                 // Category filter — using Plant 3D's category key (not the
                 // localized label). NullCategory sentinel lets the user
@@ -107,7 +112,8 @@ namespace PipingSpecPlugin.Spec
                 if (catSet != null)
                 {
                     var catKey = string.IsNullOrEmpty(category) ? SpecConstants.NullCategory : category;
-                    if (!catSet.Contains(catKey)) continue;
+                    if (!catSet.Contains(catKey))
+                    { Drop($"category-not-selected:{catKey}"); continue; }
                 }
 
                 // Dedup by PnPID. A part can be linked to multiple lines
@@ -116,7 +122,8 @@ namespace PipingSpecPlugin.Spec
                 var rawLine = string.IsNullOrEmpty(r.LineNumberTag)
                     ? SpecConstants.NullLine
                     : r.LineNumberTag;
-                if (lineSet != null && !lineSet.Contains(rawLine)) continue;
+                if (lineSet != null && !lineSet.Contains(rawLine))
+                { Drop($"line-not-selected:{rawLine}"); continue; }
                 var currentLine = _opts.GroupByLine ? rawLine : "";
                 if (seenPids.TryGetValue(r.PnPID, out var oldLine))
                 {
@@ -127,6 +134,7 @@ namespace PipingSpecPlugin.Spec
                             ? $"Компонент PnPID {r.PnPID} связан с несколькими линиями: '{oldLine}' и '{rawLine}'. Учтен только в '{oldLine}'."
                             : $"Компонент PnPID {r.PnPID} связан с несколькими линиями ('{oldLine}', '{rawLine}', ...). Учтен один раз.");
                     }
+                    Drop("dedup-by-pid");
                     continue;
                 }
                 seenPids[r.PnPID] = rawLine;
@@ -151,6 +159,7 @@ namespace PipingSpecPlugin.Spec
                     {
                         zeroPipes++;
                         seenPids.Remove(r.PnPID);
+                        Drop("pipe-zero-length");
                         continue;
                     }
                 }
@@ -187,7 +196,16 @@ namespace PipingSpecPlugin.Spec
                 }
                 else
                 {
-                    b.Qty += 1;
+                    // Most parts contribute 1 piece, but bolt sets and
+                    // multi-pack gaskets carry an embedded piece count
+                    // under "Quantity"/"NumBolts"/etc. Use it when present
+                    // and >= 1 so a single BoltSet PnPID with 8 bolts
+                    // lands as qty=8 in the spec; otherwise keep the
+                    // historical behaviour of counting the row as 1 piece.
+                    var qparsed = ParseNullableDouble(r.Quantity);
+                    var pieces = qparsed.HasValue && qparsed.Value >= 1
+                        ? qparsed.Value : 1.0;
+                    b.Qty += pieces;
                     var w = ParseNullableDouble(r.Weight);
                     if (w.HasValue) b.Weights.Add(w.Value * toKg);
                 }

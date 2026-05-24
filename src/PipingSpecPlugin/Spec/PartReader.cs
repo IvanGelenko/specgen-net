@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.ProcessPower.DataLinks;
+using Autodesk.ProcessPower.PnP3dObjects;
 
 namespace PipingSpecPlugin.Spec
 {
@@ -74,24 +75,6 @@ namespace PipingSpecPlugin.Spec
                 if (rec == null) continue;
                 result.Records.Add(rec);
 
-                // Build the topology graph: every row's neighbours through
-                // P3dPartConnection. This is what valve-companion discovery
-                // walks (Valve → Connector → Flange). GetRelatedRowIds is
-                // a best-effort call — if it throws, the part just becomes
-                // a graph leaf and detection will fall back to fallback_key.
-                try
-                {
-                    var related = dlm.GetRelatedRowIds(rowId);
-                    if (related != null)
-                    {
-                        var ids = new List<int>();
-                        foreach (int id in related)
-                            if (id != rowId) ids.Add(id);
-                        if (ids.Count > 0) result.Topology[rowId] = ids;
-                    }
-                }
-                catch { /* best-effort */ }
-
                 // Equipment-owned exclusion (manways, internal supports
                 // attached to vessels). Plant 3D doesn't always populate
                 // a separate "Equipment" PartCategory — vessels often go
@@ -105,6 +88,14 @@ namespace PipingSpecPlugin.Spec
                     CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds);
                 }
             }
+
+            // Build topology by walking ConnectionIterator on every part
+            // ObjectId in model space. This is the managed API equivalent
+            // of Python's P3dPartConnection SQL — it returns the same
+            // connector-mediated part-to-part graph. GetRelatedRowIds was
+            // attempted earlier but came back empty on real projects, so
+            // we go through the connection manager directly.
+            BuildTopology(db, dlm, result);
             return result;
             }
             finally
@@ -114,6 +105,66 @@ namespace PipingSpecPlugin.Spec
                     try { HostApplicationServices.WorkingDatabase = prevWorking; } catch { }
                 }
             }
+        }
+
+        /// <summary>
+        /// Iterate every entity in model space, ask the connection-iterator
+        /// for its neighbours, and translate the ObjectIds back to rowIds
+        /// (PnPIDs). Builds a bidirectional adjacency dictionary suitable
+        /// for the Walk in ValveCompanionFinder.
+        /// </summary>
+        static void BuildTopology(Database db, DataLinksManager dlm,
+                                  PartReadResult result)
+        {
+            using var tr = db.TransactionManager.StartTransaction();
+            try
+            {
+                var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                if (msId.IsNull) return;
+                var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
+
+                foreach (ObjectId entId in ms)
+                {
+                    int fromRowId;
+                    try { fromRowId = dlm.FindAcPpRowId(entId); }
+                    catch { continue; }
+                    if (fromRowId == 0) continue;
+
+                    ConnectionIterator it = null;
+                    try { it = ConnectionIterator.NewIterator(entId); }
+                    catch { continue; }
+                    if (it == null) continue;
+                    try { it.Start(); } catch { continue; }
+                    while (!it.Done())
+                    {
+                        var otherId = it.ObjectId;
+                        if (!otherId.IsNull && otherId != entId)
+                        {
+                            int toRowId = 0;
+                            try { toRowId = dlm.FindAcPpRowId(otherId); }
+                            catch { /* skip this neighbour */ }
+                            if (toRowId != 0 && toRowId != fromRowId)
+                            {
+                                AddEdge(result.Topology, fromRowId, toRowId);
+                                AddEdge(result.Topology, toRowId, fromRowId);
+                            }
+                        }
+                        try { if (!it.Next()) break; } catch { break; }
+                    }
+                }
+            }
+            catch { /* topology is best-effort; spec still works without it */ }
+            finally
+            {
+                try { tr.Commit(); } catch { }
+            }
+        }
+
+        static void AddEdge(Dictionary<int, List<int>> graph, int from, int to)
+        {
+            if (!graph.TryGetValue(from, out var list))
+                graph[from] = list = new List<int>();
+            if (!list.Contains(to)) list.Add(to);
         }
 
         // Back-compat helper for diagnostic commands (LISTPARTS / LISTPROJECT)

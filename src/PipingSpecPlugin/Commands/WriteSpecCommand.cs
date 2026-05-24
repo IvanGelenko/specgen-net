@@ -54,9 +54,32 @@ namespace PipingSpecPlugin.Commands
             // Discover valve companions up-front so we can show the user
             // the count before they generate. The actual exclusion happens
             // only when the checkbox is on, but we always run the search.
+            // First, a topology diagnostic — print every Valve's neighbour
+            // list and the class of each neighbour. If this comes back
+            // empty or wrong, the Discovery is going to fail too and we
+            // need a different relationship API.
+            var byId = new Dictionary<int, PartRecord>();
+            foreach (var r in projectRecords)
+                if (!byId.ContainsKey(r.PnPID)) byId.Add(r.PnPID, r);
+            var valves = byId.Values
+                .Where(r => string.Equals(r.PartCategory, "Valves",
+                                           StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            editor.WriteMessage($"\n[WRITESPEC] Topology graph: {topology.Count} nodes; {valves.Count} valve(s) seen.");
+            foreach (var v in valves.Take(3))
+            {
+                topology.TryGetValue(v.PnPID, out var nbrs);
+                var nbrStr = nbrs == null
+                    ? "(no neighbours)"
+                    : string.Join(", ", nbrs.Select(id =>
+                        byId.TryGetValue(id, out var rr)
+                            ? $"{id}[{rr.PartCategory ?? "?"}/{rr.PnPClassName ?? "?"}]"
+                            : $"{id}[?]"));
+                editor.WriteMessage($"\n    valve#{v.PnPID} -> {nbrStr}");
+            }
+
             var companionIds = ValveCompanionFinder.Discover(projectRecords, topology);
-            if (companionIds.Count > 0)
-                editor.WriteMessage($"\n[WRITESPEC] Valve-companion candidates found: {companionIds.Count} (flange/gasket/bolt-set tuples).");
+            editor.WriteMessage($"\n[WRITESPEC] Valve-companion candidates found: {companionIds.Count}.");
 
             // ProjectFacts drives the picker's checkbox counts. Strip the
             // owned-by-equipment rows now so what the user sees in the UI

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.ProcessPower.AcPp3dObjectsUtils;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.PnP3dObjects;
 
@@ -139,10 +140,20 @@ namespace PipingSpecPlugin.Spec
 
                 foreach (ObjectId entId in ms)
                 {
-                    int fromRowId;
+                    int fromRowId = 0;
                     try { fromRowId = dlm.FindAcPpRowId(entId); }
-                    catch { continue; }
-                    if (fromRowId == 0) continue;
+                    catch { /* not a Plant 3D entity */ }
+
+                    // Equipment recognition is independent of a rowId — a
+                    // vessel may not produce its own EngineeringItems row,
+                    // but its connections still need to flag its child
+                    // nozzles as owned. We always probe IsPnP3dEquipment
+                    // and route accordingly.
+                    bool isEquipment = false;
+                    try { isEquipment = Runtime.IsPnP3dEquipment(entId); }
+                    catch { }
+
+                    if (fromRowId == 0 && !isEquipment) continue;
 
                     ConnectionCollection conns;
                     try { conns = cm.GetConnections(entId); }
@@ -164,9 +175,25 @@ namespace PipingSpecPlugin.Spec
                         int toRowId = 0;
                         try { toRowId = dlm.FindAcPpRowId(otherId); }
                         catch { continue; }
-                        if (toRowId == 0 || toRowId == fromRowId) continue;
-                        AddEdge(result.Topology, fromRowId, toRowId);
-                        AddEdge(result.Topology, toRowId, fromRowId);
+                        if (toRowId == 0) continue;
+
+                        // Equipment node ⇒ its neighbour is an owned part
+                        // (Python equivalent: SELECT Owned FROM AssetOwnership
+                        // joined on the vessel). Two-hop walk also picks up
+                        // connector-bridged children — IsPnP3dConnector on the
+                        // neighbour triggers a follow-on lookup.
+                        if (isEquipment)
+                        {
+                            result.EquipmentOwnedPnPIds.Add(toRowId);
+                            FollowConnectorChildren(cm, dlm, otherId, toRowId,
+                                                     result.EquipmentOwnedPnPIds);
+                        }
+
+                        if (fromRowId != 0 && toRowId != fromRowId)
+                        {
+                            AddEdge(result.Topology, fromRowId, toRowId);
+                            AddEdge(result.Topology, toRowId, fromRowId);
+                        }
                     }
                 }
             }
@@ -174,6 +201,45 @@ namespace PipingSpecPlugin.Spec
             finally
             {
                 try { tr.Commit(); } catch { }
+            }
+        }
+
+        /// <summary>
+        /// If a neighbour of Equipment is a P3dConnector (weld/buttweld),
+        /// the part the user sees in the spec is the *other* side of that
+        /// connector — typically a Nozzle flange. Follow one hop further
+        /// and add that part to the equipment-owned set too.
+        /// </summary>
+        static void FollowConnectorChildren(ConnectionManager cm,
+            DataLinksManager dlm, ObjectId connectorId, int connectorRowId,
+            HashSet<int> ownedIds)
+        {
+            bool isConnector = false;
+            try { isConnector = Runtime.IsPnP3dConnector(connectorId); }
+            catch { return; }
+            if (!isConnector) return;
+
+            ConnectionCollection conns;
+            try { conns = cm.GetConnections(connectorId); }
+            catch { return; }
+            if (conns == null) return;
+            for (var i = 0; ; i++)
+            {
+                Connection c;
+                try { c = conns[i]; }
+                catch { break; }
+                if (c == null) break;
+                var otherId = c.ObjectId1 == connectorId
+                    ? c.ObjectId2
+                    : (c.ObjectId2 == connectorId ? c.ObjectId1 : ObjectId.Null);
+                if (otherId.IsNull) continue;
+                bool isEq = false;
+                try { isEq = Runtime.IsPnP3dEquipment(otherId); } catch { }
+                if (isEq) continue;  // skip back to the vessel itself
+                int toRow = 0;
+                try { toRow = dlm.FindAcPpRowId(otherId); } catch { }
+                if (toRow != 0 && toRow != connectorRowId)
+                    ownedIds.Add(toRow);
             }
         }
 

@@ -49,7 +49,10 @@ namespace PipingSpecPlugin.Commands
             // we filter the records in-memory rather than re-reading.
             editor.WriteMessage("\n[WRITESPEC] Scanning project...");
             var (projectRecords, ownedPnPIds, topology) = CollectFromProject(project, editor);
-            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
+            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project"
+                + (ownedPnPIds.Count > 0
+                    ? $"; {ownedPnPIds.Count} equipment-owned (will be excluded)."
+                    : "."));
 
             // Discover valve companions up-front so we can show the user
             // the count before they generate. The actual exclusion happens

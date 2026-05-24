@@ -53,15 +53,32 @@ namespace PipingSpecPlugin.Commands
                 ? "\n[WRITESPEC] Scope: whole project"
                 : "\n[WRITESPEC] Scope: active drawing only");
 
-            var parts = projectScope
+            var parts = (projectScope
                 ? CollectFromProject(project, editor)
-                : CollectFromActiveDrawing(editor);
+                : CollectFromActiveDrawing(editor)).ToList();
+
+            // Histogram of statuses — helps the user notice when a parts'
+            // bulk sits under a status they didn't intend to filter out.
+            var statusHist = parts.GroupBy(p => string.IsNullOrEmpty(p.Status) ? "<empty>" : p.Status)
+                                   .OrderByDescending(g => g.Count())
+                                   .ToList();
+            editor.WriteMessage($"\n[WRITESPEC] {parts.Count} raw row(s); status histogram:");
+            foreach (var g in statusHist)
+                editor.WriteMessage($"\n    {g.Count(),6}  {g.Key}");
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
             {
-                Statuses = SpecConstants.DefaultActiveStatuses,
+                // settings.Statuses == null means "include all statuses",
+                // which is the .NET edition's default until we ship the
+                // GUI status picker that mirrors the Python edition's
+                // checkboxes.
+                Statuses = settings.Statuses,
                 GroupByLine = settings.GroupByLine,
             });
+            if (settings.Statuses == null)
+                editor.WriteMessage("\n[WRITESPEC] Status filter: all statuses included");
+            else
+                editor.WriteMessage("\n[WRITESPEC] Status filter: " + string.Join(", ", settings.Statuses));
             var specRows = builder.Build(parts);
             foreach (var w in builder.Warnings)
                 editor.WriteMessage("\n  [WARN] " + w);

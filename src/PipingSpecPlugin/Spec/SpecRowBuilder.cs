@@ -8,7 +8,11 @@ namespace PipingSpecPlugin.Spec
 {
     public class SpecBuilderOptions
     {
-        public IEnumerable<string> Statuses = SpecConstants.DefaultActiveStatuses;
+        // null = include all statuses (default for the .NET edition since
+        // we don't have the GUI status picker yet); empty = include none;
+        // non-empty = include only those listed. Use null until the user
+        // narrows it explicitly via settings.
+        public IEnumerable<string> Statuses = null;
         public bool GroupByLine = false;
         public bool ExcludeEquipment = true;
         public bool ExcludeConnectors = true;
@@ -40,7 +44,10 @@ namespace PipingSpecPlugin.Spec
 
         public List<SpecRow> Build(IEnumerable<PartRecord> rows)
         {
-            var statusSet = new HashSet<string>(_opts.Statuses ?? new string[0],
+            // null = no status filter; non-null = include only listed statuses.
+            HashSet<string> statusSet = null;
+            if (_opts.Statuses != null)
+                statusSet = new HashSet<string>(_opts.Statuses,
                                                 StringComparer.OrdinalIgnoreCase);
 
             var buckets = new Dictionary<BucketKey, Bucket>();
@@ -50,8 +57,7 @@ namespace PipingSpecPlugin.Spec
 
             foreach (var r in rows)
             {
-                // Status filter — match Python's status_clause.
-                if (statusSet.Count > 0 && !statusSet.Contains(r.Status ?? ""))
+                if (statusSet != null && !statusSet.Contains(r.Status ?? ""))
                     continue;
 
                 var category = NormalizeCategory(r);

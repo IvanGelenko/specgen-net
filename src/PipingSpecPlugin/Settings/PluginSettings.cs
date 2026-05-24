@@ -25,6 +25,12 @@ namespace PipingSpecPlugin.Settings
         // When true, group parts by line number in the generated spec.
         public bool GroupByLine { get; set; } = true;
 
+        // Filter parts by Status. null = include all statuses (default);
+        // a non-null array (even empty) limits the output to listed values.
+        // Stored as nullable so settings.json can omit the key for the
+        // "all statuses" case rather than serialise an empty array.
+        public string[] Statuses { get; set; } = null;
+
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "PipingSpecPlugin", "settings.json");

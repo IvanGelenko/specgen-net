@@ -92,4 +92,12 @@
     <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Ribbon icons. EmbeddedResource keeps them inside the DLL so
+         there's nothing extra to ship next to it; PluginBootstrap
+         loads them through GetManifestResourceStream. -->
+    <EmbeddedResource Include="Resources\icon16.png" />
+    <EmbeddedResource Include="Resources\icon32.png" />
+  </ItemGroup>
+
 </Project>

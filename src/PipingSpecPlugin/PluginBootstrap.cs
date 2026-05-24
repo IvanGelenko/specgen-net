@@ -71,30 +71,67 @@ namespace PipingSpecPlugin
 
             var panelSource = new RibbonPanelSource { Title = "Спецификация" };
             panelSource.Items.Add(MakeButton("Сгенерировать", "WRITESPEC",
-                "Открыть окно выбора фильтров и сгенерировать спецификацию (.docx)."));
-            panelSource.Items.Add(MakeButton("Информация", "GENSPEC",
-                "Показать имя активного проекта Plant 3D и пути к файлам."));
-            panelSource.Items.Add(MakeButton("Подсчёт партов", "LISTPROJECT",
-                "Вывести в редактор количество партов по категориям для всего проекта."));
+                "Открыть окно выбора фильтров и сгенерировать спецификацию (.docx).",
+                "icon32.png"));
 
             tab.Panels.Add(new RibbonPanel { Source = panelSource });
             ribbon.Tabs.Add(tab);
         }
 
-        static RibbonButton MakeButton(string label, string command, string tooltip)
+        static RibbonButton MakeButton(string label, string command,
+                                        string tooltip, string iconName = null)
         {
-            // The trailing space + underscore in CommandParameter is the
-            // canonical AutoCAD pattern to commit the command line.
-            return new RibbonButton
+            var btn = new RibbonButton
             {
                 Text = label,
                 ShowText = true,
-                ShowImage = false,
                 Size = RibbonItemSize.Large,
                 Orientation = Orientation.Vertical,
                 ToolTip = tooltip,
                 CommandHandler = new RelayCommand(() => RunAcadCommand(command)),
             };
+            var icon = iconName != null ? LoadEmbeddedIcon(iconName) : null;
+            if (icon != null)
+            {
+                btn.LargeImage = icon;
+                btn.Image = icon;
+                btn.ShowImage = true;
+            }
+            else
+            {
+                btn.ShowImage = false;
+            }
+            return btn;
+        }
+
+        /// <summary>
+        /// Load a PNG packaged as an embedded resource into the plug-in
+        /// assembly. Returning null when missing keeps the button
+        /// usable (text-only fall-back) instead of crashing the panel.
+        /// </summary>
+        static System.Windows.Media.ImageSource LoadEmbeddedIcon(string fileName)
+        {
+            try
+            {
+                var asm = System.Reflection.Assembly.GetExecutingAssembly();
+                // Embedded resources land under "<RootNamespace>.<path>";
+                // the file lives in Resources/ so the resource name is
+                // "PipingSpecPlugin.Resources.<fileName>".
+                var resName = "PipingSpecPlugin.Resources." + fileName;
+                using var stream = asm.GetManifestResourceStream(resName);
+                if (stream == null) return null;
+                var img = new System.Windows.Media.Imaging.BitmapImage();
+                img.BeginInit();
+                img.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                img.StreamSource = stream;
+                img.EndInit();
+                img.Freeze();
+                return img;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         static void RunAcadCommand(string command)

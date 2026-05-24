@@ -73,9 +73,6 @@
                         <CheckBox x:Name="ExcludeValveCompanionsChk"
                                   Content="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)"
                                   IsChecked="True" Margin="0,2,0,2"/>
-                        <CheckBox x:Name="ExcludeEquipmentChk"
-                                  Content="Исключить оборудование"
-                                  IsChecked="True" Margin="0,2,0,2"/>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>

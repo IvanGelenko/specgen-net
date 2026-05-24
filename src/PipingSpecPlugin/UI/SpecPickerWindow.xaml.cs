@@ -139,10 +139,10 @@ namespace PipingSpecPlugin.UI
         void ApplySavedExclusions()
         {
             ExcludeValveCompanionsChk.IsChecked = _settings.ExcludeValveCompanions;
-            ExcludeEquipmentChk.IsChecked = _settings.ExcludeEquipment;
-            // ExcludeConnectors is no longer a check-box — the
-            // 'P3dConnector' category does the same job through the
-            // category list. Keep the setting field for back-compat.
+            // ExcludeEquipment and ExcludeConnectors no longer have
+            // standalone check-boxes — both ship as ordinary category
+            // chips ('Оборудование', 'Сварные швы / коннекторы') in the
+            // category list. The settings fields stay for back-compat.
         }
 
         void UpdateBlockingReason()
@@ -247,12 +247,11 @@ namespace PipingSpecPlugin.UI
                 Lines = selLines,
                 GroupByLine = GroupByLineChk.IsChecked == true,
                 ExcludeValveCompanions = ExcludeValveCompanionsChk.IsChecked == true,
-                ExcludeEquipment = ExcludeEquipmentChk.IsChecked == true,
-                // ExcludeConnectors lives on the result for back-compat,
-                // but the user now toggles connectors via the
-                // 'Сварные швы / коннекторы' category checkbox. False
-                // here lets that category drive inclusion/exclusion
-                // without the legacy keyword scan firing.
+                // Equipment and connectors are toggled through their
+                // category check-boxes now; the result fields stay only
+                // for back-compat with the settings file. Both false so
+                // the category filter is the sole gate.
+                ExcludeEquipment = false,
                 ExcludeConnectors = false,
             };
             DialogResult = true;

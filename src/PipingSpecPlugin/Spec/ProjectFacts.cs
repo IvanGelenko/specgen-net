@@ -48,14 +48,15 @@ namespace PipingSpecPlugin.Spec
                 .ToList();
 
             // Categories: apply the same normalisation the builder uses
-            // (supports detected via iso symbol). Equipment is filtered
-            // out of the picker (Python does the same — equipment has
-            // its own dedicated checkbox).
+            // (supports detected via iso symbol). Equipment now ships as
+            // an ordinary category checkbox — same as the welds category
+            // we introduced in v0.12.7 — instead of being driven by a
+            // standalone 'Исключить оборудование' rule. One place to
+            // control inclusion beats two competing toggles.
             var catCounts = new Dictionary<string, int>();
             foreach (var r in list)
             {
                 var cat = NormalizeCategoryPublic(r);
-                if (cat == "Equipment") continue;
                 var key = string.IsNullOrEmpty(cat) ? SpecConstants.NullCategory : cat;
                 catCounts.TryGetValue(key, out var c);
                 catCounts[key] = c + 1;

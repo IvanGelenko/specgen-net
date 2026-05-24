@@ -140,7 +140,9 @@ namespace PipingSpecPlugin.UI
         {
             ExcludeValveCompanionsChk.IsChecked = _settings.ExcludeValveCompanions;
             ExcludeEquipmentChk.IsChecked = _settings.ExcludeEquipment;
-            ExcludeConnectorsChk.IsChecked = _settings.ExcludeConnectors;
+            // ExcludeConnectors is no longer a check-box — the
+            // 'P3dConnector' category does the same job through the
+            // category list. Keep the setting field for back-compat.
         }
 
         void UpdateBlockingReason()
@@ -246,7 +248,12 @@ namespace PipingSpecPlugin.UI
                 GroupByLine = GroupByLineChk.IsChecked == true,
                 ExcludeValveCompanions = ExcludeValveCompanionsChk.IsChecked == true,
                 ExcludeEquipment = ExcludeEquipmentChk.IsChecked == true,
-                ExcludeConnectors = ExcludeConnectorsChk.IsChecked == true,
+                // ExcludeConnectors lives on the result for back-compat,
+                // but the user now toggles connectors via the
+                // 'Сварные швы / коннекторы' category checkbox. False
+                // here lets that category drive inclusion/exclusion
+                // without the legacy keyword scan firing.
+                ExcludeConnectors = false,
             };
             DialogResult = true;
         }

@@ -76,9 +76,6 @@
                         <CheckBox x:Name="ExcludeEquipmentChk"
                                   Content="Исключить оборудование"
                                   IsChecked="True" Margin="0,2,0,2"/>
-                        <CheckBox x:Name="ExcludeConnectorsChk"
-                                  Content="Исключить сварные швы и коннекторы (Buttweld, Universal и др.)"
-                                  IsChecked="True" Margin="0,2,0,2"/>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>

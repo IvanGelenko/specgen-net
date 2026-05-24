@@ -48,11 +48,13 @@ namespace PipingSpecPlugin.Commands
             // will pick "whole project" anyway. If they pick "active dwg"
             // we filter the records in-memory rather than re-reading.
             editor.WriteMessage("\n[WRITESPEC] Scanning project...");
-            var (projectRecords, ownedPnPIds, topology) = CollectFromProject(project, editor);
-            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project"
-                + (ownedPnPIds.Count > 0
-                    ? $"; {ownedPnPIds.Count} equipment-owned (will be excluded)."
-                    : "."));
+            var (projectRecords, ownedPnPIds, topology, eqCount, eqNbrCount)
+                = CollectFromProject(project, editor);
+            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
+            editor.WriteMessage(
+                $"\n[WRITESPEC] Equipment entities seen: {eqCount}; "
+              + $"connection-neighbours: {eqNbrCount}; "
+              + $"owned PnPIDs (incl. connector hops): {ownedPnPIds.Count}.");
 
             // Discover valve companions up-front so we can show the user
             // the count before they generate. The actual exclusion happens
@@ -225,7 +227,8 @@ namespace PipingSpecPlugin.Commands
         // --- project-wide collection -------------------------------------
 
         static (List<PartRecord> records, HashSet<int> ownedPnPIds,
-                Dictionary<int, List<int>> topology) CollectFromProject(
+                Dictionary<int, List<int>> topology,
+                int equipmentCount, int equipmentNeighbourCount) CollectFromProject(
             PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
         {
             Project piping = null;
@@ -236,7 +239,7 @@ namespace PipingSpecPlugin.Commands
             {
                 editor.WriteMessage("\n[WRITESPEC] Project has no Piping discipline.");
                 return (new List<PartRecord>(), new HashSet<int>(),
-                        new Dictionary<int, List<int>>());
+                        new Dictionary<int, List<int>>(), 0, 0);
             }
 
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
@@ -249,6 +252,8 @@ namespace PipingSpecPlugin.Commands
             var all = new List<PartRecord>();
             var owned = new HashSet<int>();
             var topology = new Dictionary<int, List<int>>();
+            var eqCount = 0;
+            var eqNbrCount = 0;
             foreach (var f in dwgFiles)
             {
                 string path = null;
@@ -279,6 +284,8 @@ namespace PipingSpecPlugin.Commands
                     }
                     all.AddRange(result.Records);
                     foreach (var id in result.EquipmentOwnedPnPIds) owned.Add(id);
+                    eqCount += result.EquipmentCount;
+                    eqNbrCount += result.EquipmentNeighbourCount;
                     foreach (var kv in result.Topology)
                     {
                         // Different drawings can describe the same part
@@ -297,7 +304,7 @@ namespace PipingSpecPlugin.Commands
                         editor.WriteMessage($"\n    inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                 }
             }
-            return (all, owned, topology);
+            return (all, owned, topology, eqCount, eqNbrCount);
         }
     }
 }

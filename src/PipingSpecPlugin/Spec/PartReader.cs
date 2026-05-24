@@ -23,6 +23,10 @@ namespace PipingSpecPlugin.Spec
         // so valve-companion discovery can walk Valve → Connector →
         // Flange the same way the Python edition's SQL does.
         public Dictionary<int, List<int>> Topology = new();
+        // Diagnostic counts so WRITESPEC can show whether topology /
+        // equipment recognition found anything. Updated by BuildTopology.
+        public int EquipmentCount;
+        public int EquipmentNeighbourCount;
     }
 
     /// <summary>
@@ -152,6 +156,7 @@ namespace PipingSpecPlugin.Spec
                     bool isEquipment = false;
                     try { isEquipment = Runtime.IsPnP3dEquipment(entId); }
                     catch { }
+                    if (isEquipment) result.EquipmentCount++;
 
                     if (fromRowId == 0 && !isEquipment) continue;
 
@@ -185,6 +190,7 @@ namespace PipingSpecPlugin.Spec
                         if (isEquipment)
                         {
                             result.EquipmentOwnedPnPIds.Add(toRowId);
+                            result.EquipmentNeighbourCount++;
                             FollowConnectorChildren(cm, dlm, otherId, toRowId,
                                                      result.EquipmentOwnedPnPIds);
                         }

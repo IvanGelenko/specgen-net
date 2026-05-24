@@ -104,7 +104,14 @@ namespace PipingSpecPlugin.Spec
                 if (_opts.ExcludeConnectors && IsConnector(category, r))
                 { Drop("connector-keyword"); continue; }
                 if (string.IsNullOrEmpty(category))
-                { Drop("empty-category"); continue; }
+                {
+                    // Track which PnPClassName ended up here — most of
+                    // these are weld variants under names like Buttweld /
+                    // UniversalSpec. Knowing the class name lets us widen
+                    // the NormalizeCategory P3dConnector heuristic.
+                    Drop("empty-category:" + (r.PnPClassName ?? "?"));
+                    continue;
+                }
 
                 // Category filter — using Plant 3D's category key (not the
                 // localized label). NullCategory sentinel lets the user

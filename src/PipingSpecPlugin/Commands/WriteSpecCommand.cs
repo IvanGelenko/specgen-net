@@ -264,7 +264,13 @@ namespace PipingSpecPlugin.Commands
                     else
                     {
                         using var db = new Database(false, true);
-                        db.ReadDwgFile(path, FileShare.Read, true, "");
+                        // FileShare.ReadWrite (not just Read) is required
+                        // because Plant 3D leaves a .dwl write-lock next
+                        // to drawings the user has touched in the current
+                        // session — read-only sharing throws
+                        // eFileSharingViolation and we lose half the
+                        // project's parts.
+                        db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
                         db.CloseInput(true);
                         result = PartReader.Read(db);
                     }

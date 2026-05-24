@@ -60,6 +60,7 @@ namespace PipingSpecPlugin.Spec
                 { "Supports",        "Опоры" },
                 { "Support",         "Опоры" },
                 { "Fasteners",       "Крепёж" },
+                { "P3dConnector",    "Сварные швы / коннекторы" },
             };
 
         // Connector keywords (case-insensitive substring match). A row

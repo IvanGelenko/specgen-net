@@ -301,11 +301,25 @@ namespace PipingSpecPlugin.Spec
             if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
                 && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT", StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Supports";
-            return r.PartCategory ?? "";
+            // Welds and universal connectors live as their own PnP class
+            // with an empty PartCategory. Surface them as 'P3dConnector'
+            // so they show up in the picker as a distinct row and the
+            // user can toggle them without going through 'Без категории'.
+            var cat = r.PartCategory ?? "";
+            if (string.IsNullOrEmpty(cat)
+                && string.Equals(r.PnPClassName, "P3dConnector",
+                                 StringComparison.OrdinalIgnoreCase))
+                return "P3dConnector";
+            return cat;
         }
 
         static bool IsConnector(string category, PartRecord r)
         {
+            // P3dConnector-class rows are connectors by class. The
+            // keyword sweep below still runs for Fasteners (where some
+            // weld-stud variants land) and for any rare empty-category
+            // leftovers.
+            if (category == "P3dConnector") return true;
             if (!(string.IsNullOrEmpty(category)
                   || category == SpecConstants.NullCategory
                   || category == "Fasteners"))

@@ -33,7 +33,14 @@ namespace PipingSpecPlugin.Spec
             var threshold = isImperial ? 4.0 : 100.0;
 
             // Index records by PnPID for cheap lookup during the walk.
-            var byId = records.ToDictionary(r => r.PnPID);
+            // CollectFromProject sweeps every drawing, so the same part
+            // (e.g. a pipe run crossing two sheets) shows up multiple
+            // times in records — first occurrence wins, the rest are
+            // ignored. Aligns with SpecRowBuilder's own dedup by PnPID.
+            var byId = new Dictionary<int, PartRecord>(records.Count);
+            foreach (var r in records)
+                if (!byId.ContainsKey(r.PnPID)) byId.Add(r.PnPID, r);
+            var deduped = byId.Values.ToList();
             // Heuristics — Plant 3D doesn't expose a typed "is connector"
             // flag; class names, PartCategory or descriptions are what
             // we have to go on.
@@ -53,7 +60,7 @@ namespace PipingSpecPlugin.Spec
             // its neighbours; the connectors among them, in turn, lead to
             // the companion flanges.
             var companionFlanges = new HashSet<int>();
-            foreach (var v in records.Where(IsValve))
+            foreach (var v in deduped.Where(IsValve))
             {
                 if (!topology.TryGetValue(v.PnPID, out var vNbrs)) continue;
                 foreach (var nbrId in vNbrs)
@@ -80,7 +87,7 @@ namespace PipingSpecPlugin.Spec
             // have very distinct PartFamilyLongDesc text.
             var gaskets = new List<PartRecord>();
             var bolts = new List<PartRecord>();
-            foreach (var r in records)
+            foreach (var r in deduped)
             {
                 if (companionFlanges.Contains(r.PnPID)) continue;
                 var cat = r.PartCategory ?? "";

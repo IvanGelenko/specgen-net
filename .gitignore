@@ -28,3 +28,9 @@ desktop.ini
 *.orig
 *.stamped
 *.swp
+
+# Sample / dev artifacts that occasionally land in the repo root.
+# The user keeps a working Plant 3D project + template here while
+# iterating; these are user data, not source.
+test project/
+*.docx

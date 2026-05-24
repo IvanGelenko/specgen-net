@@ -50,6 +50,10 @@
       <HintPath>$(AcadInstallDir)\AcMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="AdWindows">
+      <HintPath>$(AcadInstallDir)\AdWindows.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
 
     <!-- Plant 3D managed APIs. PnP.dll is native ARX (no metadata), do not
          reference it. The *Mgd suffix denotes managed wrappers.

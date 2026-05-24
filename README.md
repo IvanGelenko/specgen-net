@@ -58,6 +58,10 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
    live at `%APPDATA%\PipingSpecPlugin\settings.json` — the same path
    used by the Python edition, so picking output dirs / templates
    carries over between the two plug-ins.
+9. After loading the DLL, AutoCAD's ribbon should show a new
+   **Spec Generator** tab with **Generate / Preview / Project info**
+   buttons that invoke `WRITESPEC` / `SPECUI` / `GENSPEC` respectively.
+   Registered programmatically — no `.cuix` plumbing required.
 
 > **Rebuild while AutoCAD is open?** AutoCAD locks `PipingSpecPlugin.dll`
 > for the rest of the session after `NETLOAD`, so a second `dotnet build`

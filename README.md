@@ -10,7 +10,7 @@ Plant 3D in-memory model through the `PnP*Mgd` APIs, so it sees unsaved
 changes and can register a ribbon button natively without `.cuix` plumbing.
 
 Status: **early scaffold**. Available commands: `PSPING`, `GENSPEC`,
-`LISTPARTS`, `SPECUI`, `WRITESPEC`.
+`LISTPARTS`, `LISTPROJECT`, `SPECUI`, `WRITESPEC`.
 
 ## Targets
 
@@ -59,9 +59,15 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
    used by the Python edition, so picking output dirs / templates
    carries over between the two plug-ins.
 9. After loading the DLL, AutoCAD's ribbon should show a new
-   **Spec Generator** tab with **Generate / Preview / Project info**
-   buttons that invoke `WRITESPEC` / `SPECUI` / `GENSPEC` respectively.
-   Registered programmatically — no `.cuix` plumbing required.
+   **Spec Generator** tab with **Generate / Preview / Project info /
+   Project totals** buttons that invoke `WRITESPEC` / `SPECUI` /
+   `GENSPEC` / `LISTPROJECT` respectively. Registered programmatically
+   — no `.cuix` plumbing required.
+10. Type `LISTPROJECT` → tallies row counts across every drawing in
+    the project (opens each as a read-only side-database; the active
+    drawing is read in-memory so unsaved edits are included). On a
+    large project this takes a few seconds — the editor prints a
+    `Scanning N drawing(s)...` heartbeat before the totals.
 
 > **Rebuild while AutoCAD is open?** AutoCAD locks `PipingSpecPlugin.dll`
 > for the rest of the session after `NETLOAD`, so a second `dotnet build`

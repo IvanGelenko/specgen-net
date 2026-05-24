@@ -76,6 +76,8 @@ namespace PipingSpecPlugin
                 "Show a quick preview of category counts."));
             panelSource.Items.Add(MakeButton("Project info", "GENSPEC",
                 "Print the active Plant 3D project name and paths."));
+            panelSource.Items.Add(MakeButton("Project totals", "LISTPROJECT",
+                "Tally part counts across every drawing in the project."));
 
             tab.Panels.Add(new RibbonPanel { Source = panelSource });
             ribbon.Tabs.Add(tab);

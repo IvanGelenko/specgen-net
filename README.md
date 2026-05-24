@@ -10,7 +10,7 @@ Plant 3D in-memory model through the `PnP*Mgd` APIs, so it sees unsaved
 changes and can register a ribbon button natively without `.cuix` plumbing.
 
 Status: **early scaffold**. Available commands: `PSPING`, `GENSPEC`,
-`LISTPARTS`, `SPECUI`.
+`LISTPARTS`, `SPECUI`, `WRITESPEC`.
 
 ## Targets
 
@@ -53,6 +53,11 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
    `LISTPARTS` shown in two trees. Close it with the **Close** button or
    <kbd>Esc</kbd>. This is a smoke test of WPF in-process under AutoCAD,
    not the final UI.
+8. Type `WRITESPEC` → a save-as dialog opens; pick a `.docx` path. The
+   resulting file has a heading and a (category, count) table. Settings
+   live at `%APPDATA%\PipingSpecPlugin\settings.json` — the same path
+   used by the Python edition, so picking output dirs / templates
+   carries over between the two plug-ins.
 
 > **Rebuild while AutoCAD is open?** AutoCAD locks `PipingSpecPlugin.dll`
 > for the rest of the session after `NETLOAD`, so a second `dotnet build`

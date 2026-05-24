@@ -17,8 +17,11 @@
     <!-- net8.0-windows already means Windows-only; silence the platform
          compatibility analyzer for WinForms / WPF call sites. -->
     <NoWarn>CA1416</NoWarn>
-    <!-- AutoCAD loads our DLL into its own process; suppress its private deps. -->
-    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <!-- NuGet packages we depend on (DocumentFormat.OpenXml etc.) MUST be
+         copied to the output folder so AutoCAD can resolve them at load
+         time. AutoCAD's own DLLs are individually marked Private=False
+         below so they aren't duplicated next to ours. -->
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
@@ -77,6 +80,12 @@
       <HintPath>$(AcadInstallDir)\PnPDataObjects.dll</HintPath>
       <Private>False</Private>
     </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Word output. Stay on the 2.x line: OpenXml 3.x dropped legacy
+         APIs and we don't need its new SDK-style features yet. -->
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
   </ItemGroup>
 
 </Project>

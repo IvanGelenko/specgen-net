@@ -103,6 +103,16 @@ namespace PipingSpecPlugin.Spec
                 { Drop("equipment-category"); continue; }
                 if (_opts.ExcludeConnectors && IsConnector(category, r))
                 { Drop("connector-keyword"); continue; }
+                // Equipment nozzles ("штуцера") belong to the vessel,
+                // not to the piping spec. Plant 3D files them under
+                // PartCategory='Nozzles' (the diagrammed equipment
+                // sub-tree in the data manager), or surfaces the same
+                // sub-class through PnPClassName containing 'nozzle'
+                // (e.g. FlangedNozzle, SprayNozzle). Always excluded
+                // regardless of the user's check-boxes — they're never
+                // part of the procurement list.
+                if (IsEquipmentNozzle(category, r))
+                { Drop("equipment-nozzle"); continue; }
                 if (string.IsNullOrEmpty(category))
                 {
                     // Track which PnPClassName ended up here — most of
@@ -308,16 +318,42 @@ namespace PipingSpecPlugin.Spec
             if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
                 && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT", StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Supports";
-            // Welds and universal connectors live as their own PnP class
-            // with an empty PartCategory. Surface them as 'P3dConnector'
-            // so they show up in the picker as a distinct row and the
-            // user can toggle them without going through 'Без категории'.
             var cat = r.PartCategory ?? "";
-            if (string.IsNullOrEmpty(cat)
-                && string.Equals(r.PnPClassName, "P3dConnector",
-                                 StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(cat)) return cat;
+
+            // PartCategory is empty for several Plant 3D part families.
+            // Promote each to a synthetic category so they get their
+            // own picker chip — otherwise the user can only include
+            // them through 'Без категории', which lumps unrelated
+            // things together.
+            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
+            if (cls == "p3dconnector" || cls == "buttweld"
+                || cls == "universal" || cls == "weldspec"
+                || cls.Contains("weld") || cls.Contains("connector"))
                 return "P3dConnector";
-            return cat;
+            if (cls == "vessel" || cls == "pump"
+                || cls.Contains("equipment") || cls.Contains("vessel")
+                || cls.Contains("pump") || cls.Contains("tank")
+                || cls.Contains("exchanger") || cls.Contains("compressor"))
+                return "Equipment";
+            return "";
+        }
+
+        /// <summary>
+        /// Equipment-attached nozzles ("штуцера") — vessel sub-objects
+        /// the user sees as 'Nozzle, flanged' rows but which belong with
+        /// the equipment, not in the piping procurement spec. Plant 3D
+        /// files them under PartCategory='Nozzles' (its own branch in
+        /// the data manager) and under PnPClassName containing 'nozzle'
+        /// (FlangedNozzle, SprayNozzle, etc.).
+        /// </summary>
+        static bool IsEquipmentNozzle(string category, PartRecord r)
+        {
+            if (string.Equals(category, "Nozzles", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
+            if (cls.Contains("nozzle")) return true;
+            return false;
         }
 
         static bool IsConnector(string category, PartRecord r)

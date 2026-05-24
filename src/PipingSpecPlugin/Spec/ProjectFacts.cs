@@ -98,7 +98,20 @@ namespace PipingSpecPlugin.Spec
                 && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT",
                     System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Supports";
-            return r.PartCategory ?? "";
+            var cat = r.PartCategory ?? "";
+            if (!string.IsNullOrEmpty(cat)) return cat;
+            // Same synthetic-category promotion as SpecRowBuilder.
+            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
+            if (cls == "p3dconnector" || cls == "buttweld"
+                || cls == "universal" || cls == "weldspec"
+                || cls.Contains("weld") || cls.Contains("connector"))
+                return "P3dConnector";
+            if (cls == "vessel" || cls == "pump"
+                || cls.Contains("equipment") || cls.Contains("vessel")
+                || cls.Contains("pump") || cls.Contains("tank")
+                || cls.Contains("exchanger") || cls.Contains("compressor"))
+                return "Equipment";
+            return "";
         }
     }
 }

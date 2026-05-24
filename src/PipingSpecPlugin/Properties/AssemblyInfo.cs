@@ -14,8 +14,8 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: ComVisible(false)]
 [assembly: Guid("B5E20C42-5C4D-4F1B-9B7C-1D5E2B0A8C02")]
 
-[assembly: AssemblyVersion("0.12.6.0")]
-[assembly: AssemblyFileVersion("0.12.6.0")]
+[assembly: AssemblyVersion("0.12.7.0")]
+[assembly: AssemblyFileVersion("0.12.7.0")]
 
 // Tells AutoCAD which classes carry [CommandMethod] attributes. Each class
 // hosting commands must be listed explicitly — without this, AutoCAD ignores

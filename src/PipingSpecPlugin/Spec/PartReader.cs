@@ -195,6 +195,29 @@ namespace PipingSpecPlugin.Spec
                                                      result.EquipmentOwnedPnPIds);
                         }
 
+                        // The reverse direction matters too: in some
+                        // projects the Equipment entity has zero outgoing
+                        // P3dPartConnections, but the Nozzle/Flange parts
+                        // attached to it list the Equipment (or its nozzle
+                        // subpart) as one of *their* neighbours. Detect
+                        // either and mark fromRowId as owned.
+                        if (!isEquipment && fromRowId != 0)
+                        {
+                            bool neighbourIsEquipmentLike = false;
+                            try
+                            {
+                                neighbourIsEquipmentLike =
+                                    Runtime.IsPnP3dEquipment(otherId)
+                                 || Runtime.IsPnP3dNozzleSubPart(otherId);
+                            }
+                            catch { }
+                            if (neighbourIsEquipmentLike)
+                            {
+                                result.EquipmentOwnedPnPIds.Add(fromRowId);
+                                result.EquipmentNeighbourCount++;
+                            }
+                        }
+
                         if (fromRowId != 0 && toRowId != fromRowId)
                         {
                             AddEdge(result.Topology, fromRowId, toRowId);

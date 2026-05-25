@@ -183,6 +183,19 @@ namespace PipingSpecPlugin.Commands
                 bendFold = PipeBendFolder.Fold(scan.records, scan.topology);
                 Trace($"PipeBendFold: свернуто гибов: {bendFold.BendsConsumed.Count}; "
                     + $"труб с добавленной длиной: {bendFold.ExtraPipeMetres.Count}");
+                // Per-pipe breakdown so we can see whether bend metres
+                // land on the right line. Caps at 20 entries — projects
+                // rarely have more than a handful of folded pipes.
+                var byIdAll2 = new Dictionary<int, PartRecord>();
+                foreach (var rr in scan.records)
+                    if (!byIdAll2.ContainsKey(rr.PnPID)) byIdAll2[rr.PnPID] = rr;
+                foreach (var kv in bendFold.ExtraPipeMetres.Take(20))
+                {
+                    byIdAll2.TryGetValue(kv.Key, out var pipe);
+                    bendFold.ExtraPipeLineTags.TryGetValue(kv.Key, out var bendLine);
+                    Trace($"  pipe#{kv.Key} (pipeLine='{pipe?.LineNumberTag ?? "?"}', "
+                        + $"bendLine='{bendLine ?? "?"}') += {kv.Value * 1000:F1} mm");
+                }
             }
 
             if (result.Scope == "dwg" && activeDoc != null)
@@ -204,6 +217,7 @@ namespace PipingSpecPlugin.Commands
                 ValveCompanionPnPIds = companionIds,
                 BendsConsumed = bendFold?.BendsConsumed,
                 ExtraPipeMetres = bendFold?.ExtraPipeMetres,
+                ExtraPipeLineTags = bendFold?.ExtraPipeLineTags,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings) Trace("WARN: " + w);

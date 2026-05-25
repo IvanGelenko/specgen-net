@@ -38,10 +38,14 @@ namespace PipingSpecPlugin.Spec
         // PipeBend folding state — computed by PipeBendFolder against
         // the project-wide records, then passed in here. BendsConsumed
         // holds PnPIDs to skip; ExtraPipeMetres maps the adjacent pipe
-        // PnPID to the metres folded into it. Both null when the
-        // feature is off.
+        // PnPID to the metres folded into it. ExtraPipeLineTags maps
+        // the same pipe PnPID to the LineNumberTag of the contributing
+        // bend, so Builder can reroute orphan metres to a sibling pipe
+        // on the same line when the original target got filtered out.
+        // All null when the feature is off.
         public HashSet<int> BendsConsumed = null;
         public Dictionary<int, double> ExtraPipeMetres = null;
+        public Dictionary<int, string> ExtraPipeLineTags = null;
     }
 
     /// <summary>
@@ -295,45 +299,29 @@ namespace PipingSpecPlugin.Spec
             // filtered out (its own line wasn't selected, its status
             // didn't match, etc) end up stranded in extraPipeMetres.
             // Reroute each leftover to a same-line pipe bucket if we
-            // built one; otherwise drop with a warning so the user
-            // knows that length is missing.
+            // built one; otherwise warn the user that some length
+            // couldn't be placed.
             if (extraPipeMetres != null && extraPipeMetres.Count > 0
-                && bendsConsumed != null && _opts.BendsConsumed != null)
+                && _opts.ExtraPipeLineTags != null
+                && pipeFallbackBuckets.Count > 0)
             {
-                // Find the bend that contributed each stranded entry
-                // so we can use its LineTag to pick a fallback bucket.
-                var bendsByPipe = new Dictionary<int, string>();
-                foreach (var bend in rowList)
-                {
-                    if (!bend.IsPipeBend) continue;
-                    // We don't keep the bend→pipe mapping in BendsConsumed;
-                    // reuse the topology-free heuristic: if the bend's
-                    // line matches a fallback bucket's key prefix we
-                    // can route to it.
-                    var line = string.IsNullOrEmpty(bend.LineNumberTag)
-                        ? SpecConstants.NullLine
-                        : bend.LineNumberTag;
-                    foreach (var kv in extraPipeMetres)
-                    {
-                        if (bendsByPipe.ContainsKey(kv.Key)) continue;
-                        bendsByPipe[kv.Key] = line;
-                    }
-                }
-
                 foreach (var kv in extraPipeMetres.ToList())
                 {
                     var orphanPipePid = kv.Key;
                     var orphanMetres = kv.Value;
                     if (orphanMetres <= 0) continue;
-                    bendsByPipe.TryGetValue(orphanPipePid, out var bendLine);
-                    // Pick any pipe bucket on the same line; we don't
-                    // know ND/spec for the orphan so we accept the
-                    // first match by line prefix.
+                    _opts.ExtraPipeLineTags.TryGetValue(orphanPipePid, out var bendLine);
+                    if (string.IsNullOrEmpty(bendLine)) continue;
+
+                    // Try to land the metres on any pipe bucket sharing
+                    // the bend's LineTag. The bucket key is
+                    // (line|nd|spec|material) — exact ND/spec match is
+                    // ideal but unavailable, so we match by line prefix.
                     Bucket target = null;
                     foreach (var pkv in pipeFallbackBuckets)
                     {
                         if (pkv.Key.StartsWith(
-                                (bendLine ?? "") + "|",
+                                bendLine + "|",
                                 System.StringComparison.Ordinal))
                         { target = pkv.Value; break; }
                     }
@@ -343,10 +331,13 @@ namespace PipingSpecPlugin.Spec
                         extraPipeMetres.Remove(orphanPipePid);
                     }
                 }
+            }
 
-                if (extraPipeMetres.Count > 0)
+            if (extraPipeMetres != null && extraPipeMetres.Count > 0)
+            {
+                var lost = extraPipeMetres.Values.Sum();
+                if (lost > 0.0001)
                 {
-                    var lost = extraPipeMetres.Values.Sum();
                     _warnings.Add(
                         $"Не удалось распределить {lost:F2} м длины изгибов: "
                       + "соответствующих труб нет среди выбранных в спецификации.");

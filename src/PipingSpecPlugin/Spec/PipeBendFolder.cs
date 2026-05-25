@@ -22,6 +22,11 @@ namespace PipingSpecPlugin.Spec
     {
         public HashSet<int> BendsConsumed = new();
         public Dictionary<int, double> ExtraPipeMetres = new();
+        // Maps each target Pipe PnPID to the LineNumberTag of the bend
+        // that contributed metres to it. Lets SpecRowBuilder reroute
+        // stranded metres (when the target pipe got filtered out) to
+        // another pipe sharing the same line.
+        public Dictionary<int, string> ExtraPipeLineTags = new();
     }
 
     public static class PipeBendFolder
@@ -54,6 +59,17 @@ namespace PipingSpecPlugin.Spec
                 if (pipePid == 0) continue;  // truly orphan bend
                 result.ExtraPipeMetres.TryGetValue(pipePid, out var acc);
                 result.ExtraPipeMetres[pipePid] = acc + metres;
+                // Remember the line the bend belonged to. If two bends
+                // on different lines fold into the same pipe (rare —
+                // physically would need a tee with bends on both sides
+                // tagged differently), the first one's line wins.
+                if (!result.ExtraPipeLineTags.ContainsKey(pipePid))
+                {
+                    result.ExtraPipeLineTags[pipePid] =
+                        string.IsNullOrEmpty(bend.LineNumberTag)
+                            ? SpecConstants.NullLine
+                            : bend.LineNumberTag;
+                }
                 result.BendsConsumed.Add(bend.PnPID);
             }
             return result;

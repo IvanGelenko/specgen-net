@@ -68,15 +68,15 @@ namespace PipingSpecPlugin.Spec
             try { dlm.EnableCaching = false; } catch { }
 
             // Flush pending in-memory changes to the DataLinks store
-            // *before* querying. The active document holds added /
-            // edited parts in its Database until AcceptChanges() syncs
-            // them; without this the spec sees the state at last save
-            // and misses freshly placed components and line renames.
-            // ReloadLinkMap and AuditLinks force the DLM to drop its
-            // cached row map and rebuild it from the live blob so the
-            // next SelectAcPpRowIds query reflects what the user just
-            // did in the drawing.
+            // *before* querying. The active document holds new / edited
+            // parts in its Database until the DLM is told to re-sync.
+            // AuditDrawing(db) rescans the drawing's PnP blob and is
+            // the canonical "give me live state" trigger; the other
+            // three calls are belt-and-braces (different Plant 3D
+            // versions surface the freshness flag through different
+            // APIs).
             try { dlm.AcceptChanges(); } catch { }
+            try { dlm.AuditDrawing(db); } catch { }
             try { dlm.ReloadLinkMap(); } catch { }
             try { dlm.AuditLinks(); } catch { }
 
@@ -86,6 +86,7 @@ namespace PipingSpecPlugin.Spec
                 try { prevProjCaching = projectDlm.EnableCaching; } catch { }
                 try { projectDlm.EnableCaching = false; } catch { }
                 try { projectDlm.AcceptChanges(); } catch { }
+                try { projectDlm.AuditDrawing(db); } catch { }
                 try { projectDlm.ReloadLinkMap(); } catch { }
                 try { projectDlm.AuditLinks(); } catch { }
             }
@@ -99,9 +100,24 @@ namespace PipingSpecPlugin.Spec
 
             try
             {
-            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
-            try { rowIds = dlm.SelectAcPpRowIds(db); }
-            catch { return result; }
+            // BeginSaveDwg returns the live row-id array a save would
+            // write to disk — that's the freshest view, includes parts
+            // the user has just placed but not yet saved. Some Plant 3D
+            // builds throw on the second call without an EndSaveDwg in
+            // between, so we wrap it carefully and fall back to the
+            // plain SelectAcPpRowIds if it doesn't cooperate.
+            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds = null;
+            try { rowIds = dlm.BeginSaveDwg(db); }
+            catch { }
+            finally
+            {
+                try { dlm.EndSaveDwg(db, false); } catch { }
+            }
+            if (rowIds == null || rowIds.Count == 0)
+            {
+                try { rowIds = dlm.SelectAcPpRowIds(db); }
+                catch { return result; }
+            }
             if (rowIds == null) return result;
 
             foreach (int rowId in rowIds)
@@ -381,6 +397,67 @@ namespace PipingSpecPlugin.Spec
             catch { }
         }
 
+        /// <summary>
+        /// Walk P3dLineGroupPartRelationship to find the LineGroup row
+        /// for this part, then read its current Tag. Prefer projectDlm
+        /// over drawing-local: the project DLM owns the canonical
+        /// P3dLineGroup table that gets updated when a user renames a
+        /// line in the Project Manager. The drawing-local DLM also has
+        /// the table but its copy can lag behind.
+        /// </summary>
+        static string ResolveLiveLineTag(int partRowId,
+            DataLinksManager drawingDlm,
+            DataLinksManager projectDlm,
+            Dictionary<int, string> lineGroupCache)
+        {
+            // Try projectDlm first. If projectDlm.GetRelatedRowIds throws
+            // because partRowId isn't valid in that DLM (different rowId
+            // namespace in some Plant 3D versions), fall back to the
+            // drawing DLM relationship walk and then read the Tag through
+            // projectDlm using the same rowId — that path covered the
+            // legacy behaviour in v1.1.1.
+            int lgRowId = QueryLineGroupRowId(projectDlm, partRowId);
+            if (lgRowId == 0)
+                lgRowId = QueryLineGroupRowId(drawingDlm, partRowId);
+            if (lgRowId == 0) return null;
+
+            if (lineGroupCache.TryGetValue(lgRowId, out var cached))
+                return cached;
+
+            var tag = ReadTag(projectDlm, lgRowId) ?? ReadTag(drawingDlm, lgRowId);
+            lineGroupCache[lgRowId] = tag;
+            return tag;
+        }
+
+        static int QueryLineGroupRowId(DataLinksManager dlmToTry, int partRowId)
+        {
+            if (dlmToTry == null) return 0;
+            try
+            {
+                var related = dlmToTry.GetRelatedRowIds(
+                    "P3dLineGroupPartRelationship", "Part", partRowId, "LineGroup");
+                if (related == null) return 0;
+                foreach (int id in related) return id;
+            }
+            catch { }
+            return 0;
+        }
+
+        static string ReadTag(DataLinksManager dlmToTry, int lgRowId)
+        {
+            if (dlmToTry == null) return null;
+            try
+            {
+                var props = dlmToTry.GetAllProperties(lgRowId, true);
+                if (props == null) return null;
+                foreach (var kv in props)
+                    if (string.Equals(kv.Key, "Tag", System.StringComparison.OrdinalIgnoreCase))
+                        return kv.Value;
+            }
+            catch { }
+            return null;
+        }
+
         static PartRecord BuildRecord(int rowId,
             List<System.Collections.Generic.KeyValuePair<string, string>> props,
             DataLinksManager dlm,
@@ -402,61 +479,19 @@ namespace PipingSpecPlugin.Spec
                 return val;
             }
 
-            // Retrieve live LineNumberTag from relationship
-            string resolvedLineNumberTag = null;
-            try
-            {
-                // Query relationship on drawing-local DLM since it is guaranteed to have the part rowId
-                var relatedIds = dlm.GetRelatedRowIds("P3dLineGroupPartRelationship", "Part", rowId, "LineGroup");
-                if (relatedIds != null && relatedIds.Count > 0)
-                {
-                    int lgRowId = -1;
-                    foreach (int id in relatedIds)
-                    {
-                        lgRowId = id;
-                        break;
-                    }
-                    if (lgRowId != -1)
-                    {
-                        if (!lineGroupCache.TryGetValue(lgRowId, out resolvedLineNumberTag))
-                        {
-                            List<System.Collections.Generic.KeyValuePair<string, string>> lgProps = null;
-                            
-                            // Try to get live properties from project-wide DLM first (authoritative for renames)
-                            if (projectDlm != null)
-                            {
-                                try { lgProps = projectDlm.GetAllProperties(lgRowId, true); }
-                                catch { }
-                            }
-                            
-                            // Fall back to drawing-local DLM if project-wide query failed or wasn't available
-                            if (lgProps == null)
-                            {
-                                try { lgProps = dlm.GetAllProperties(lgRowId, true); }
-                                catch { }
-                            }
-
-                            if (lgProps != null)
-                            {
-                                foreach (var kv in lgProps)
-                                {
-                                    if (string.Equals(kv.Key, "Tag", System.StringComparison.OrdinalIgnoreCase))
-                                    {
-                                        resolvedLineNumberTag = kv.Value;
-                                        break;
-                                    }
-                                }
-                            }
-                            lineGroupCache[lgRowId] = resolvedLineNumberTag;
-                        }
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore and fall back
-            }
-
+            // Resolve LineNumberTag through the live LineGroup row
+            // rather than the property bag — Plant 3D copies the line
+            // tag into the EngineeringItem's "LineNumberTag" property
+            // at link-time, and that copy doesn't update when the user
+            // renames the line in the Project Manager. The relationship
+            // table + projectDlm-backed P3dLineGroup row is always
+            // current.
+            //
+            // We try projectDlm first (it owns the live P3dLineGroup
+            // table). Fall through to drawing-local DLM only when the
+            // project DLM is unavailable or the query throws.
+            string resolvedLineNumberTag = ResolveLiveLineTag(
+                rowId, dlm, projectDlm, lineGroupCache);
             if (string.IsNullOrEmpty(resolvedLineNumberTag))
             {
                 resolvedLineNumberTag = Get("LineNumberTag");
@@ -481,7 +516,13 @@ namespace PipingSpecPlugin.Spec
                 Weight = Get("Weight"),
                 LengthUnit = Get("LengthUnit"),
                 WeightUnit = Get("WeightUnit"),
-                Length = Get("Length"),
+                // Pipe carries length under "Length" (full segment).
+                // PipeBend doesn't populate that field — its physical
+                // arc length lives in "CutLength" (verified against the
+                // ru-RU DisplayNames.xml entry "$$dn-PipeBend-CutLength").
+                // Try Length first; fall back to CutLength so bends
+                // have a numeric length the folder can read.
+                Length = Get("Length") ?? Get("CutLength"),
                 LinearWeight = Get("LinearWeight"),
                 LineNumberTag = resolvedLineNumberTag,
                 ContentIsoSymbolDefinition = Get("ContentIsoSymbolDefinition"),

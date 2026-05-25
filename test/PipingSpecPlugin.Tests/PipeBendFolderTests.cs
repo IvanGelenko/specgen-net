@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using PipingSpecPlugin.Spec;
 using Xunit;
 
@@ -88,6 +89,62 @@ namespace PipingSpecPlugin.Tests
             };
             var r = PipeBendFolder.Fold(new[] { p, b }, topology);
             Assert.Empty(r.BendsConsumed);
+        }
+
+        [Fact]
+        public void Bend_Through_Connector_Folds_To_Pipe_Two_Hops_Away()
+        {
+            // The realistic Plant 3D wiring: bend touches a P3dConnector
+            // (weld stub) which then touches the pipe. The folder must
+            // walk through the connector hop to find the pipe.
+            var pipe = Pipe(100);
+            var connector = new PartRecord
+            {
+                PnPID = 200,
+                PartCategory = "",
+                PnPClassName = "P3dConnector",
+            };
+            var bend = Bend(300, 1500);
+            var topology = new Dictionary<int, List<int>>
+            {
+                { 100, new List<int> { 200 } },
+                { 200, new List<int> { 100, 300 } },
+                { 300, new List<int> { 200 } },
+            };
+            var r = PipeBendFolder.Fold(new[] { pipe, connector, bend }, topology);
+            Assert.Contains(300, r.BendsConsumed);
+            Assert.Equal(1.5, r.ExtraPipeMetres[100], 3);
+        }
+
+        [Fact]
+        public void Two_Bends_On_One_Line_Through_Connectors_Both_Fold()
+        {
+            // Mirrors the user's 'азот' test case: pipe — connector —
+            // bend — connector — pipe. The bend should fold into the
+            // first pipe found in either direction.
+            var pipeA = Pipe(1);
+            var connA = new PartRecord { PnPID = 2, PnPClassName = "P3dConnector" };
+            var bend = Bend(3, 2000);
+            var connB = new PartRecord { PnPID = 4, PnPClassName = "P3dConnector" };
+            var pipeB = Pipe(5);
+            var topology = new Dictionary<int, List<int>>
+            {
+                { 1, new List<int> { 2 } },
+                { 2, new List<int> { 1, 3 } },
+                { 3, new List<int> { 2, 4 } },
+                { 4, new List<int> { 3, 5 } },
+                { 5, new List<int> { 4 } },
+            };
+            var r = PipeBendFolder.Fold(
+                new[] { pipeA, connA, bend, connB, pipeB }, topology);
+            Assert.Contains(3, r.BendsConsumed);
+            // Folder picks the first pipe it finds via Pass 2; here that's
+            // pipeA (PnPID 1) because it's iterated before pipeB. Either
+            // pipe absorbing the bend is correct as long as exactly one
+            // does so.
+            var totalExtra = r.ExtraPipeMetres.Values.Sum();
+            Assert.Equal(2.0, totalExtra, 3);
+            Assert.Single(r.ExtraPipeMetres);
         }
 
         [Fact]

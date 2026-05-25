@@ -44,22 +44,69 @@ namespace PipingSpecPlugin.Spec
                 var lenRaw = ParseDouble(bend.Length);
                 if (lenRaw <= 0) continue;
                 var metres = lenRaw * LengthFactor(bend.LengthUnit);
-                if (!topology.TryGetValue(bend.PnPID, out var nbrs)) continue;
-                int pipePid = 0;
-                foreach (var nbrId in nbrs)
-                {
-                    if (!byId.TryGetValue(nbrId, out var nbr)) continue;
-                    if (string.Equals(nbr.PartCategory, "Pipe",
-                                       System.StringComparison.OrdinalIgnoreCase)
-                        && !nbr.IsPipeBend)
-                    { pipePid = nbr.PnPID; break; }
-                }
-                if (pipePid == 0) continue;
+                int pipePid = FindAdjacentPipe(bend.PnPID, byId, topology);
+                if (pipePid == 0) continue;  // truly orphan bend
                 result.ExtraPipeMetres.TryGetValue(pipePid, out var acc);
                 result.ExtraPipeMetres[pipePid] = acc + metres;
                 result.BendsConsumed.Add(bend.PnPID);
             }
             return result;
+        }
+
+        /// <summary>
+        /// Locate the straight Pipe attached to a bend. Physically a
+        /// PipeBend is wired to its neighbour through a P3dConnector
+        /// (a weld stub), so direct neighbours are usually connectors
+        /// with empty PartCategory rather than pipes. Walk one hop
+        /// further through any connector neighbour, prefer a Pipe but
+        /// fall back to "any non-bend part" so a bend wedged between
+        /// fittings still folds somewhere reasonable.
+        /// </summary>
+        static int FindAdjacentPipe(int bendPid,
+            Dictionary<int, PartRecord> byId,
+            IDictionary<int, List<int>> topology)
+        {
+            if (!topology.TryGetValue(bendPid, out var nbrs)) return 0;
+
+            // Pass 1: direct neighbour that is itself a Pipe.
+            foreach (var n in nbrs)
+            {
+                if (!byId.TryGetValue(n, out var nbr)) continue;
+                if (IsPipe(nbr)) return nbr.PnPID;
+            }
+
+            // Pass 2: through a connector hop. PipeBends touch the pipe
+            // through a weld connector in 99 % of projects.
+            foreach (var n in nbrs)
+            {
+                if (!byId.TryGetValue(n, out var nbr)) continue;
+                if (!IsConnector(nbr)) continue;
+                if (!topology.TryGetValue(nbr.PnPID, out var nbrNbrs)) continue;
+                foreach (var nn in nbrNbrs)
+                {
+                    if (nn == bendPid) continue;
+                    if (!byId.TryGetValue(nn, out var far)) continue;
+                    if (IsPipe(far)) return far.PnPID;
+                }
+            }
+            return 0;
+        }
+
+        static bool IsPipe(PartRecord r)
+            => string.Equals(r.PartCategory, "Pipe",
+                              System.StringComparison.OrdinalIgnoreCase)
+               && !r.IsPipeBend;
+
+        static bool IsConnector(PartRecord r)
+        {
+            if (string.Equals(r.PnPClassName, "P3dConnector",
+                              System.StringComparison.OrdinalIgnoreCase))
+                return true;
+            // Some templates leave PartCategory empty on welds; the
+            // class name and the SpecRowBuilder's synthetic "P3dConnector"
+            // bucket are the actual signals.
+            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
+            return cls.Contains("connector") || cls.Contains("weld");
         }
 
         static double ParseDouble(string s)

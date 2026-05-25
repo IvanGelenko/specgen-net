@@ -17,12 +17,14 @@ using WinForms = System.Windows.Forms;
 namespace PipingSpecPlugin.Commands
 {
     /// <summary>
-    /// Entry point users invoke from the ribbon. Reads all PartRecords
-    /// from the current project once, opens the picker so the user can
-    /// choose statuses / categories / lines / exclude flags, then runs
-    /// SpecRowBuilder + SpecTemplateWriter with the picked filters.
-    /// Saves user choices back to settings.json so the picker remembers
-    /// the last selection.
+    /// Entry point invoked from the ribbon button. One scan per click:
+    ///   1. read every "Plant 3D Models" DWG (active doc in-memory,
+    ///      everything else as a side database)
+    ///   2. open the picker so the user can choose statuses / categories
+    ///      / lines and tweak the optional rules
+    ///   3. aggregate into spec rows, write the .docx, open it in Word.
+    /// All editor output is short; a full trace lives in
+    /// %APPDATA%\PipingSpecPlugin\last-run.log for support tickets.
     /// </summary>
     public class WriteSpecCommand
     {
@@ -31,12 +33,23 @@ namespace PipingSpecPlugin.Commands
         {
             var editor = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
             if (editor == null) return;
+            using var logger = new RunLogger();
+
+            void Say(string line)
+            {
+                editor.WriteMessage("\n" + line);
+                logger.Log(line);
+            }
+            void Trace(string line) => logger.Log(line);
+
+            Say($"[Спецификация] Запуск, лог: {logger.Path}");
 
             var project = PlantApplication.CurrentProject;
             if (project == null)
             {
-                var msg = "Не найден открытый проект AutoCAD Plant 3D. Пожалуйста, откройте проект перед генерацией спецификации.";
-                editor.WriteMessage("\n[WRITESPEC] " + msg);
+                const string msg = "Не найден открытый проект AutoCAD Plant 3D. "
+                                 + "Откройте проект перед генерацией.";
+                Say("[Спецификация] " + msg);
                 WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
                     WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
                 return;
@@ -47,114 +60,69 @@ namespace PipingSpecPlugin.Commands
             var dwgLeaf = activeDoc != null && !string.IsNullOrEmpty(activeDoc.Name)
                 ? Path.GetFileName(activeDoc.Name) : "";
 
-            // Read everything once: the picker needs project-level facts
-            // (statuses / categories / lines with counts), and most users
-            // will pick "whole project" anyway. If they pick "active dwg"
-            // we filter the records in-memory rather than re-reading.
-            editor.WriteMessage("\n[WRITESPEC] Scanning project...");
-            var (projectRecords, activeDwgRecords, ownedPnPIds, topology, eqCount, eqNbrCount, failedCount)
-                = CollectFromProject(project, editor);
-            editor.WriteMessage($"\n[WRITESPEC] Found {projectRecords.Count} part record(s) across the project.");
-            editor.WriteMessage(
-                $"\n[WRITESPEC] Equipment entities seen: {eqCount}; "
-              + $"connection-neighbours: {eqNbrCount}; "
-              + $"owned PnPIDs (incl. connector hops): {ownedPnPIds.Count}.");
+            Say("[Спецификация] Сканирование проекта…");
+            var scan = CollectFromProject(project, Say, Trace);
+            Say($"[Спецификация] Найдено компонентов: {scan.records.Count}"
+              + (scan.ownedPnPIds.Count > 0
+                    ? $"; исключено патрубков оборудования: {scan.ownedPnPIds.Count}"
+                    : ""));
 
-            if (failedCount > 0)
+            if (scan.skippedFiles > 0)
             {
+                // Только реальные сбои (не "файл не Plant 3D"). При нуле
+                // не дергаем пользователя — это нормальный путь.
                 WinForms.MessageBox.Show(
-                    $"При сканировании проекта были пропущены некоторые чертежи ({failedCount} шт.).\n" +
-                    "Детали ошибок выведены в командную строку AutoCAD.\n\n" +
-                    "Сгенерированная спецификация может быть неполной.",
+                    $"При сканировании пропущено чертежей: {scan.skippedFiles}.\n" +
+                    $"Подробности см. в логе:\n{logger.Path}\n\n" +
+                    "Спецификация может быть неполной.",
                     "Предупреждение",
                     WinForms.MessageBoxButtons.OK,
                     WinForms.MessageBoxIcon.Warning);
             }
 
-            // Discover valve companions up-front so we can show the user
-            // the count before they generate. The actual exclusion happens
-            // only when the checkbox is on, but we always run the search.
-            // First, a topology diagnostic — print every Valve's neighbour
-            // list and the class of each neighbour. If this comes back
-            // empty or wrong, the Discovery is going to fail too and we
-            // need a different relationship API.
-            var byId = new Dictionary<int, PartRecord>();
-            foreach (var r in projectRecords)
-                if (!byId.ContainsKey(r.PnPID)) byId.Add(r.PnPID, r);
-            var valves = byId.Values
-                .Where(r => string.Equals(r.PartCategory, "Valves",
-                                           StringComparison.OrdinalIgnoreCase))
-                .ToList();
-            editor.WriteMessage($"\n[WRITESPEC] Topology graph: {topology.Count} nodes; {valves.Count} valve(s) seen.");
-            string Tag(int id) => byId.TryGetValue(id, out var rr)
-                ? $"{id}[{rr.PartCategory ?? "?"}/{rr.PnPClassName ?? "?"}]"
-                : $"{id}[?]";
-            foreach (var v in valves.Take(3))
-            {
-                topology.TryGetValue(v.PnPID, out var nbrs);
-                editor.WriteMessage($"\n    valve#{v.PnPID} immediate -> "
-                    + (nbrs == null ? "(no neighbours)"
-                                    : string.Join(", ", nbrs.Select(Tag))));
-                // Hop +1: for each immediate neighbour print what it sees.
-                if (nbrs != null)
-                {
-                    foreach (var n1 in nbrs)
-                    {
-                        topology.TryGetValue(n1, out var n2s);
-                        editor.WriteMessage($"\n      {Tag(n1)} -> "
-                            + (n2s == null ? "(leaf)"
-                                           : string.Join(", ", n2s.Where(x => x != v.PnPID).Select(Tag))));
-                    }
-                }
-            }
+            // Топология и valve-companion: считаем один раз, передаем
+            // и в picker (через facts), и в builder. Подробности — в лог.
+            var companionIds = ValveCompanionFinder.Discover(scan.records, scan.topology);
+            Trace($"Топология: {scan.topology.Count} узлов; "
+                + $"найдено ответных фланцев+прокладок+болтов: {companionIds.Count}");
 
-            var companionIds = ValveCompanionFinder.Discover(projectRecords, topology);
-            editor.WriteMessage($"\n[WRITESPEC] Valve-companion candidates found: {companionIds.Count}.");
-            if (companionIds.Count > 0)
-            {
-                editor.WriteMessage("\n  companion PnPIDs: "
-                    + string.Join(", ", companionIds.Take(20).Select(Tag))
-                    + (companionIds.Count > 20 ? $" (+{companionIds.Count - 20} more)" : ""));
-            }
+            // ProjectFacts питает чекбоксы picker'а. Парты, всегда
+            // исключаемые (равно nozzle/owned), убираем чтобы счетчики
+            // совпадали с тем, что попадет в .docx.
+            var visibleProj = scan.ownedPnPIds.Count > 0
+                ? scan.records.Where(r => !scan.ownedPnPIds.Contains(r.PnPID)).ToList()
+                : scan.records;
+            var facts = ProjectFacts.From(visibleProj);
 
-            // ProjectFacts drives the picker's checkbox counts. Strip the
-            // owned-by-equipment rows now so what the user sees in the UI
-            // matches what actually ends up in the spec.
-            var visibleRecords = ownedPnPIds.Count > 0
-                ? projectRecords.Where(r => !ownedPnPIds.Contains(r.PnPID)).ToList()
-                : projectRecords;
-            var facts = ProjectFacts.From(visibleRecords);
-
-            var visibleActiveRecords = ownedPnPIds.Count > 0
-                ? activeDwgRecords.Where(r => !ownedPnPIds.Contains(r.PnPID)).ToList()
-                : activeDwgRecords;
-            var activeFacts = ProjectFacts.From(visibleActiveRecords);
+            var visibleActive = scan.ownedPnPIds.Count > 0
+                ? scan.activeDwgRecords.Where(r => !scan.ownedPnPIds.Contains(r.PnPID)).ToList()
+                : scan.activeDwgRecords;
+            var activeFacts = ProjectFacts.From(visibleActive);
 
             var picker = new SpecPickerWindow(facts, activeFacts, project.Name, dwgLeaf,
                                               settings,
                                               activeDrawingAvailable: !string.IsNullOrEmpty(dwgLeaf));
             new WindowInteropHelper(picker).Owner = AcadApp.MainWindow.Handle;
-            var ok = picker.ShowDialog();
-            if (ok != true)
+            if (picker.ShowDialog() != true)
             {
-                editor.WriteMessage("\n[WRITESPEC] Cancelled.");
+                Say("[Спецификация] Отменено пользователем.");
                 return;
             }
             var result = picker.Result;
+            Trace($"Picker: scope={result.Scope}; "
+                + $"statuses={result.Statuses?.Count ?? 0}; "
+                + $"categories={result.Categories?.Count ?? 0}; "
+                + $"lines={result.Lines?.Count ?? 0}; "
+                + $"groupByLine={result.GroupByLine}; "
+                + $"excludeValveCompanions={result.ExcludeValveCompanions}; "
+                + $"includePipeBends={result.IncludePipeBendsAsPipe}");
 
-            // Reuse the pre-scan snapshot for the actual build. The
-            // earlier "Recalculating..." pass that scanned all DWGs a
-            // second time was added defensively for "data freshness"
-            // but it doubled the latency on big projects and offered
-            // no real benefit — the user's changes between opening the
-            // picker and clicking 'Сгенерировать' don't reach a
-            // background DataLinks store anyway. One scan per ribbon
-            // click is the contract.
-            IEnumerable<PartRecord> input = projectRecords;
+            // Активный чертеж — фильтруем по PnPID-ам.
+            IEnumerable<PartRecord> input = scan.records;
             if (result.Scope == "dwg" && activeDoc != null)
             {
-                var activeIds = new HashSet<int>(activeDwgRecords.Select(r => r.PnPID));
-                input = projectRecords.Where(r => activeIds.Contains(r.PnPID));
+                var activeIds = new HashSet<int>(scan.activeDwgRecords.Select(r => r.PnPID));
+                input = scan.records.Where(r => activeIds.Contains(r.PnPID));
             }
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
@@ -166,44 +134,34 @@ namespace PipingSpecPlugin.Commands
                 ExcludeEquipment = result.ExcludeEquipment,
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
-                EquipmentOwnedPnPIds = ownedPnPIds,
+                EquipmentOwnedPnPIds = scan.ownedPnPIds,
                 ValveCompanionPnPIds = companionIds,
                 IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe,
-                Topology = topology,
+                Topology = scan.topology,
             });
             var specRows = builder.Build(input);
-            foreach (var w in builder.Warnings)
-                editor.WriteMessage("\n  [WARN] " + w);
+            foreach (var w in builder.Warnings) Trace("WARN: " + w);
             if (builder.DropReasons.Count > 0)
             {
-                editor.WriteMessage("\n[WRITESPEC] Filter audit (drops by reason):");
+                Trace("Фильтры (отброшено по причинам):");
                 foreach (var kv in builder.DropReasons.OrderByDescending(kv => kv.Value))
-                    editor.WriteMessage($"\n    {kv.Value,6}  {kv.Key}");
+                    Trace($"  {kv.Value,6}  {kv.Key}");
             }
 
             if (specRows.Count == 0)
             {
-                var msg = "Спецификация пуста. Выбранные фильтры исключили все компоненты.";
-                editor.WriteMessage("\n[WRITESPEC] " + msg);
+                const string msg = "Спецификация пуста. Выбранные фильтры исключили все компоненты.";
+                Say("[Спецификация] " + msg);
                 WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
                     WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
                 return;
             }
 
-            var initialDir = string.IsNullOrEmpty(settings.LastOutputDir)
-                ? project.ProjectFolderPath
-                : settings.LastOutputDir;
-            string outputPath;
-            using (var dlg = new WinForms.SaveFileDialog
+            var outputPath = AskOutputPath(settings, project.Name);
+            if (string.IsNullOrEmpty(outputPath))
             {
-                Title = "Сохранить спецификацию",
-                Filter = "Word документ (*.docx)|*.docx",
-                FileName = $"{project.Name}.docx",
-                InitialDirectory = initialDir,
-            })
-            {
-                if (dlg.ShowDialog() != WinForms.DialogResult.OK) return;
-                outputPath = dlg.FileName;
+                Say("[Спецификация] Сохранение отменено.");
+                return;
             }
 
             try
@@ -213,18 +171,20 @@ namespace PipingSpecPlugin.Commands
             }
             catch (System.Exception ex)
             {
-                editor.WriteMessage("\n[WRITESPEC] FAILED: "
-                    + ex.GetType().Name + ": " + ex.Message);
+                Trace($"FAILED: {ex.GetType().Name}: {ex.Message}");
+                Trace(ex.StackTrace ?? "");
+                Say($"[Спецификация] Ошибка сохранения: {ex.Message}");
                 WinForms.MessageBox.Show(
-                    $"Ошибка сохранения спецификации:\n\n{ex.Message}",
+                    $"Ошибка сохранения спецификации:\n\n{ex.Message}\n\n" +
+                    $"Подробности в логе:\n{logger.Path}",
                     "Спецификация Plant 3D",
                     WinForms.MessageBoxButtons.OK,
                     WinForms.MessageBoxIcon.Error);
                 return;
             }
 
-            // Persist user prefs after a successful run only — a failed
-            // run should not pin broken selections (matches Python).
+            // Сохраняем prefs только после успешной записи — провальный
+            // прогон не должен закрепить сломанный выбор.
             settings.LastOutputDir = Path.GetDirectoryName(outputPath);
             settings.TemplatePath = result.TemplatePath;
             settings.Scope = result.Scope;
@@ -238,11 +198,44 @@ namespace PipingSpecPlugin.Commands
             settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;
             settings.Save();
 
-            editor.WriteMessage($"\n[WRITESPEC] Wrote {specRows.Count} spec row(s) to {outputPath}");
-            TryOpenInWord(outputPath, editor);
+            Say($"[Спецификация] Готово: {specRows.Count} строк → {outputPath}");
+            TryOpenInWord(outputPath, Say);
         }
 
-        static void TryOpenInWord(string path, Autodesk.AutoCAD.EditorInput.Editor editor)
+        // --- helpers -----------------------------------------------------
+
+        static string AskOutputPath(PluginSettings settings, string projectName)
+        {
+            var initialDir = string.IsNullOrEmpty(settings.LastOutputDir)
+                ? null
+                : settings.LastOutputDir;
+            using var dlg = new WinForms.SaveFileDialog
+            {
+                Title = "Сохранить спецификацию",
+                Filter = "Word документ (*.docx)|*.docx",
+                FileName = SanitizeFileName(projectName ?? "Спецификация") + ".docx",
+                InitialDirectory = initialDir,
+            };
+            return dlg.ShowDialog() == WinForms.DialogResult.OK ? dlg.FileName : null;
+        }
+
+        /// <summary>
+        /// Strip filename-illegal characters so the SaveFileDialog never
+        /// receives "Foo/Bar.docx" or similar. Project names occasionally
+        /// have colons or slashes; leaving them in tripped GUI dialogs on
+        /// Russian Windows.
+        /// </summary>
+        static string SanitizeFileName(string name)
+        {
+            var bad = Path.GetInvalidFileNameChars();
+            var sb = new System.Text.StringBuilder(name.Length);
+            foreach (var ch in name)
+                sb.Append(Array.IndexOf(bad, ch) >= 0 ? '_' : ch);
+            var cleaned = sb.ToString().Trim();
+            return string.IsNullOrEmpty(cleaned) ? "Спецификация" : cleaned;
+        }
+
+        static void TryOpenInWord(string path, Action<string> say)
         {
             try
             {
@@ -254,26 +247,34 @@ namespace PipingSpecPlugin.Commands
             }
             catch (System.Exception ex)
             {
-                editor.WriteMessage($"\n[WRITESPEC] Could not auto-open: {ex.Message}");
+                say($"[Спецификация] Файл сохранен, открыть в Word не удалось: {ex.Message}");
             }
         }
 
-        // --- project-wide collection -------------------------------------
+        // --- scan --------------------------------------------------------
 
-        static (List<PartRecord> records, List<PartRecord> activeDwgRecords, HashSet<int> ownedPnPIds,
-                Dictionary<int, List<int>> topology,
-                int equipmentCount, int equipmentNeighbourCount, int failedCount) CollectFromProject(
-            PlantProject project, Autodesk.AutoCAD.EditorInput.Editor editor)
+        sealed class ScanResult
         {
+            public List<PartRecord> records = new();
+            public List<PartRecord> activeDwgRecords = new();
+            public HashSet<int> ownedPnPIds = new();
+            public Dictionary<int, List<int>> topology = new();
+            public int skippedFiles;
+        }
+
+        static ScanResult CollectFromProject(PlantProject project,
+            Action<string> say, Action<string> trace)
+        {
+            var scan = new ScanResult();
+
             Project piping = null;
             foreach (var pp in project.ProjectParts)
                 if (pp is Autodesk.ProcessPower.P3dProjectParts.PipingProject)
                 { piping = pp; break; }
             if (piping == null)
             {
-                editor.WriteMessage("\n[WRITESPEC] Project has no Piping discipline.");
-                return (new List<PartRecord>(), new List<PartRecord>(), new HashSet<int>(),
-                        new Dictionary<int, List<int>>(), 0, 0, 0);
+                say("[Спецификация] В проекте нет дисциплины Piping.");
+                return scan;
             }
 
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
@@ -283,23 +284,20 @@ namespace PipingSpecPlugin.Commands
                             && IsUnderPlant3dModels(f))
                 .ToList();
 
+            trace($"Чертежей в Plant 3D Models: {dwgFiles.Count}");
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
-            var projectDlm = piping.DataLinksManager;
-            var all = new List<PartRecord>();
-            var activeDwgRecs = new List<PartRecord>();
-            var owned = new HashSet<int>();
-            var topology = new Dictionary<int, List<int>>();
-            var eqCount = 0;
-            var eqNbrCount = 0;
-            var count = 0;
-            var failedCount = 0;
-            foreach (var f in dwgFiles)
+            var projectDlm = piping.DataLinksManager as DataLinksManager;
+
+            for (var i = 0; i < dwgFiles.Count; i++)
             {
-                count++;
-                if (count % 5 == 0 || count == dwgFiles.Count)
+                var f = dwgFiles[i];
+                if ((i + 1) % 5 == 0 || i + 1 == dwgFiles.Count)
                 {
-                    editor.WriteMessage($"\n[WRITESPEC] Сканирование: {count} из {dwgFiles.Count} чертежей...");
-                    System.Windows.Forms.Application.DoEvents();
+                    say($"[Спецификация] Сканирование: {i + 1} из {dwgFiles.Count}…");
+                    // DoEvents позволяет UI-потоку обновить статус-бар
+                    // и не "зависнуть" на больших проектах. В контексте
+                    // WRITESPEC мы — UI thread по факту.
+                    WinForms.Application.DoEvents();
                 }
 
                 string path = null;
@@ -307,72 +305,23 @@ namespace PipingSpecPlugin.Commands
                 catch { }
                 if (string.IsNullOrEmpty(path) || !File.Exists(path))
                 {
-                    failedCount++;
+                    trace($"Пропущен (не найден на диске): {f.Name}");
                     continue;
                 }
 
                 try
                 {
-                    PartReadResult result = null;
+                    PartReadResult result = ReadOneDrawing(path, activeDocPath, projectDlm, trace);
+                    if (result == null) continue;
 
-                    // Try to locate open document to get unsaved in-memory changes
-                    Autodesk.AutoCAD.ApplicationServices.Document openDoc = null;
-                    try
-                    {
-                        foreach (Autodesk.AutoCAD.ApplicationServices.Document doc in AcadApp.DocumentManager)
-                        {
-                            if (doc != null && PathEquals(doc.Name, path))
-                            {
-                                openDoc = doc;
-                                break;
-                            }
-                        }
-                    }
-                    catch { }
-
-                    if (openDoc != null)
-                    {
-                        try
-                        {
-                            result = PartReader.Read(openDoc.Database, projectDlm);
-                            if (PathEquals(path, activeDocPath))
-                            {
-                                activeDwgRecs.AddRange(result.Records);
-                            }
-                        }
-                        catch (System.Exception ex)
-                        {
-                            editor.WriteMessage($"\n  [WARN] Не удалось прочитать открытый чертеж {Path.GetFileName(path)} из памяти, пробуем с диска: {ex.Message}");
-                        }
-                    }
-
-                    if (result == null)
-                    {
-                        using var db = new Database(false, true);
-                        // FileShare.ReadWrite (not just Read) is required
-                        // because Plant 3D leaves a .dwl write-lock next
-                        // to drawings the user has touched in the current
-                        // session — read-only sharing throws
-                        // eFileSharingViolation and we lose half the
-                        // project's parts.
-                        db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
-                        db.CloseInput(true);
-                        result = PartReader.Read(db, projectDlm);
-                        if (PathEquals(path, activeDocPath))
-                        {
-                            activeDwgRecs.AddRange(result.Records);
-                        }
-                    }
-                    all.AddRange(result.Records);
-                    foreach (var id in result.EquipmentOwnedPnPIds) owned.Add(id);
-                    eqCount += result.EquipmentCount;
-                    eqNbrCount += result.EquipmentNeighbourCount;
+                    scan.records.AddRange(result.Records);
+                    if (PathEquals(path, activeDocPath))
+                        scan.activeDwgRecords.AddRange(result.Records);
+                    foreach (var id in result.EquipmentOwnedPnPIds) scan.ownedPnPIds.Add(id);
                     foreach (var kv in result.Topology)
                     {
-                        // Different drawings can describe the same part
-                        // with disjoint neighbours; union them.
-                        if (!topology.TryGetValue(kv.Key, out var existing))
-                            topology[kv.Key] = new List<int>(kv.Value);
+                        if (!scan.topology.TryGetValue(kv.Key, out var existing))
+                            scan.topology[kv.Key] = new List<int>(kv.Value);
                         else
                             foreach (var id in kv.Value)
                                 if (!existing.Contains(id)) existing.Add(id);
@@ -380,127 +329,45 @@ namespace PipingSpecPlugin.Commands
                 }
                 catch (System.Exception ex)
                 {
-                    editor.WriteMessage($"\n  ! {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
+                    trace($"FAILED: {Path.GetFileName(path)}: {ex.GetType().Name}: {ex.Message}");
                     if (ex.InnerException != null)
-                         editor.WriteMessage($"\n    inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
-                    failedCount++;
+                        trace($"  inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                    scan.skippedFiles++;
                 }
             }
-            return (all, activeDwgRecs, owned, topology, eqCount, eqNbrCount, failedCount);
+            return scan;
         }
 
-        [CommandMethod("TESTREL")]
-        public void TestRel()
+        static PartReadResult ReadOneDrawing(string path, string activeDocPath,
+            DataLinksManager projectDlm, Action<string> trace)
         {
-            var editor = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
-            if (editor == null) return;
-
-            try
+            // Если чертеж открыт пользователем — читаем из памяти, иначе
+            // открываем side-database. In-memory путь ловит несохраненные
+            // изменения, sideDB — все остальное.
+            foreach (Autodesk.AutoCAD.ApplicationServices.Document doc
+                     in AcadApp.DocumentManager)
             {
-                var db = AcadApp.DocumentManager.MdiActiveDocument.Database;
-                var dlm = DataLinksManager.GetManager(db);
-                if (dlm == null)
+                if (doc != null && PathEquals(doc.Name, path))
                 {
-                    editor.WriteMessage("\nDataLinksManager is null.");
-                    return;
-                }
-
-                var rowIds = dlm.SelectAcPpRowIds(db);
-                if (rowIds == null || rowIds.Count == 0)
-                {
-                    editor.WriteMessage("\nNo parts found in active database.");
-                    return;
-                }
-
-                editor.WriteMessage($"\nTotal parts: {rowIds.Count}");
-
-                int targetRowId = 0;
-                string cachedTag = null;
-                foreach (int rowId in rowIds)
-                {
-                    var props = dlm.GetAllProperties(rowId, true);
-                    if (props == null) continue;
-                    var dict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var kv in props)
-                        if (kv.Key != null && !dict.ContainsKey(kv.Key)) dict.Add(kv.Key, kv.Value);
-
-                    if (dict.TryGetValue("LineNumberTag", out var val) && !string.IsNullOrEmpty(val))
-                    {
-                        targetRowId = rowId;
-                        cachedTag = val;
-                        break;
-                    }
-                }
-
-                if (targetRowId == 0)
-                {
-                    foreach (int id in rowIds)
-                    {
-                        targetRowId = id;
-                        break;
-                    }
-                }
-
-                editor.WriteMessage($"\nTarget RowId: {targetRowId}, cached LineNumberTag: '{cachedTag ?? "null"}'");
-
-                try
-                {
-                    var related = dlm.GetRelatedRowIds(targetRowId);
-                    editor.WriteMessage($"\nRelatedRowIds(rowId) count: {related?.Count ?? 0}");
-                    if (related != null)
-                    {
-                        foreach (int rId in related)
-                        {
-                            var rProps = dlm.GetAllProperties(rId, true);
-                            var rClass = rProps?.FirstOrDefault(kv => kv.Key.Equals("PnPClassName", StringComparison.OrdinalIgnoreCase)).Value;
-                            var rTag = rProps?.FirstOrDefault(kv => kv.Key.Equals("Tag", StringComparison.OrdinalIgnoreCase)).Value;
-                            editor.WriteMessage($"\n  -> Related RowId: {rId}, Class: '{rClass}', Tag: '{rTag}'");
-                        }
-                    }
-                }
-                catch (System.Exception ex)
-                {
-                    editor.WriteMessage($"\nError querying bare GetRelatedRowIds: {ex.Message}");
-                }
-
-                string[] relationshipNames = { "P3dLineGroupPartRelationship", "LineGroupPartRelationship", "P3dLineGroupPart" };
-                foreach (var relName in relationshipNames)
-                {
-                    try
-                    {
-                        var relatedIds = dlm.GetRelatedRowIds(relName, "Part", targetRowId, "LineGroup");
-                        editor.WriteMessage($"\nQuery: {relName} (Part -> LineGroup): count={relatedIds?.Count ?? 0}");
-                        if (relatedIds != null)
-                        {
-                            foreach (int lgId in relatedIds)
-                            {
-                                var lgProps = dlm.GetAllProperties(lgId, true);
-                                var lgTag = lgProps?.FirstOrDefault(kv => kv.Key.Equals("Tag", StringComparison.OrdinalIgnoreCase)).Value;
-                                editor.WriteMessage($"\n    -> RowId {lgId}, Tag: '{lgTag}'");
-                            }
-                        }
-                    }
+                    try { return PartReader.Read(doc.Database, projectDlm); }
                     catch (System.Exception ex)
                     {
-                        editor.WriteMessage($"\nError querying {relName}: {ex.Message}");
+                        trace($"In-memory read failed for {Path.GetFileName(path)}: {ex.Message}; falling back to side-DB");
+                        break;
                     }
                 }
             }
-            catch (System.Exception ex)
-            {
-                editor.WriteMessage($"\nFatal error in TESTREL: {ex.Message}\n{ex.StackTrace}");
-            }
+            using var db = new Database(false, true);
+            db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
+            db.CloseInput(true);
+            return PartReader.Read(db, projectDlm);
         }
 
         /// <summary>
-        /// Only DWGs under the project's "Plant 3D Models" sub-tree
-        /// hold the 3D piping parts the spec cares about. The Iso / Ortho /
-        /// symbol-style drawings also live in ProjectFiles but they don't
-        /// carry the Engineering Items we aggregate — including them
-        /// just slows the scan and adds noise. Match on a path fragment
-        /// rather than a fixed parent so user-renamed sub-folders still
-        /// pass (e.g. localised 'Plant 3D Models' under Plant3D
-        /// installations).
+        /// Только DWG из "Plant 3D Models" поддерева. Ortho / Iso /
+        /// symbol-style DWG в спецификацию не идут и только тормозят
+        /// сканирование. Совпадение по фрагменту пути, не по абсолютному
+        /// родителю — на случай локализованных установок.
         /// </summary>
         static bool IsUnderPlant3dModels(PnPProjectFile f)
         {
@@ -518,20 +385,21 @@ namespace PipingSpecPlugin.Commands
                        StringComparison.OrdinalIgnoreCase);
         }
 
-        static bool PathEquals(string path1, string path2)
+        static bool PathEquals(string a, string b)
         {
-            if (string.IsNullOrEmpty(path1) || string.IsNullOrEmpty(path2)) return false;
+            if (string.IsNullOrEmpty(a) || string.IsNullOrEmpty(b)) return false;
             try
             {
-                var p1 = Path.GetFullPath(path1).Replace('/', '\\').TrimEnd('\\');
-                var p2 = Path.GetFullPath(path2).Replace('/', '\\').TrimEnd('\\');
+                var p1 = Path.GetFullPath(a).Replace('/', '\\').TrimEnd('\\');
+                var p2 = Path.GetFullPath(b).Replace('/', '\\').TrimEnd('\\');
                 return string.Equals(p1, p2, StringComparison.OrdinalIgnoreCase);
             }
             catch
             {
-                return string.Equals(path1.Replace('/', '\\').TrimEnd('\\'), 
-                                     path2.Replace('/', '\\').TrimEnd('\\'), 
-                                     StringComparison.OrdinalIgnoreCase);
+                return string.Equals(
+                    a.Replace('/', '\\').TrimEnd('\\'),
+                    b.Replace('/', '\\').TrimEnd('\\'),
+                    StringComparison.OrdinalIgnoreCase);
             }
         }
     }

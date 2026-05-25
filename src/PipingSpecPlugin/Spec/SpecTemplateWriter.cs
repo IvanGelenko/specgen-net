@@ -38,8 +38,8 @@ namespace PipingSpecPlugin.Spec
 
             var (table, headerIdx) = FindMaterialsTable(body)
                 ?? throw new InvalidOperationException(
-                    $"Section header '{SpecConstants.MaterialsSectionHeader}' "
-                  + "not found in any table of the template.");
+                    $"В шаблоне не найдена таблица спецификации. Убедитесь, что в шаблоне присутствует таблица, "
+                  + $"содержащая строку с заголовком '{SpecConstants.MaterialsSectionHeader}'.");
 
             var trs = table.Elements<TableRow>().ToList();
             // The slice reserved for data sits between the header and the
@@ -62,9 +62,21 @@ namespace PipingSpecPlugin.Spec
             // some templates have zero reserved rows and the only 9-cell
             // example lives elsewhere.
             var stencilSrc = trs.FirstOrDefault(r => r.Elements<TableCell>().Count() == 9
-                                                     && !IsHeaderRow(r))
-                ?? throw new InvalidOperationException(
-                    "Template has no 9-cell row to use as a data-row stencil.");
+                                                     && !IsHeaderRow(r));
+            if (stencilSrc == null)
+            {
+                var anyDataRow = trs.FirstOrDefault(r => r.Elements<TableCell>().Count() > 1
+                                                         && !IsHeaderRow(r));
+                if (anyDataRow != null)
+                {
+                    var count = anyDataRow.Elements<TableCell>().Count();
+                    throw new InvalidOperationException(
+                        $"Таблица материалов в шаблоне имеет некорректное количество колонок ({count} вместо требуемых 9). "
+                      + "Пожалуйста, убедитесь, что таблица соответствует стандарту ГОСТ (9 колонок).");
+                }
+                throw new InvalidOperationException(
+                    "В таблице материалов шаблона не найдено строк-образцов для вывода данных спецификации.");
+            }
             // Take an isolated copy and strip vertical text + fixed-height
             // properties before using it as the source of new rows. Some
             // templates (including the ГОСТ one) keep a single tall row
@@ -147,7 +159,9 @@ namespace PipingSpecPlugin.Spec
                     if (!IsHeaderRow(trs[i])) continue;
                     var txt = RowText(trs[i]).Trim().ToLowerInvariant()
                         .TrimEnd(':', '.', ' ');
-                    if (txt == target) return (t, i);
+                    // Fuzzy matching: check if target is a substring of the header text (or vice versa)
+                    // to support templates with section numbers or slightly modified header titles.
+                    if (txt == target || txt.Contains(target) || target.Contains(txt)) return (t, i);
                 }
             }
             return null;

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Windows.Interop;
+using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
@@ -28,17 +29,22 @@ namespace PipingSpecPlugin.Commands
     /// </summary>
     public class WriteSpecCommand
     {
-        [CommandMethod("WRITESPEC")]
+        [CommandMethod("WRITESPEC", CommandFlags.Session)]
         public void Run()
         {
-            var editor = AcadApp.DocumentManager.MdiActiveDocument?.Editor;
-            if (editor == null) return;
             using var logger = new RunLogger();
 
             void Say(string line)
             {
-                editor.WriteMessage("\n" + line);
                 logger.Log(line);
+                try
+                {
+                    // Re-acquire the editor each time: during close/reopen the
+                    // captured reference goes stale and WriteMessage throws eNotApplicable.
+                    AcadApp.DocumentManager.MdiActiveDocument?.Editor
+                           ?.WriteMessage("\n" + line);
+                }
+                catch { /* swallow — happens when no doc context is active */ }
             }
             void Trace(string line) => logger.Log(line);
 
@@ -56,7 +62,79 @@ namespace PipingSpecPlugin.Commands
             }
 
             var settings = PluginSettings.Load();
-            var activeDoc = AcadApp.DocumentManager.MdiActiveDocument;
+            var docMgr = AcadApp.DocumentManager;
+            var activeDoc = docMgr.MdiActiveDocument;
+
+            if (activeDoc != null)
+            {
+                string activeDocName = activeDoc.Name;
+
+                // Активный документ — просто сохраняем если есть изменения.
+                // Читать из памяти не нужно: ReadOneDrawing всегда читает с диска,
+                // поэтому достаточно убедиться что файл на диске актуален.
+                try
+                {
+                    object dbmodObj = AcadApp.GetSystemVariable("DBMOD");
+                    bool activeModified = System.Convert.ToInt32(dbmodObj) != 0;
+                    if (activeModified)
+                    {
+                        Say($"[Спецификация] Автосохранение {Path.GetFileName(activeDocName)}...");
+                        try { activeDoc.Database.SaveAs(activeDocName, true, DwgVersion.Current, activeDoc.Database.SecurityParameters); }
+                        catch { try { activeDoc.Database.Save(); } catch { } }
+                    }
+                }
+                catch { }
+
+                // Фоновые открытые чертежи с несохранёнными изменениями —
+                // закрываем и открываем заново, чтобы их данные оказались на диске.
+                foreach (Document doc in docMgr)
+                {
+                    if (doc == null || string.IsNullOrEmpty(doc.Name) || doc == activeDoc) continue;
+                    try
+                    {
+                        dynamic acadDoc = doc.GetAcadDocument();
+                        bool bgModified = !acadDoc.Saved;
+                        if (bgModified)
+                        {
+                            Say($"[Спецификация] Сохранение и перезапуск {Path.GetFileName(doc.Name)}...");
+                            string docPath = doc.Name;
+                            try
+                            {
+                                doc.CloseAndSave(docPath);
+                                docMgr.Open(docPath, false);
+                            }
+                            catch (System.Exception ex)
+                            {
+                                Trace($"Ошибка перезапуска {Path.GetFileName(docPath)}: {ex.Message}");
+                            }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Восстанавливаем активный документ
+                if (!string.IsNullOrEmpty(activeDocName))
+                {
+                    foreach (Document d in docMgr)
+                    {
+                        if (d != null && PathEquals(d.Name, activeDocName))
+                        {
+                            docMgr.MdiActiveDocument = d;
+                            break;
+                        }
+                    }
+                }
+
+                activeDoc = docMgr.MdiActiveDocument;
+                project = PlantApplication.CurrentProject;
+                if (project == null)
+                {
+                    const string msg = "Не найден открытый проект AutoCAD Plant 3D после перезапуска чертежей.";
+                    Say("[Спецификация] " + msg);
+                    return;
+                }
+            }
+
             var dwgLeaf = activeDoc != null && !string.IsNullOrEmpty(activeDoc.Name)
                 ? Path.GetFileName(activeDoc.Name) : "";
 
@@ -266,6 +344,7 @@ namespace PipingSpecPlugin.Commands
                 BendsConsumed = bendFold?.BendsConsumed,
                 ExtraPipeMetres = bendFold?.ExtraPipeMetres,
                 ExtraPipeLineTags = bendFold?.ExtraPipeLineTags,
+                DisableElementGrouping = result.DisableElementGrouping,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings) Trace("WARN: " + w);
@@ -297,6 +376,28 @@ namespace PipingSpecPlugin.Commands
                 SpecTemplateWriter.Write(result.TemplatePath, outputPath, specRows,
                                          groupByLine: result.GroupByLine);
             }
+            catch (System.IO.IOException ex) when (IsFileLocked(ex))
+            {
+                Trace($"FAILED: Sharing violation / file locked: {ex.Message}");
+                Say($"[Спецификация] Ошибка сохранения: файл занят другим процессом.");
+                WinForms.MessageBox.Show(
+                    $"Не удалось сохранить спецификацию.\n\nФайл уже открыт в Microsoft Word или другой программе:\n{outputPath}\n\nПожалуйста, закройте этот файл в Word и попробуйте снова.",
+                    "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK,
+                    WinForms.MessageBoxIcon.Warning);
+                return;
+            }
+            catch (System.Exception ex) when (ex is System.IO.FileFormatException || ex.GetType().FullName.Contains("OpenXml"))
+            {
+                Trace($"FAILED: Invalid Word template: {ex.Message}");
+                Say($"[Спецификация] Ошибка сохранения: некорректный файл шаблона.");
+                WinForms.MessageBox.Show(
+                    $"Выбранный файл шаблона поврежден или не является корректным документом Word (.docx):\n{result.TemplatePath}\n\nПожалуйста, проверьте файл шаблона.",
+                    "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK,
+                    WinForms.MessageBoxIcon.Error);
+                return;
+            }
             catch (System.Exception ex)
             {
                 Trace($"FAILED: {ex.GetType().Name}: {ex.Message}");
@@ -319,12 +420,18 @@ namespace PipingSpecPlugin.Commands
             settings.Statuses = result.Statuses?.ToArray();
             settings.Categories = result.Categories?.ToArray();
             settings.Lines = result.Lines?.ToArray();
+
+            settings.KnownStatuses = facts.Statuses.Select(s => s.key).ToArray();
+            settings.KnownCategories = facts.Categories.Select(c => c.key).ToArray();
+            settings.KnownLines = facts.Lines.Select(l => l.key).ToArray();
+
             settings.GroupByLine = result.GroupByLine;
             settings.ExcludeValveCompanions = result.ExcludeValveCompanions;
             settings.ExcludeEquipment = result.ExcludeEquipment;
             settings.ExcludeConnectors = result.ExcludeConnectors;
             settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;
             settings.OpenAfterGenerate = result.OpenAfterGenerate;
+            settings.DisableElementGrouping = result.DisableElementGrouping;
             settings.Save();
 
             Say($"[Спецификация] Готово: {specRows.Count} строк → {outputPath}");
@@ -379,6 +486,12 @@ namespace PipingSpecPlugin.Commands
             {
                 say($"[Спецификация] Файл сохранен, открыть в Word не удалось: {ex.Message}");
             }
+        }
+
+        private static bool IsFileLocked(System.IO.IOException exception)
+        {
+            int errorCode = System.Runtime.InteropServices.Marshal.GetHRForException(exception) & ((1 << 16) - 1);
+            return errorCode == 32 || errorCode == 33; // 32 = ERROR_SHARING_VIOLATION, 33 = ERROR_LOCK_VIOLATION
         }
 
         // --- scan --------------------------------------------------------
@@ -529,22 +642,13 @@ namespace PipingSpecPlugin.Commands
         static PartReadResult ReadOneDrawing(string path, string activeDocPath,
             DataLinksManager projectDlm, Action<string> trace)
         {
-            // Если чертеж открыт пользователем — читаем из памяти, иначе
-            // открываем side-database. In-memory путь ловит несохраненные
-            // изменения, sideDB — все остальное.
-            foreach (Autodesk.AutoCAD.ApplicationServices.Document doc
-                     in AcadApp.DocumentManager)
-            {
-                if (doc != null && PathEquals(doc.Name, path))
-                {
-                    try { return PartReader.Read(doc.Database, projectDlm); }
-                    catch (System.Exception ex)
-                    {
-                        trace($"In-memory read failed for {Path.GetFileName(path)}: {ex.Message}; falling back to side-DB");
-                        break;
-                    }
-                }
-            }
+            // Всегда читаем с диска как side-DB — это гарантирует актуальность
+            // данных вне зависимости от того, сохранил ли пользователь чертёж
+            // до или после нажатия «Сгенерировать». Чтение из памяти (activeDoc.Database)
+            // невозможно использовать надёжно: даже после QSAVE DLM-кеш в памяти
+            // остаётся устаревшим и не отражает новые элементы. Автосохранение
+            // активного документа в Run() гарантирует что последняя версия
+            // уже лежит на диске к моменту вызова этого метода.
             using var db = new Database(false, true);
             db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
             db.CloseInput(true);

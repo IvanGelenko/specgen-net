@@ -304,5 +304,30 @@ namespace PipingSpecPlugin.Tests
             Assert.Equal("Pipe", rows[0].Category);
             Assert.Equal("Flanges", rows[1].Category);
         }
+
+        [Fact]
+        public void DisableElementGrouping_Prevents_Aggregation()
+        {
+            // Two identical flanges
+            var f1 = Flange(1);
+            var f2 = Flange(2);
+            f2.PartSizeLongDesc = f1.PartSizeLongDesc; // make them identical
+
+            // With default options (DisableElementGrouping = false), they should be merged
+            var builderDefault = new SpecRowBuilder();
+            var rowsDefault = builderDefault.Build(new[] { f1, f2 });
+            var rowDefault = Assert.Single(rowsDefault);
+            Assert.Equal(2.0, rowDefault.Qty);
+
+            // With DisableElementGrouping = true, they should remain separate
+            var builderNoGroup = new SpecRowBuilder(new SpecBuilderOptions
+            {
+                DisableElementGrouping = true
+            });
+            var rowsNoGroup = builderNoGroup.Build(new[] { f1, f2 });
+            Assert.Equal(2, rowsNoGroup.Count);
+            Assert.Equal(1.0, rowsNoGroup[0].Qty);
+            Assert.Equal(1.0, rowsNoGroup[1].Qty);
+        }
     }
 }

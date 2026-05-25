@@ -20,7 +20,7 @@ namespace PipingSpecPlugin.Settings
         // pattern as a database migrations table. Bumping the constant
         // and adding an Upgrade case is the only way to change the
         // file shape safely; never silently rename a property.
-        public const int CurrentSchemaVersion = 2;
+        public const int CurrentSchemaVersion = 3;
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
         // Path to the user's preferred .docx Word template. Empty means
@@ -42,6 +42,10 @@ namespace PipingSpecPlugin.Settings
         public string[] Categories { get; set; } = null;
         public string[] Lines { get; set; } = null;
 
+        public string[] KnownStatuses { get; set; } = null;
+        public string[] KnownCategories { get; set; } = null;
+        public string[] KnownLines { get; set; } = null;
+
         // "proj" or "dwg" — restored on next picker open.
         public string Scope { get; set; } = "proj";
 
@@ -56,6 +60,10 @@ namespace PipingSpecPlugin.Settings
         // Open the resulting .docx in Word automatically. Default on,
         // matches the Python edition's behaviour.
         public bool OpenAfterGenerate { get; set; } = true;
+
+        // When true, output each element on a separate row in the spec rather
+        // than aggregate identical items.
+        public bool DisableElementGrouping { get; set; } = false;
 
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -118,6 +126,10 @@ namespace PipingSpecPlugin.Settings
                     // users expect the historical behaviour (Word always
                     // opened) so keep the default true.
                     OpenAfterGenerate = true;
+                    goto case 2;
+                case 2:
+                    // v2 → v3: introduced DisableElementGrouping.
+                    DisableElementGrouping = false;
                     break;
             }
             SchemaVersion = CurrentSchemaVersion;

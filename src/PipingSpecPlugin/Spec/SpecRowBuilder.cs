@@ -46,6 +46,7 @@ namespace PipingSpecPlugin.Spec
         public HashSet<int> BendsConsumed = null;
         public Dictionary<int, double> ExtraPipeMetres = null;
         public Dictionary<int, string> ExtraPipeLineTags = null;
+        public bool DisableElementGrouping = false;
     }
 
     /// <summary>
@@ -224,7 +225,8 @@ namespace PipingSpecPlugin.Spec
                 var toKg = WeightFactor(r.WeightUnit);
 
                 var key = new BucketKey(category, name, ndVal, nomUnit, material,
-                                        spec, typeMark, itemCode, manuf, currentLine);
+                                        spec, typeMark, itemCode, manuf, currentLine,
+                                        _opts.DisableElementGrouping ? r.PnPID : 0);
                 if (!buckets.TryGetValue(key, out var b))
                 {
                     b = new Bucket { LineTag = currentLine };
@@ -576,18 +578,19 @@ namespace PipingSpecPlugin.Spec
         {
             public readonly string Category, Name, NomUnit, Material, Spec, TypeMark, ItemCode, Manufacturer, LineTag;
             public readonly double NdVal;
+            public readonly int PnPID;
             public BucketKey(string c, string n, double nd, string nu, string m, string s,
-                             string tm, string ic, string mf, string lt)
-            { Category=c; Name=n; NdVal=nd; NomUnit=nu; Material=m; Spec=s; TypeMark=tm; ItemCode=ic; Manufacturer=mf; LineTag=lt; }
+                             string tm, string ic, string mf, string lt, int pnpid = 0)
+            { Category=c; Name=n; NdVal=nd; NomUnit=nu; Material=m; Spec=s; TypeMark=tm; ItemCode=ic; Manufacturer=mf; LineTag=lt; PnPID=pnpid; }
             public bool Equals(BucketKey o)
                 => Category==o.Category && Name==o.Name && NdVal.Equals(o.NdVal)
                 && NomUnit==o.NomUnit && Material==o.Material && Spec==o.Spec
                 && TypeMark==o.TypeMark && ItemCode==o.ItemCode
-                && Manufacturer==o.Manufacturer && LineTag==o.LineTag;
+                && Manufacturer==o.Manufacturer && LineTag==o.LineTag && PnPID==o.PnPID;
             public override bool Equals(object o) => o is BucketKey k && Equals(k);
             public override int GetHashCode() => HashCode.Combine(
                 Category, Name, NdVal, NomUnit, Material, Spec,
-                HashCode.Combine(TypeMark, ItemCode, Manufacturer, LineTag));
+                HashCode.Combine(TypeMark, ItemCode, Manufacturer, LineTag, PnPID));
         }
     }
 }

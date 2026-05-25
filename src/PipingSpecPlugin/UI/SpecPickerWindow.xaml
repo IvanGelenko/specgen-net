@@ -2,8 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="PipingSpecPlugin.UI.SpecPickerWindow"
         Title="Генератор спецификации Plant 3D"
-        Height="780" Width="1100"
-        MinHeight="780" MinWidth="900"
+        Height="820" Width="1200"
+        MinHeight="800" MinWidth="1100"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         FontFamily="Segoe UI" FontSize="13">
@@ -71,14 +71,21 @@
                 <GroupBox Header="Дополнительные правила" Padding="10">
                     <StackPanel>
                         <CheckBox x:Name="ExcludeValveCompanionsChk"
-                                  Content="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)"
-                                  IsChecked="True" Margin="0,2,0,2"/>
+                                  IsChecked="True" Margin="0,2,0,2">
+                            <TextBlock Text="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)" TextWrapping="Wrap"/>
+                        </CheckBox>
                         <CheckBox x:Name="IncludePipeBendsAsPipeChk"
-                                  Content="Учитывать изгибы как трубу (длина изгиба прибавляется к соседней трубе)"
-                                  IsChecked="True" Margin="0,2,0,2"/>
+                                  IsChecked="True" Margin="0,2,0,2">
+                            <TextBlock Text="Учитывать изгибы как трубу (длина изгиба прибавляется к соседней трубе)" TextWrapping="Wrap"/>
+                        </CheckBox>
                         <CheckBox x:Name="OpenAfterGenerateChk"
-                                  Content="Открыть документ после генерации"
-                                  IsChecked="True" Margin="0,2,0,2"/>
+                                  IsChecked="True" Margin="0,2,0,2">
+                            <TextBlock Text="Открыть документ после генерации" TextWrapping="Wrap"/>
+                        </CheckBox>
+                        <CheckBox x:Name="DisableElementGroupingChk"
+                                  IsChecked="False" Margin="0,2,0,2">
+                            <TextBlock Text="Без группировки элементов" TextWrapping="Wrap"/>
+                        </CheckBox>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>
@@ -92,8 +99,9 @@
                                     Click="DeselectAllLines_Click"/>
                         </StackPanel>
                         <Separator Margin="0,8,0,4"/>
-                        <CheckBox x:Name="GroupByLineChk"
-                                  Content="Группировать по линиям (отдельный подраздел на каждую)"/>
+                        <CheckBox x:Name="GroupByLineChk">
+                            <TextBlock Text="Группировать по линиям (отдельный подраздел на каждую)" TextWrapping="Wrap"/>
+                        </CheckBox>
                     </StackPanel>
                     <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <ItemsControl x:Name="LineList"/>

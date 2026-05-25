@@ -57,96 +57,173 @@ namespace PipingSpecPlugin.Spec
             // side rows. Swap it for the duration of the read.
             var prevWorking = HostApplicationServices.WorkingDatabase;
             var swapped = false;
-            if (db != prevWorking)
-            {
-                try { HostApplicationServices.WorkingDatabase = db; swapped = true; }
-                catch { /* not always allowed — fall back to per-row try/catch */ }
-            }
-
             bool prevCaching = true;
-            try { prevCaching = dlm.EnableCaching; } catch { }
-            try { dlm.EnableCaching = false; } catch { }
-
-            // Flush pending in-memory changes to the DataLinks store
-            // *before* querying. The active document holds new / edited
-            // parts in its Database until the DLM is told to re-sync.
-            // AuditDrawing(db) rescans the drawing's PnP blob and is
-            // the canonical "give me live state" trigger; the other
-            // three calls are belt-and-braces (different Plant 3D
-            // versions surface the freshness flag through different
-            // APIs).
-            try { dlm.AcceptChanges(); } catch { }
-            try { dlm.AuditDrawing(db); } catch { }
-            try { dlm.ReloadLinkMap(); } catch { }
-            try { dlm.AuditLinks(); } catch { }
-
             bool prevProjCaching = true;
-            if (projectDlm != null)
-            {
-                try { prevProjCaching = projectDlm.EnableCaching; } catch { }
-                try { projectDlm.EnableCaching = false; } catch { }
-                try { projectDlm.AcceptChanges(); } catch { }
-                try { projectDlm.AuditDrawing(db); } catch { }
-                try { projectDlm.ReloadLinkMap(); } catch { }
-                try { projectDlm.AuditLinks(); } catch { }
-            }
-
-            // Suppress the "restore EnableCaching after read" path for
-            // projectDlm — Plant 3D keeps that DataLinksManager alive
-            // for the whole AutoCAD session and any cached row map
-            // outlives our finally block. Keep it off permanently
-            // (PartReader is fast enough that this is harmless).
-            prevProjCaching = false;
 
             try
             {
-            // SelectAcPpRowIds is the documented read-only query. The
-            // earlier attempt with BeginSaveDwg/EndSaveDwg tried to
-            // grab the "live save" snapshot but that pair mutates DLM
-            // state and broke quiet writes from Plant 3D. The
-            // AcceptChanges + AuditDrawing + ReloadLinkMap sequence
-            // above already forces the row map to rebuild against the
-            // live blob, so plain SelectAcPpRowIds returns fresh data.
-            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
-            try { rowIds = dlm.SelectAcPpRowIds(db); }
-            catch { return result; }
-            if (rowIds == null) return result;
+                if (db != prevWorking)
+                {
+                    try { HostApplicationServices.WorkingDatabase = db; swapped = true; }
+                    catch { /* not always allowed — fall back to per-row try/catch */ }
+                }
 
-            foreach (int rowId in rowIds)
-            {
-                PartRecord rec = null;
+                try { prevCaching = dlm.EnableCaching; } catch { }
+                try { dlm.EnableCaching = false; } catch { }
+
+                // Flush pending in-memory changes to the DataLinks store
+                // *before* querying. The active document holds new / edited
+                // parts in its Database until the DLM is told to re-sync.
+                // AuditDrawing(db) rescans the drawing's PnP blob and is
+                // the canonical "give me live state" trigger; the other
+                // three calls are belt-and-braces (different Plant 3D
+                // versions surface the freshness flag through different
+                // APIs).
+                try { dlm.AcceptChanges(); } catch { }
+                try { dlm.AuditDrawing(db); } catch { }
+                try { dlm.ReloadLinkMap(); } catch { }
+                try { dlm.AuditLinks(); } catch { }
                 try
                 {
-                    var props = dlm.GetAllProperties(rowId, true);
-                    if (props == null) continue;
-                    rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache);
+                    int dwgId = dlm.GetDrawingId(db);
+                    if (dwgId != -1) dlm.RefreshLinkMap(dwgId);
                 }
-                catch { /* skip broken rows */ }
-                if (rec == null) continue;
-                result.Records.Add(rec);
-
-                // Equipment-owned exclusion (manways, internal supports
-                // attached to vessels). Plant 3D doesn't always populate
-                // a separate "Equipment" PartCategory — vessels often go
-                // through with empty/null category. The companion-flange
-                // exclusion handled below catches the case the user cares
-                // about most (nozzle-style flanges attached to valves or
-                // equipment), so this path stays as a safety net only.
-                if (string.Equals(rec.PartCategory, "Equipment",
-                                  System.StringComparison.OrdinalIgnoreCase))
+                catch { }
+                try
                 {
-                    CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds);
+                    var pnpDb = dlm.GetPnPDatabase();
+                    if (pnpDb != null)
+                    {
+                        try { pnpDb.CacheAlways = false; } catch { }
+                        try { pnpDb.Disconnect(); } catch { }
+                        try { pnpDb.Connect(); } catch { }
+                        try { pnpDb.AcceptChanges(); } catch { }
+                        try { pnpDb.SynchronizeMetadata(); } catch { }
+                        foreach (Autodesk.ProcessPower.DataObjects.PnPTable table in pnpDb.Tables)
+                            try { table.RefreshCachedRows(); } catch { }
+                    }
                 }
-            }
+                catch { }
 
-            // Build topology by walking ConnectionIterator on every part
-            // ObjectId in model space. This is the managed API equivalent
-            // of Python's P3dPartConnection SQL — it returns the same
-            // connector-mediated part-to-part graph. GetRelatedRowIds was
-            // attempted earlier but came back empty on real projects, so
-            // we go through the connection manager directly.
-            BuildTopology(db, dlm, result);
-            return result;
+                if (projectDlm != null)
+                {
+                    try { prevProjCaching = projectDlm.EnableCaching; } catch { }
+                    try { projectDlm.EnableCaching = false; } catch { }
+                    try { projectDlm.AcceptChanges(); } catch { }
+                    try { projectDlm.AuditDrawing(db); } catch { }
+                    try { projectDlm.ReloadLinkMap(); } catch { }
+                    try { projectDlm.AuditLinks(); } catch { }
+                    try
+                    {
+                        int projDwgId = projectDlm.GetDrawingId(db);
+                        if (projDwgId != -1) projectDlm.RefreshLinkMap(projDwgId);
+                    }
+                    catch { }
+                    try
+                    {
+                        var projPnpDb = projectDlm.GetPnPDatabase();
+                        if (projPnpDb != null)
+                        {
+                            try { projPnpDb.CacheAlways = false; } catch { }
+                            try { projPnpDb.Disconnect(); } catch { }
+                            try { projPnpDb.Connect(); } catch { }
+                            try { projPnpDb.AcceptChanges(); } catch { }
+                            try { projPnpDb.SynchronizeMetadata(); } catch { }
+                            foreach (Autodesk.ProcessPower.DataObjects.PnPTable table in projPnpDb.Tables)
+                                try { table.RefreshCachedRows(); } catch { }
+                        }
+                    }
+                    catch { }
+                }
+
+                // Suppress the "restore EnableCaching after read" path for
+                // projectDlm — Plant 3D keeps that DataLinksManager alive
+                // for the whole AutoCAD session and any cached row map
+                // outlives our finally block. Keep it off permanently
+                // (PartReader is fast enough that this is harmless).
+                prevProjCaching = false;
+
+                // SelectAcPpRowIds is the documented read-only query. The
+                // earlier attempt with BeginSaveDwg/EndSaveDwg tried to
+                // grab the "live save" snapshot but that pair mutates DLM
+                // state and broke quiet writes from Plant 3D. The
+                // AcceptChanges + AuditDrawing + ReloadLinkMap sequence
+                // above already forces the row map to rebuild against the
+                // live blob, so plain SelectAcPpRowIds returns fresh data.
+                Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
+                try { rowIds = dlm.SelectAcPpRowIds(db); }
+                catch { return result; }
+
+                var rowIdSet = new HashSet<int>();
+                if (rowIds != null)
+                {
+                    foreach (int id in rowIds)
+                        rowIdSet.Add(id);
+                }
+
+                // Supplement: scan model space for unsaved/new Plant 3D components in memory
+                using (var tr = db.TransactionManager.StartTransaction())
+                {
+                    try
+                    {
+                        var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                        if (!msId.IsNull)
+                        {
+                            var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
+                            foreach (ObjectId entId in ms)
+                            {
+                                var className = entId.ObjectClass?.Name;
+                                if (className != null && className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
+                                {
+                                    int rowId = 0;
+                                    try { rowId = dlm.FindAcPpRowId(entId); } catch { }
+                                    if (rowId != 0)
+                                    {
+                                        rowIdSet.Add(rowId);
+                                    }
+                                }
+                            }
+                        }
+                        tr.Commit();
+                    }
+                    catch { }
+                }
+
+                foreach (int rowId in rowIdSet)
+                {
+                    PartRecord rec = null;
+                    try
+                    {
+                        var props = dlm.GetAllProperties(rowId, true);
+                        if (props == null) continue;
+                        rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache);
+                    }
+                    catch { /* skip broken rows */ }
+                    if (rec == null) continue;
+                    result.Records.Add(rec);
+
+                    // Equipment-owned exclusion (manways, internal supports
+                    // attached to vessels). Plant 3D doesn't always populate
+                    // a separate "Equipment" PartCategory — vessels often go
+                    // through with empty/null category. The companion-flange
+                    // exclusion handled below catches the case the user cares
+                    // about most (nozzle-style flanges attached to valves or
+                    // equipment), so this path stays as a safety net only.
+                    if (string.Equals(rec.PartCategory, "Equipment",
+                                      System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds);
+                    }
+                }
+
+                // Build topology by walking ConnectionIterator on every part
+                // ObjectId in model space. This is the managed API equivalent
+                // of Python's P3dPartConnection SQL — it returns the same
+                // connector-mediated part-to-part graph. GetRelatedRowIds was
+                // attempted earlier but came back empty on real projects, so
+                // we go through the connection manager directly.
+                BuildTopology(db, dlm, result);
+                return result;
             }
             finally
             {
@@ -185,107 +262,106 @@ namespace PipingSpecPlugin.Spec
             try { cm = new ConnectionManager(); }
             catch { return; }
 
-            using var tr = db.TransactionManager.StartTransaction();
-            try
+            using (var tr = db.TransactionManager.StartTransaction())
             {
-                var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
-                if (msId.IsNull) return;
-                var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
-
-                foreach (ObjectId entId in ms)
+                try
                 {
-                    // Fast filter: skip native AutoCAD entities (like lines, circles, blocks)
-                    // by checking their class name prefix. All Plant 3D entities start with "AcPp".
-                    var className = entId.ObjectClass?.Name;
-                    if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
-                        continue;
+                    var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                    if (msId.IsNull) return;
+                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
 
-                    int fromRowId = 0;
-                    try { fromRowId = dlm.FindAcPpRowId(entId); }
-                    catch { /* not a Plant 3D entity */ }
-
-                    // Equipment recognition is independent of a rowId — a
-                    // vessel may not produce its own EngineeringItems row,
-                    // but its connections still need to flag its child
-                    // nozzles as owned. We always probe IsPnP3dEquipment
-                    // and route accordingly.
-                    bool isEquipment = false;
-                    try { isEquipment = Runtime.IsPnP3dEquipment(entId); }
-                    catch { }
-                    if (isEquipment) result.EquipmentCount++;
-
-                    if (fromRowId == 0 && !isEquipment) continue;
-
-                    ConnectionCollection conns;
-                    try { conns = cm.GetConnections(entId); }
-                    catch { continue; }
-                    if (conns == null) continue;
-
-                    // ConnectionCollection exposes only an indexer + Item
-                    // property, no Count. Try indices until it throws.
-                    for (var i = 0; ; i++)
+                    foreach (ObjectId entId in ms)
                     {
-                        Connection c;
-                        try { c = conns[i]; }
-                        catch { break; }
-                        if (c == null) break;
-                        var otherId = c.ObjectId1 == entId
-                            ? c.ObjectId2
-                            : (c.ObjectId2 == entId ? c.ObjectId1 : ObjectId.Null);
-                        if (otherId.IsNull) continue;
-                        int toRowId = 0;
-                        try { toRowId = dlm.FindAcPpRowId(otherId); }
+                        // Fast filter: skip native AutoCAD entities (like lines, circles, blocks)
+                        // by checking their class name prefix. All Plant 3D entities start with "AcPp".
+                        var className = entId.ObjectClass?.Name;
+                        if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        int fromRowId = 0;
+                        try { fromRowId = dlm.FindAcPpRowId(entId); }
+                        catch { /* not a Plant 3D entity */ }
+
+                        // Equipment recognition is independent of a rowId — a
+                        // vessel may not produce its own EngineeringItems row,
+                        // but its connections still need to flag its child
+                        // nozzles as owned. We always probe IsPnP3dEquipment
+                        // and route accordingly.
+                        bool isEquipment = false;
+                        try { isEquipment = Runtime.IsPnP3dEquipment(entId); }
+                        catch { }
+                        if (isEquipment) result.EquipmentCount++;
+
+                        if (fromRowId == 0 && !isEquipment) continue;
+
+                        ConnectionCollection conns;
+                        try { conns = cm.GetConnections(entId); }
                         catch { continue; }
-                        if (toRowId == 0) continue;
+                        if (conns == null) continue;
 
-                        // Equipment node ⇒ its neighbour is an owned part
-                        // (Python equivalent: SELECT Owned FROM AssetOwnership
-                        // joined on the vessel). Two-hop walk also picks up
-                        // connector-bridged children — IsPnP3dConnector on the
-                        // neighbour triggers a follow-on lookup.
-                        if (isEquipment)
+                        // ConnectionCollection exposes only an indexer + Item
+                        // property, no Count. Try indices until it throws.
+                        for (var i = 0; ; i++)
                         {
-                            result.EquipmentOwnedPnPIds.Add(toRowId);
-                            result.EquipmentNeighbourCount++;
-                            FollowConnectorChildren(cm, dlm, otherId, toRowId,
-                                                     result.EquipmentOwnedPnPIds);
-                        }
+                            Connection c;
+                            try { c = conns[i]; }
+                            catch { break; }
+                            if (c == null) break;
+                            var otherId = c.ObjectId1 == entId
+                                ? c.ObjectId2
+                                : (c.ObjectId2 == entId ? c.ObjectId1 : ObjectId.Null);
+                            if (otherId.IsNull) continue;
+                            int toRowId = 0;
+                            try { toRowId = dlm.FindAcPpRowId(otherId); }
+                            catch { continue; }
+                            if (toRowId == 0) continue;
 
-                        // The reverse direction matters too: in some
-                        // projects the Equipment entity has zero outgoing
-                        // P3dPartConnections, but the Nozzle/Flange parts
-                        // attached to it list the Equipment (or its nozzle
-                        // subpart) as one of *their* neighbours. Detect
-                        // either and mark fromRowId as owned.
-                        if (!isEquipment && fromRowId != 0)
-                        {
-                            bool neighbourIsEquipmentLike = false;
-                            try
+                            // Equipment node ⇒ its neighbour is an owned part
+                            // (Python equivalent: SELECT Owned FROM AssetOwnership
+                            // joined on the vessel). Two-hop walk also picks up
+                            // connector-bridged children — IsPnP3dConnector on the
+                            // neighbour triggers a follow-on lookup.
+                            if (isEquipment)
                             {
-                                neighbourIsEquipmentLike =
-                                    Runtime.IsPnP3dEquipment(otherId)
-                                 || Runtime.IsPnP3dNozzleSubPart(otherId);
-                            }
-                            catch { }
-                            if (neighbourIsEquipmentLike)
-                            {
-                                result.EquipmentOwnedPnPIds.Add(fromRowId);
+                                result.EquipmentOwnedPnPIds.Add(toRowId);
                                 result.EquipmentNeighbourCount++;
+                                FollowConnectorChildren(cm, dlm, otherId, toRowId,
+                                                         result.EquipmentOwnedPnPIds);
                             }
-                        }
 
-                        if (fromRowId != 0 && toRowId != fromRowId)
-                        {
-                            AddEdge(result.Topology, fromRowId, toRowId);
-                            AddEdge(result.Topology, toRowId, fromRowId);
+                            // The reverse direction matters too: in some
+                            // projects the Equipment entity has zero outgoing
+                            // P3dPartConnections, but the Nozzle/Flange parts
+                            // attached to it list the Equipment (or its nozzle
+                            // subpart) as one of *their* neighbours. Detect
+                            // either and mark fromRowId as owned.
+                            if (!isEquipment && fromRowId != 0)
+                            {
+                                bool neighbourIsEquipmentLike = false;
+                                try
+                                {
+                                    neighbourIsEquipmentLike =
+                                        Runtime.IsPnP3dEquipment(otherId)
+                                     || Runtime.IsPnP3dNozzleSubPart(otherId);
+                                }
+                                catch { }
+                                if (neighbourIsEquipmentLike)
+                                {
+                                    result.EquipmentOwnedPnPIds.Add(fromRowId);
+                                    result.EquipmentNeighbourCount++;
+                                }
+                            }
+
+                            if (fromRowId != 0 && toRowId != fromRowId)
+                            {
+                                AddEdge(result.Topology, fromRowId, toRowId);
+                                AddEdge(result.Topology, toRowId, fromRowId);
+                            }
                         }
                     }
+                    tr.Commit();
                 }
-            }
-            catch { /* topology is best-effort; spec still works without it */ }
-            finally
-            {
-                try { tr.Commit(); } catch { }
+                catch { /* topology is best-effort; spec still works without it */ }
             }
         }
 
@@ -402,21 +478,31 @@ namespace PipingSpecPlugin.Spec
             DataLinksManager projectDlm,
             Dictionary<int, string> lineGroupCache)
         {
-            // Try projectDlm first. If projectDlm.GetRelatedRowIds throws
-            // because partRowId isn't valid in that DLM (different rowId
-            // namespace in some Plant 3D versions), fall back to the
-            // drawing DLM relationship walk and then read the Tag through
-            // projectDlm using the same rowId — that path covered the
-            // legacy behaviour in v1.1.1.
-            int lgRowId = QueryLineGroupRowId(projectDlm, partRowId);
+            // Query drawing-local DLM first since partRowId is drawing-local.
+            // In SQLite-based projects, drawing-local and project-wide PnPIDs
+            // belong to different namespaces — querying projectDlm first with
+            // a drawing-local partRowId can match an unrelated row (e.g. a connector)
+            // and return the wrong line tag.
+            int lgRowId = QueryLineGroupRowId(drawingDlm, partRowId);
+            bool isProjectLg = false;
+
             if (lgRowId == 0)
-                lgRowId = QueryLineGroupRowId(drawingDlm, partRowId);
-            if (lgRowId == 0) return null;
+            {
+                // Fallback: try project DLM (shares namespace in SQL Server/vault)
+                lgRowId = QueryLineGroupRowId(projectDlm, partRowId);
+                if (lgRowId == 0) return null;
+                isProjectLg = true;
+            }
 
             if (lineGroupCache.TryGetValue(lgRowId, out var cached))
                 return cached;
 
-            var tag = ReadTag(projectDlm, lgRowId) ?? ReadTag(drawingDlm, lgRowId);
+            // If found via projectDlm, read from projectDlm first. Otherwise,
+            // read from drawingDlm (or projectDlm if they are the same instance).
+            var tag = isProjectLg
+                ? (ReadTag(projectDlm, lgRowId) ?? ReadTag(drawingDlm, lgRowId))
+                : (ReadTag(drawingDlm, lgRowId) ?? (projectDlm == drawingDlm ? ReadTag(projectDlm, lgRowId) : null));
+
             lineGroupCache[lgRowId] = tag;
             return tag;
         }

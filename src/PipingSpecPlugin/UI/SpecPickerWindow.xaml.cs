@@ -53,9 +53,58 @@ namespace PipingSpecPlugin.UI
 
             GroupByLineChk.IsChecked = settings.GroupByLine;
             ApplySavedExclusions();
+
+            DisableElementGroupingChk.Checked += DisableElementGroupingChk_Changed;
+            DisableElementGroupingChk.Unchecked += DisableElementGroupingChk_Changed;
+            IncludePipeBendsAsPipeChk.Checked += IncludePipeBendsAsPipeChk_Changed;
+            IncludePipeBendsAsPipeChk.Unchecked += IncludePipeBendsAsPipeChk_Changed;
+            UpdateExclusionStates();
         }
 
         // ----- population ----------------------------------------------------
+
+        bool _isUpdatingExclusionStates = false;
+        void UpdateExclusionStates()
+        {
+            if (_isUpdatingExclusionStates) return;
+            _isUpdatingExclusionStates = true;
+            try
+            {
+                if (DisableElementGroupingChk.IsChecked == true)
+                {
+                    IncludePipeBendsAsPipeChk.IsChecked = false;
+                    IncludePipeBendsAsPipeChk.IsEnabled = false;
+                }
+                else
+                {
+                    IncludePipeBendsAsPipeChk.IsEnabled = true;
+                }
+
+                if (IncludePipeBendsAsPipeChk.IsChecked == true)
+                {
+                    DisableElementGroupingChk.IsChecked = false;
+                    DisableElementGroupingChk.IsEnabled = false;
+                }
+                else
+                {
+                    DisableElementGroupingChk.IsEnabled = true;
+                }
+            }
+            finally
+            {
+                _isUpdatingExclusionStates = false;
+            }
+        }
+
+        void DisableElementGroupingChk_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateExclusionStates();
+        }
+
+        void IncludePipeBendsAsPipeChk_Changed(object sender, RoutedEventArgs e)
+        {
+            UpdateExclusionStates();
+        }
 
         void PopulateFilters()
         {
@@ -81,50 +130,107 @@ namespace PipingSpecPlugin.UI
 
             // 4. Populate Statuses.
             var statusSaved = currentStatuses ?? (_settings.Statuses == null ? null : new HashSet<string>(_settings.Statuses));
+            var statusKnown = _settings.KnownStatuses == null ? null : new HashSet<string>(_settings.KnownStatuses);
             foreach (var (key, count) in activeFacts.Statuses)
             {
                 var label = key == SpecConstants.NullStatus ? SpecConstants.NullStatusLabel : key;
+                bool isChecked;
+                if (statusSaved == null)
+                {
+                    isChecked = true;
+                }
+                else if (statusSaved.Contains(key))
+                {
+                    isChecked = true;
+                }
+                else if (statusKnown != null && !statusKnown.Contains(key))
+                {
+                    isChecked = true; // Brand new status
+                }
+                else
+                {
+                    isChecked = false;
+                }
+
                 var cb = new CheckBox
                 {
                     Content = $"{label}  ({count})",
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = statusSaved == null ? true : statusSaved.Contains(key),
+                    IsChecked = isChecked,
                 };
                 StatusList.Items.Add(cb);
             }
 
             // 5. Populate Categories.
             var catSaved = currentCategories ?? (_settings.Categories == null ? null : new HashSet<string>(_settings.Categories));
+            var catKnown = _settings.KnownCategories == null ? null : new HashSet<string>(_settings.KnownCategories);
             foreach (var (key, count) in activeFacts.Categories)
             {
                 var label = key == SpecConstants.NullCategory
                     ? SpecConstants.NullCategoryLabel
                     : (SpecConstants.CategoryLabelRu.TryGetValue(key, out var ru) ? ru : key);
                 bool defaultOn = key != SpecConstants.NullCategory;
+                bool isChecked;
+                if (catSaved == null)
+                {
+                    isChecked = defaultOn;
+                }
+                else if (catSaved.Contains(key))
+                {
+                    isChecked = true;
+                }
+                else if (catKnown != null && !catKnown.Contains(key))
+                {
+                    isChecked = defaultOn; // Brand new category
+                }
+                else
+                {
+                    isChecked = false;
+                }
+
                 var cb = new CheckBox
                 {
                     Content = $"{label}  ({count})",
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = catSaved != null ? catSaved.Contains(key) : defaultOn,
+                    IsChecked = isChecked,
                 };
                 CategoryList.Items.Add(cb);
             }
 
             // 6. Populate Lines.
             var lineSaved = currentLines ?? (_settings.Lines == null ? null : new HashSet<string>(_settings.Lines));
+            var lineKnown = _settings.KnownLines == null ? null : new HashSet<string>(_settings.KnownLines);
             foreach (var (key, count) in activeFacts.Lines)
             {
                 var label = key == SpecConstants.NullLine
                     ? $"{SpecConstants.NullLineLabel}  ({count})"
                     : $"{key}  ({count})";
+                bool isChecked;
+                if (lineSaved == null)
+                {
+                    isChecked = true;
+                }
+                else if (lineSaved.Contains(key))
+                {
+                    isChecked = true;
+                }
+                else if (lineKnown != null && !lineKnown.Contains(key))
+                {
+                    isChecked = true; // Brand new line
+                }
+                else
+                {
+                    isChecked = false;
+                }
+
                 var cb = new CheckBox
                 {
                     Content = label,
                     Tag = key,
                     Margin = new Thickness(0, 2, 0, 2),
-                    IsChecked = lineSaved != null ? lineSaved.Contains(key) : true,
+                    IsChecked = isChecked,
                 };
                 LineList.Items.Add(cb);
             }
@@ -163,6 +269,7 @@ namespace PipingSpecPlugin.UI
             ExcludeValveCompanionsChk.IsChecked = _settings.ExcludeValveCompanions;
             IncludePipeBendsAsPipeChk.IsChecked = _settings.IncludePipeBendsAsPipe;
             OpenAfterGenerateChk.IsChecked = _settings.OpenAfterGenerate;
+            DisableElementGroupingChk.IsChecked = _settings.DisableElementGrouping;
             // ExcludeEquipment and ExcludeConnectors no longer have
             // standalone check-boxes — both ship as ordinary category
             // chips ('Оборудование', 'Сварные швы / коннекторы') in the
@@ -276,6 +383,7 @@ namespace PipingSpecPlugin.UI
                 ExcludeValveCompanions = ExcludeValveCompanionsChk.IsChecked == true,
                 IncludePipeBendsAsPipe = IncludePipeBendsAsPipeChk.IsChecked == true,
                 OpenAfterGenerate = OpenAfterGenerateChk.IsChecked == true,
+                DisableElementGrouping = DisableElementGroupingChk.IsChecked == true,
                 // Equipment and connectors are toggled through their
                 // category check-boxes now; the result fields stay only
                 // for back-compat with the settings file. Both false so
@@ -314,5 +422,6 @@ namespace PipingSpecPlugin.UI
         public bool ExcludeConnectors;
         public bool IncludePipeBendsAsPipe;
         public bool OpenAfterGenerate;
+        public bool DisableElementGrouping;
     }
 }

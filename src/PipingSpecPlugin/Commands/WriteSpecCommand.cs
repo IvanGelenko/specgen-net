@@ -109,6 +109,36 @@ namespace PipingSpecPlugin.Commands
             Trace($"Топология: {scan.topology.Count} узлов; "
                 + $"найдено ответных фланцев+прокладок+болтов: {companionIds.Count}");
 
+            // Diagnostic: log every PipeBend we found, its line, length,
+            // and whether the topology offers a Pipe neighbour. When the
+            // user reports "bends not counted", this is the first thing
+            // to check.
+            var bends = scan.records.Where(r => r.IsPipeBend).ToList();
+            if (bends.Count > 0)
+            {
+                Trace($"PipeBend partов: {bends.Count}");
+                var byIdAll = new Dictionary<int, PartRecord>();
+                foreach (var rr in scan.records)
+                    if (!byIdAll.ContainsKey(rr.PnPID)) byIdAll[rr.PnPID] = rr;
+                foreach (var b in bends.Take(20))
+                {
+                    scan.topology.TryGetValue(b.PnPID, out var nbrs);
+                    var nbrStr = nbrs == null ? "(no nbrs)"
+                        : string.Join(",", nbrs.Select(id =>
+                            byIdAll.TryGetValue(id, out var rr)
+                                ? $"{id}[{rr.PartCategory}/{rr.PnPClassName}]"
+                                : $"{id}[?]"));
+                    Trace($"  bend#{b.PnPID} class='{b.PnPClassName}' "
+                        + $"line='{b.LineNumberTag ?? ""}' "
+                        + $"len={b.Length}{b.LengthUnit} "
+                        + $"-> {nbrStr}");
+                }
+            }
+            else
+            {
+                Trace("PipeBend partов не найдено (или класс распознан иначе).");
+            }
+
             // ProjectFacts питает чекбоксы picker'а. Парты, всегда
             // исключаемые (равно nozzle/owned), убираем чтобы счетчики
             // совпадали с тем, что попадет в .docx.
@@ -142,6 +172,19 @@ namespace PipingSpecPlugin.Commands
 
             // Активный чертеж — фильтруем по PnPID-ам.
             IEnumerable<PartRecord> input = scan.records;
+            // Fold PipeBend into adjacent Pipe across the *whole* project
+            // record set, before any scope filter narrows things down.
+            // Otherwise a bend on the active drawing whose pipe lives in
+            // a different DWG never folds when scope=dwg — the pipe isn't
+            // in input and PipeBendFolder couldn't find it.
+            PipeBendFoldResult bendFold = null;
+            if (result.IncludePipeBendsAsPipe)
+            {
+                bendFold = PipeBendFolder.Fold(scan.records, scan.topology);
+                Trace($"PipeBendFold: свернуто гибов: {bendFold.BendsConsumed.Count}; "
+                    + $"труб с добавленной длиной: {bendFold.ExtraPipeMetres.Count}");
+            }
+
             if (result.Scope == "dwg" && activeDoc != null)
             {
                 var activeIds = new HashSet<int>(scan.activeDwgRecords.Select(r => r.PnPID));
@@ -159,8 +202,8 @@ namespace PipingSpecPlugin.Commands
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
                 EquipmentOwnedPnPIds = scan.ownedPnPIds,
                 ValveCompanionPnPIds = companionIds,
-                IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe,
-                Topology = scan.topology,
+                BendsConsumed = bendFold?.BendsConsumed,
+                ExtraPipeMetres = bendFold?.ExtraPipeMetres,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings) Trace("WARN: " + w);
@@ -323,7 +366,13 @@ namespace PipingSpecPlugin.Commands
             var fingerprint = ScanCache.Fingerprint(dwgPaths, activeDocPath);
             var key = project.ProjectFolderPath ?? project.Name ?? "";
 
-            var cached = ScanCache.TryGet(key, fingerprint);
+            // File mtime can't tell us about *unsaved* edits in the
+            // active document — Plant 3D keeps new parts and renamed
+            // lines in-memory until the user saves. If a drawing is
+            // open in this session, always do a fresh read so the spec
+            // reflects what the user is looking at on screen.
+            var hasOpenDocument = !string.IsNullOrEmpty(activeDocPath);
+            var cached = hasOpenDocument ? null : ScanCache.TryGet(key, fingerprint);
             if (cached != null)
             {
                 trace("ScanCache HIT — пропускаем сканирование.");
@@ -341,7 +390,10 @@ namespace PipingSpecPlugin.Commands
 
             var result = CollectFromProject(project, dwgFiles, piping, activeDocPath,
                                             say, trace, progress);
-            if (!progress.IsCancelled)
+            // Only cache when no document is open — see hasOpenDocument
+            // comment above. A scan that included an in-memory document
+            // would risk returning stale data to the next run.
+            if (!progress.IsCancelled && !hasOpenDocument)
             {
                 ScanCache.Put(key, new ScanCache.Entry
                 {

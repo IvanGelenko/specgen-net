@@ -2,8 +2,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         x:Class="PipingSpecPlugin.UI.SpecPickerWindow"
         Title="Генератор спецификации Plant 3D"
-        Height="700" Width="1100"
-        MinHeight="600" MinWidth="900"
+        Height="780" Width="1100"
+        MinHeight="780" MinWidth="900"
         WindowStartupLocation="CenterScreen"
         ShowInTaskbar="False"
         FontFamily="Segoe UI" FontSize="13">

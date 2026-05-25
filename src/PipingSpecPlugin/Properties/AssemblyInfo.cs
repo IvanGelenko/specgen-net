@@ -14,8 +14,8 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: ComVisible(false)]
 [assembly: Guid("B5E20C42-5C4D-4F1B-9B7C-1D5E2B0A8C02")]
 
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.1.1.0")]
+[assembly: AssemblyFileVersion("1.1.1.0")]
 
 // Tells AutoCAD which classes carry [CommandMethod] attributes. The
 // ribbon's "Сгенерировать" button invokes WRITESPEC; everything else

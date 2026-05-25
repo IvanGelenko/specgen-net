@@ -265,10 +265,13 @@ namespace PipingSpecPlugin.Tests
                 { 1, new List<int> { 2 } },
                 { 2, new List<int> { 1 } },
             };
+            // PipeBendFolder runs against the project-wide record set
+            // and hands SpecRowBuilder a pre-built fold result.
+            var fold = PipeBendFolder.Fold(new[] { pipe, bend }, topology);
             var builder = new SpecRowBuilder(new SpecBuilderOptions
             {
-                IncludePipeBendsAsPipe = true,
-                Topology = topology,
+                BendsConsumed = fold.BendsConsumed,
+                ExtraPipeMetres = fold.ExtraPipeMetres,
             });
             var rows = builder.Build(new[] { pipe, bend });
             var row = Assert.Single(rows);
@@ -283,10 +286,9 @@ namespace PipingSpecPlugin.Tests
             var pipe = Pipe(1, 5000);
             var bend = Bend(2, 1500);
             bend.PartSizeLongDesc = "Different";  // different bucket
-            var builder = new SpecRowBuilder(new SpecBuilderOptions
-            {
-                IncludePipeBendsAsPipe = false,
-            });
+            // No bend-fold passed in => bends pass through to the
+            // standard aggregation as a separate spec row.
+            var builder = new SpecRowBuilder();
             Assert.Equal(2, builder.Build(new[] { pipe, bend }).Count);
         }
 

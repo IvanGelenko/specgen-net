@@ -90,6 +90,13 @@ namespace PipingSpecPlugin.Spec
                 try { projectDlm.AuditLinks(); } catch { }
             }
 
+            // Suppress the "restore EnableCaching after read" path for
+            // projectDlm — Plant 3D keeps that DataLinksManager alive
+            // for the whole AutoCAD session and any cached row map
+            // outlives our finally block. Keep it off permanently
+            // (PartReader is fast enough that this is harmless).
+            prevProjCaching = false;
+
             try
             {
             Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;

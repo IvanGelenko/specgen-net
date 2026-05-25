@@ -347,15 +347,41 @@ namespace PipingSpecPlugin.Spec
 
             foreach (var p2 in cell.Elements<Paragraph>().ToList()) p2.Remove();
 
+            // Paragraph-level rPr inside pPr also propagates bold. Strip
+            // it for data rows so only the run-level styling decides.
+            if (pPr != null && !bold)
+            {
+                foreach (var pprRPr in pPr.Elements<ParagraphMarkRunProperties>().ToList())
+                {
+                    foreach (var b in pprRPr.Elements<Bold>().ToList()) b.Remove();
+                    foreach (var bcs in pprRPr.Elements<BoldComplexScript>().ToList()) bcs.Remove();
+                }
+            }
+
             var p = new Paragraph();
             if (pPr != null) p.AppendChild(pPr);
 
             var run = new Run();
             if (originalRPr != null)
             {
+                // The stencil row may have been bold in the template
+                // (some ГОСТ templates start the data area with a bold
+                // header). For data rows we must explicitly normalise:
+                // bold=false ⇒ strip any inherited <w:b/> so only the
+                // category sub-headers render bold.
                 run.AppendChild(originalRPr);
-                if (bold && !originalRPr.Elements<Bold>().Any())
-                    originalRPr.AppendChild(new Bold());
+                if (bold)
+                {
+                    if (!originalRPr.Elements<Bold>().Any())
+                        originalRPr.AppendChild(new Bold());
+                }
+                else
+                {
+                    foreach (var b in originalRPr.Elements<Bold>().ToList())
+                        b.Remove();
+                    foreach (var bcs in originalRPr.Elements<BoldComplexScript>().ToList())
+                        bcs.Remove();
+                }
             }
             else if (bold)
             {

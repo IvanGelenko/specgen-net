@@ -35,18 +35,13 @@ namespace PipingSpecPlugin.Spec
         // ExcludeValveCompanions is also true.
         public ISet<int> ValveCompanionPnPIds = null;
 
-        // When true, PipeBend rows are folded into the length of the
-        // adjacent straight pipe (matched through the topology graph)
-        // instead of appearing on their own spec rows. The bend's own
-        // Length is added in metres to the neighbouring Pipe's bucket
-        // qty. When false (default) bends show up as ordinary parts.
-        public bool IncludePipeBendsAsPipe = false;
-
-        // Topology used by the bend-folding step (Pipe ↔ PipeBend
-        // neighbours). PartReader builds the same graph for valve-
-        // companion detection; WRITESPEC passes the project-wide
-        // dictionary in.
-        public IDictionary<int, List<int>> Topology = null;
+        // PipeBend folding state — computed by PipeBendFolder against
+        // the project-wide records, then passed in here. BendsConsumed
+        // holds PnPIDs to skip; ExtraPipeMetres maps the adjacent pipe
+        // PnPID to the metres folded into it. Both null when the
+        // feature is off.
+        public HashSet<int> BendsConsumed = null;
+        public Dictionary<int, double> ExtraPipeMetres = null;
     }
 
     /// <summary>
@@ -85,43 +80,13 @@ namespace PipingSpecPlugin.Spec
             // keeps both consistent.
             var rowList = rows as IList<PartRecord> ?? rows.ToList();
 
-            // Phase 0: fold PipeBend length into the adjacent Pipe.
-            // Builds a PnPID -> extra metres dictionary and a set of
-            // bend PnPIDs to skip later. Off by default; controlled by
-            // the picker check-box.
-            Dictionary<int, double> extraPipeMetres = null;
-            HashSet<int> bendsConsumed = null;
-            if (_opts.IncludePipeBendsAsPipe && _opts.Topology != null)
-            {
-                var byId = new Dictionary<int, PartRecord>(rowList.Count);
-                foreach (var rr in rowList)
-                    if (!byId.ContainsKey(rr.PnPID)) byId.Add(rr.PnPID, rr);
-
-                extraPipeMetres = new Dictionary<int, double>();
-                bendsConsumed = new HashSet<int>();
-                foreach (var bend in rowList.Where(p => p.IsPipeBend))
-                {
-                    if (bendsConsumed.Contains(bend.PnPID)) continue;
-                    var bendLenRaw = ParseDouble(bend.Length);
-                    if (bendLenRaw <= 0) continue;
-                    var bendMetres = bendLenRaw * LengthFactor(bend.LengthUnit);
-                    if (!_opts.Topology.TryGetValue(bend.PnPID, out var nbrs))
-                        continue;
-                    int pipePid = 0;
-                    foreach (var nbrId in nbrs)
-                    {
-                        if (!byId.TryGetValue(nbrId, out var nbr)) continue;
-                        if (string.Equals(nbr.PartCategory, "Pipe",
-                                           StringComparison.OrdinalIgnoreCase)
-                            && !nbr.IsPipeBend)
-                        { pipePid = nbr.PnPID; break; }
-                    }
-                    if (pipePid == 0) continue;  // orphan bend, leave alone
-                    extraPipeMetres.TryGetValue(pipePid, out var acc);
-                    extraPipeMetres[pipePid] = acc + bendMetres;
-                    bendsConsumed.Add(bend.PnPID);
-                }
-            }
+            // Phase 0: pull pre-computed bend-folding result from options.
+            // PipeBendFolder runs on the *project-wide* PartRecord set
+            // (before any scope filter narrows it to the active drawing),
+            // because a bend can be paired with a pipe that lives in a
+            // different DWG and the scope filter would otherwise hide it.
+            HashSet<int> bendsConsumed = _opts.BendsConsumed;
+            Dictionary<int, double> extraPipeMetres = _opts.ExtraPipeMetres;
 
             // null = no status filter; non-null = include only listed statuses.
             HashSet<string> statusSet = null;

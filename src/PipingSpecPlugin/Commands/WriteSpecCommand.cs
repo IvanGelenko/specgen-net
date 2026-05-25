@@ -172,6 +172,27 @@ namespace PipingSpecPlugin.Commands
 
             // Активный чертеж — фильтруем по PnPID-ам.
             IEnumerable<PartRecord> input = scan.records;
+            // Diagnostic: dump every Pipe row's resolved LineNumberTag.
+            // Helps explain "why does a line show N pipes in Data
+            // Manager but N-1 in the spec" cases — usually one pipe's
+            // LineGroup link is stale.
+            var pipesByLine = scan.records
+                .Where(r => string.Equals(r.PartCategory, "Pipe",
+                                           StringComparison.OrdinalIgnoreCase)
+                            && !r.IsPipeBend)
+                .GroupBy(r => string.IsNullOrEmpty(r.LineNumberTag)
+                              ? "<no line>"
+                              : r.LineNumberTag)
+                .OrderByDescending(g => g.Count())
+                .ToList();
+            Trace($"Pipe partов: {pipesByLine.Sum(g => g.Count())}, по линиям:");
+            foreach (var g in pipesByLine)
+            {
+                Trace($"  line='{g.Key}' x{g.Count()}: "
+                    + string.Join(", ", g.Take(10).Select(r =>
+                        $"#{r.PnPID}(len={r.Length}{r.LengthUnit})")));
+            }
+
             // Fold PipeBend into adjacent Pipe across the *whole* project
             // record set, before any scope filter narrows things down.
             // Otherwise a bend on the active drawing whose pipe lives in
@@ -201,6 +222,33 @@ namespace PipingSpecPlugin.Commands
             if (result.Scope == "dwg" && activeDoc != null)
             {
                 var activeIds = new HashSet<int>(scan.activeDwgRecords.Select(r => r.PnPID));
+
+                // Diagnostic: when the user picked specific lines, log
+                // how many parts of those lines live in OTHER drawings
+                // — they'll be silently excluded by the scope filter
+                // and it's the most common "why is qty short" answer.
+                if (result.Lines != null)
+                {
+                    var sel = new HashSet<string>(result.Lines, StringComparer.Ordinal);
+                    var hiddenByScope = scan.records
+                        .Where(r => !activeIds.Contains(r.PnPID))
+                        .Where(r => sel.Contains(string.IsNullOrEmpty(r.LineNumberTag)
+                                                  ? SpecConstants.NullLine
+                                                  : r.LineNumberTag))
+                        .ToList();
+                    if (hiddenByScope.Count > 0)
+                    {
+                        var byLine = hiddenByScope
+                            .GroupBy(r => r.LineNumberTag ?? "")
+                            .Select(g => $"{g.Key}: {g.Count()}");
+                        Say($"[Спецификация] ⚠ scope=dwg исключает "
+                          + $"{hiddenByScope.Count} парт(ов) из выбранных линий "
+                          + $"которые находятся в других чертежах "
+                          + $"({string.Join("; ", byLine)}). "
+                          + $"Используйте 'Весь проект' чтобы их включить.");
+                    }
+                }
+
                 input = scan.records.Where(r => activeIds.Contains(r.PnPID));
             }
 

@@ -100,24 +100,16 @@ namespace PipingSpecPlugin.Spec
 
             try
             {
-            // BeginSaveDwg returns the live row-id array a save would
-            // write to disk — that's the freshest view, includes parts
-            // the user has just placed but not yet saved. Some Plant 3D
-            // builds throw on the second call without an EndSaveDwg in
-            // between, so we wrap it carefully and fall back to the
-            // plain SelectAcPpRowIds if it doesn't cooperate.
-            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds = null;
-            try { rowIds = dlm.BeginSaveDwg(db); }
-            catch { }
-            finally
-            {
-                try { dlm.EndSaveDwg(db, false); } catch { }
-            }
-            if (rowIds == null || rowIds.Count == 0)
-            {
-                try { rowIds = dlm.SelectAcPpRowIds(db); }
-                catch { return result; }
-            }
+            // SelectAcPpRowIds is the documented read-only query. The
+            // earlier attempt with BeginSaveDwg/EndSaveDwg tried to
+            // grab the "live save" snapshot but that pair mutates DLM
+            // state and broke quiet writes from Plant 3D. The
+            // AcceptChanges + AuditDrawing + ReloadLinkMap sequence
+            // above already forces the row map to rebuild against the
+            // live blob, so plain SelectAcPpRowIds returns fresh data.
+            Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
+            try { rowIds = dlm.SelectAcPpRowIds(db); }
+            catch { return result; }
             if (rowIds == null) return result;
 
             foreach (int rowId in rowIds)

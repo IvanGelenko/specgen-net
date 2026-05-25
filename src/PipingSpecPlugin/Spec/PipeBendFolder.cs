@@ -44,7 +44,13 @@ namespace PipingSpecPlugin.Spec
                 var lenRaw = ParseDouble(bend.Length);
                 if (lenRaw <= 0) continue;
                 var metres = lenRaw * LengthFactor(bend.LengthUnit);
-                int pipePid = FindAdjacentPipe(bend.PnPID, byId, topology);
+                // Prefer pipes on the same LineNumberTag as the bend —
+                // otherwise the bend's length can land on a pipe the
+                // user filtered out (no-line bucket or a different
+                // selected line) and the extra metres disappear from
+                // the spec.
+                int pipePid = FindAdjacentPipe(bend.PnPID, byId, topology,
+                                                bend.LineNumberTag);
                 if (pipePid == 0) continue;  // truly orphan bend
                 result.ExtraPipeMetres.TryGetValue(pipePid, out var acc);
                 result.ExtraPipeMetres[pipePid] = acc + metres;
@@ -58,22 +64,33 @@ namespace PipingSpecPlugin.Spec
         /// PipeBend is wired to its neighbour through a P3dConnector
         /// (a weld stub), so direct neighbours are usually connectors
         /// with empty PartCategory rather than pipes. Walk one hop
-        /// further through any connector neighbour, prefer a Pipe but
-        /// fall back to "any non-bend part" so a bend wedged between
-        /// fittings still folds somewhere reasonable.
+        /// further through any connector neighbour.
+        ///
+        /// <paramref name="preferredLineTag"/> drives a "same-line"
+        /// preference: when several pipes are reachable, pick the one
+        /// sharing the bend's LineNumberTag first. Falls back to any
+        /// pipe when no same-line match exists.
         /// </summary>
         static int FindAdjacentPipe(int bendPid,
             Dictionary<int, PartRecord> byId,
-            IDictionary<int, List<int>> topology)
+            IDictionary<int, List<int>> topology,
+            string preferredLineTag = null)
         {
             if (!topology.TryGetValue(bendPid, out var nbrs)) return 0;
+
+            int sameLine = 0;
+            int anyPipe = 0;
 
             // Pass 1: direct neighbour that is itself a Pipe.
             foreach (var n in nbrs)
             {
                 if (!byId.TryGetValue(n, out var nbr)) continue;
-                if (IsPipe(nbr)) return nbr.PnPID;
+                if (!IsPipe(nbr)) continue;
+                if (anyPipe == 0) anyPipe = nbr.PnPID;
+                if (SameLine(nbr.LineNumberTag, preferredLineTag))
+                { sameLine = nbr.PnPID; break; }
             }
+            if (sameLine != 0) return sameLine;
 
             // Pass 2: through a connector hop. PipeBends touch the pipe
             // through a weld connector in 99 % of projects.
@@ -86,10 +103,22 @@ namespace PipingSpecPlugin.Spec
                 {
                     if (nn == bendPid) continue;
                     if (!byId.TryGetValue(nn, out var far)) continue;
-                    if (IsPipe(far)) return far.PnPID;
+                    if (!IsPipe(far)) continue;
+                    if (anyPipe == 0) anyPipe = far.PnPID;
+                    if (SameLine(far.LineNumberTag, preferredLineTag))
+                        return far.PnPID;
                 }
             }
-            return 0;
+            return anyPipe;
+        }
+
+        static bool SameLine(string a, string b)
+        {
+            // Treat empty as "no-line bucket" — a bend tagged to a line
+            // should never fold into an untagged pipe just to find a
+            // match. preferredLineTag null/empty means "no preference".
+            if (string.IsNullOrEmpty(b)) return true;
+            return string.Equals(a, b, System.StringComparison.Ordinal);
         }
 
         static bool IsPipe(PartRecord r)

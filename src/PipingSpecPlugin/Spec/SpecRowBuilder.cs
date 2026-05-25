@@ -104,6 +104,17 @@ namespace PipingSpecPlugin.Spec
             var seenPids = new Dictionary<int, string>();   // pid -> first-seen LineTag
             var multiLine = new HashSet<int>();
             var zeroPipes = 0;
+            // Index of created pipe buckets keyed by their procurement
+            // identity (line, ND, spec, material) so we can park orphan
+            // bend metres into a sibling pipe when the original target
+            // pipe got filtered out.
+            var pipeFallbackBuckets = new Dictionary<string, Bucket>(
+                System.StringComparer.Ordinal);
+            // Need access to lineTag from inside the isPipe block where
+            // raw line is captured in 'rawLine'; assign here to a
+            // mutable string used by the inner closure-style assignment.
+            // (No closure; the variable rawLine is in scope from the
+            // earlier dedup-by-PnPID block above.)
 
             foreach (var r in rowList)
             {
@@ -229,6 +240,15 @@ namespace PipingSpecPlugin.Spec
                         b.Qty += extra;
                         extraPipeMetres.Remove(r.PnPID);  // accounted for
                     }
+                    // Remember this bucket as a fallback target so
+                    // bend metres tied to a pipe that itself got
+                    // filtered out (status, line, category) can still
+                    // land *somewhere* in the same line and not vanish.
+                    // Keyed by (LineTag, NominalDiameter, Spec) — the
+                    // identity a procurement person would treat as
+                    // "the same piping run".
+                    var fallbackKey = $"{rawLine}|{ndVal:F6}|{spec}|{material}";
+                    pipeFallbackBuckets[fallbackKey] = b;
                     var lw = ParseNullableDouble(r.LinearWeight);
                     if (lw.HasValue)
                     {
@@ -270,6 +290,68 @@ namespace PipingSpecPlugin.Spec
 
             if (zeroPipes > 0)
                 _warnings.Add($"Исключено {zeroPipes} сегментов труб с нулевой или пустой длиной.");
+
+            // Post-pass: bend metres tied to a Pipe PnPID that was
+            // filtered out (its own line wasn't selected, its status
+            // didn't match, etc) end up stranded in extraPipeMetres.
+            // Reroute each leftover to a same-line pipe bucket if we
+            // built one; otherwise drop with a warning so the user
+            // knows that length is missing.
+            if (extraPipeMetres != null && extraPipeMetres.Count > 0
+                && bendsConsumed != null && _opts.BendsConsumed != null)
+            {
+                // Find the bend that contributed each stranded entry
+                // so we can use its LineTag to pick a fallback bucket.
+                var bendsByPipe = new Dictionary<int, string>();
+                foreach (var bend in rowList)
+                {
+                    if (!bend.IsPipeBend) continue;
+                    // We don't keep the bend→pipe mapping in BendsConsumed;
+                    // reuse the topology-free heuristic: if the bend's
+                    // line matches a fallback bucket's key prefix we
+                    // can route to it.
+                    var line = string.IsNullOrEmpty(bend.LineNumberTag)
+                        ? SpecConstants.NullLine
+                        : bend.LineNumberTag;
+                    foreach (var kv in extraPipeMetres)
+                    {
+                        if (bendsByPipe.ContainsKey(kv.Key)) continue;
+                        bendsByPipe[kv.Key] = line;
+                    }
+                }
+
+                foreach (var kv in extraPipeMetres.ToList())
+                {
+                    var orphanPipePid = kv.Key;
+                    var orphanMetres = kv.Value;
+                    if (orphanMetres <= 0) continue;
+                    bendsByPipe.TryGetValue(orphanPipePid, out var bendLine);
+                    // Pick any pipe bucket on the same line; we don't
+                    // know ND/spec for the orphan so we accept the
+                    // first match by line prefix.
+                    Bucket target = null;
+                    foreach (var pkv in pipeFallbackBuckets)
+                    {
+                        if (pkv.Key.StartsWith(
+                                (bendLine ?? "") + "|",
+                                System.StringComparison.Ordinal))
+                        { target = pkv.Value; break; }
+                    }
+                    if (target != null)
+                    {
+                        target.Qty += orphanMetres;
+                        extraPipeMetres.Remove(orphanPipePid);
+                    }
+                }
+
+                if (extraPipeMetres.Count > 0)
+                {
+                    var lost = extraPipeMetres.Values.Sum();
+                    _warnings.Add(
+                        $"Не удалось распределить {lost:F2} м длины изгибов: "
+                      + "соответствующих труб нет среди выбранных в спецификации.");
+                }
+            }
 
             var result = new List<SpecRow>();
             foreach (var kv in buckets)

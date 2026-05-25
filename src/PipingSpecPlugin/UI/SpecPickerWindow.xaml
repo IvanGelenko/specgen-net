@@ -73,6 +73,9 @@
                         <CheckBox x:Name="ExcludeValveCompanionsChk"
                                   Content="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)"
                                   IsChecked="True" Margin="0,2,0,2"/>
+                        <CheckBox x:Name="IncludePipeBendsAsPipeChk"
+                                  Content="Учитывать изгибы как трубу (длина изгиба прибавляется к соседней трубе)"
+                                  IsChecked="True" Margin="0,2,0,2"/>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>

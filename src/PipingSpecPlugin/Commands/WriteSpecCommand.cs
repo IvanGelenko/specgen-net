@@ -168,6 +168,8 @@ namespace PipingSpecPlugin.Commands
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
                 EquipmentOwnedPnPIds = ownedPnPIds,
                 ValveCompanionPnPIds = companionIds,
+                IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe,
+                Topology = topology,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
@@ -233,6 +235,7 @@ namespace PipingSpecPlugin.Commands
             settings.ExcludeValveCompanions = result.ExcludeValveCompanions;
             settings.ExcludeEquipment = result.ExcludeEquipment;
             settings.ExcludeConnectors = result.ExcludeConnectors;
+            settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;
             settings.Save();
 
             editor.WriteMessage($"\n[WRITESPEC] Wrote {specRows.Count} spec row(s) to {outputPath}");

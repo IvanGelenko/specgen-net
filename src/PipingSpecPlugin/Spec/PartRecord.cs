@@ -59,5 +59,17 @@ namespace PipingSpecPlugin.Spec
         // a single BoltSet PnPID with Quantity=8 lands as qty=8 in the
         // spec. Falls back to 1 when the property is missing.
         public string Quantity;
+
+        /// <summary>
+        /// True when this record represents a Plant 3D PipeBend (a curved
+        /// pipe segment with its own engineering item). Used by the
+        /// "Учитывать изгибы как трубу" feature: when on, the bend's
+        /// length folds into the neighbouring straight pipe instead of
+        /// appearing on its own row.
+        /// </summary>
+        public bool IsPipeBend
+            => !string.IsNullOrEmpty(PnPClassName)
+               && PnPClassName.IndexOf("PipeBend",
+                       System.StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }

@@ -39,6 +39,10 @@ namespace PipingSpecPlugin.Settings
         public bool ExcludeValveCompanions { get; set; } = true;
         public bool ExcludeEquipment { get; set; } = true;
         public bool ExcludeConnectors { get; set; } = true;
+        // Fold PipeBend rows into the adjacent straight pipe — defaults
+        // to true so the spec matches the procurement convention of
+        // listing only one Pipe entry per run.
+        public bool IncludePipeBendsAsPipe { get; set; } = true;
 
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),

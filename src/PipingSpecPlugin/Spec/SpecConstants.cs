@@ -27,12 +27,16 @@ namespace PipingSpecPlugin.Spec
         public static readonly string[] DefaultActiveStatuses =
             { "New", "Новое", "Новый" };
 
+        // Order matches the layout the user signed off on:
+        // Оборудование → Трубы → Детали → Арматура → Приборы →
+        // Спецдетали → Опоры → Сварные швы → Фланцы → Крепёж.
+        // Welds/Flanges/Fasteners move to the end so the procurement
+        // sections (the bigger structural items) come first.
         public static readonly string[] CategoryOrder =
         {
             "Equipment",
             "Pipe",
             "Fittings",
-            "Flanges",
             "Valves",
             "Instruments",
             "Instrument",
@@ -41,6 +45,8 @@ namespace PipingSpecPlugin.Spec
             "Specialty",
             "Supports",
             "Support",
+            "P3dConnector",
+            "Flanges",
             "Fasteners",
         };
 

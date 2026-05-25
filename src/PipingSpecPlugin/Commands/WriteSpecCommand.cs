@@ -142,32 +142,19 @@ namespace PipingSpecPlugin.Commands
             }
             var result = picker.Result;
 
-            // Re-scan drawing databases at the moment of clicking Generate to ensure absolute data freshness
-            editor.WriteMessage("\n[WRITESPEC] Recalculating and scanning project for final generation...");
-            var (freshProjectRecords, freshActiveDwgRecords, freshOwnedPnPIds, freshTopology, freshEqCount, freshEqNbrCount, freshFailedCount)
-                = CollectFromProject(project, editor);
-            editor.WriteMessage($"\n[WRITESPEC] Found {freshProjectRecords.Count} part record(s) on recalculation.");
-
-            if (freshFailedCount > 0)
-            {
-                WinForms.MessageBox.Show(
-                    $"При финальном сканировании проекта были пропущены некоторые чертежи ({freshFailedCount} шт.).\n" +
-                    "Детали ошибок выведены в командную строку AutoCAD.\n\n" +
-                    "Сгенерированная спецификация может быть неполной.",
-                    "Предупреждение",
-                    WinForms.MessageBoxButtons.OK,
-                    WinForms.MessageBoxIcon.Warning);
-            }
-
-            // Re-discover valve companions based on fresh topology
-            var freshCompanionIds = ValveCompanionFinder.Discover(freshProjectRecords, freshTopology);
-
-            // Narrow the input set if the user picked active-drawing scope.
-            IEnumerable<PartRecord> input = freshProjectRecords;
+            // Reuse the pre-scan snapshot for the actual build. The
+            // earlier "Recalculating..." pass that scanned all DWGs a
+            // second time was added defensively for "data freshness"
+            // but it doubled the latency on big projects and offered
+            // no real benefit — the user's changes between opening the
+            // picker and clicking 'Сгенерировать' don't reach a
+            // background DataLinks store anyway. One scan per ribbon
+            // click is the contract.
+            IEnumerable<PartRecord> input = projectRecords;
             if (result.Scope == "dwg" && activeDoc != null)
             {
-                var activeIds = new HashSet<int>(freshActiveDwgRecords.Select(r => r.PnPID));
-                input = freshProjectRecords.Where(r => activeIds.Contains(r.PnPID));
+                var activeIds = new HashSet<int>(activeDwgRecords.Select(r => r.PnPID));
+                input = projectRecords.Where(r => activeIds.Contains(r.PnPID));
             }
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
@@ -179,8 +166,8 @@ namespace PipingSpecPlugin.Commands
                 ExcludeEquipment = result.ExcludeEquipment,
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
-                EquipmentOwnedPnPIds = freshOwnedPnPIds,
-                ValveCompanionPnPIds = freshCompanionIds,
+                EquipmentOwnedPnPIds = ownedPnPIds,
+                ValveCompanionPnPIds = companionIds,
             });
             var specRows = builder.Build(input);
             foreach (var w in builder.Warnings)
@@ -289,7 +276,8 @@ namespace PipingSpecPlugin.Commands
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
                 .ProjectFiles
                 .Where(f => !string.IsNullOrEmpty(f.Name)
-                            && f.Name.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase))
+                            && f.Name.EndsWith(".dwg", StringComparison.OrdinalIgnoreCase)
+                            && IsUnderPlant3dModels(f))
                 .ToList();
 
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
@@ -499,6 +487,32 @@ namespace PipingSpecPlugin.Commands
             {
                 editor.WriteMessage($"\nFatal error in TESTREL: {ex.Message}\n{ex.StackTrace}");
             }
+        }
+
+        /// <summary>
+        /// Only DWGs under the project's "Plant 3D Models" sub-tree
+        /// hold the 3D piping parts the spec cares about. The Iso / Ortho /
+        /// symbol-style drawings also live in ProjectFiles but they don't
+        /// carry the Engineering Items we aggregate — including them
+        /// just slows the scan and adds noise. Match on a path fragment
+        /// rather than a fixed parent so user-renamed sub-folders still
+        /// pass (e.g. localised 'Plant 3D Models' under Plant3D
+        /// installations).
+        /// </summary>
+        static bool IsUnderPlant3dModels(PnPProjectFile f)
+        {
+            string path = null;
+            try { path = f.RelativeFileName; } catch { }
+            if (string.IsNullOrEmpty(path))
+            {
+                try { path = f.ResolvedFilePath ?? f.AbsoluteFileName; } catch { }
+            }
+            if (string.IsNullOrEmpty(path)) return false;
+            var normalized = path.Replace('/', '\\');
+            return normalized.IndexOf("\\Plant 3D Models\\",
+                       StringComparison.OrdinalIgnoreCase) >= 0
+                || normalized.StartsWith("Plant 3D Models\\",
+                       StringComparison.OrdinalIgnoreCase);
         }
 
         static bool PathEquals(string path1, string path2)

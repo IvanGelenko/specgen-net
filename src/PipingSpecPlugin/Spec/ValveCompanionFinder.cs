@@ -18,8 +18,8 @@ namespace PipingSpecPlugin.Spec
         public static HashSet<int> Discover(IList<PartRecord> records,
                                             Dictionary<int, List<int>> topology)
         {
-            var drop = new HashSet<int>();
-            if (records == null || records.Count == 0) return drop;
+            var rawDrop = new HashSet<int>();
+            if (records == null || records.Count == 0) return rawDrop;
             if (topology == null) topology = new Dictionary<int, List<int>>();
 
             // Threshold: 4 inches if the project uses imperial length
@@ -76,8 +76,8 @@ namespace PipingSpecPlugin.Spec
                     }
                 }
             }
-            if (companionFlanges.Count == 0) return drop;
-            foreach (var id in companionFlanges) drop.Add(id);
+            if (companionFlanges.Count == 0) return rawDrop;
+            foreach (var id in companionFlanges) rawDrop.Add(id);
 
             // Step 2: each companion flange has a matching gasket + bolt
             // set. We need to know which records are gaskets vs bolts.
@@ -91,8 +91,12 @@ namespace PipingSpecPlugin.Spec
             {
                 if (companionFlanges.Contains(r.PnPID)) continue;
                 var cat = r.PartCategory ?? "";
-                if (!cat.Equals("Flanges", System.StringComparison.OrdinalIgnoreCase)
-                    && !cat.Equals("Fasteners", System.StringComparison.OrdinalIgnoreCase))
+                // Restrict candidates to 'Fasteners' only — earlier we
+                // also accepted 'Flanges' here for non-listed gasket
+                // variants, but that let real flange items sneak into
+                // the fallback pool and get dropped. Fasteners is the
+                // canonical home of gaskets and bolt sets in Plant 3D.
+                if (!cat.Equals("Fasteners", System.StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (IsGasket(r)) gaskets.Add(r);
                 else if (IsBolt(r)) bolts.Add(r);
@@ -119,38 +123,60 @@ namespace PipingSpecPlugin.Spec
                     gasketPick = NearestSameSize(f, gaskets, fCoords.Value, threshold);
                     if (gasketPick.HasValue)
                     {
-                        drop.Add(gasketPick.Value);
+                        rawDrop.Add(gasketPick.Value);
                         gaskets.RemoveAll(x => x.PnPID == gasketPick.Value);
                     }
                     boltPick = NearestSameSize(f, bolts, fCoords.Value, threshold);
                     if (boltPick.HasValue)
                     {
-                        drop.Add(boltPick.Value);
+                        rawDrop.Add(boltPick.Value);
                         bolts.RemoveAll(x => x.PnPID == boltPick.Value);
                     }
                 }
 
                 if (!gasketPick.HasValue)
                 {
-                    var pick = TakeFromBucket(gasketFallback, FallbackKey(f), drop);
+                    var pick = TakeFromBucket(gasketFallback, FallbackKey(f), rawDrop);
                     if (pick.HasValue)
                     {
-                        drop.Add(pick.Value);
+                        rawDrop.Add(pick.Value);
                         gaskets.RemoveAll(x => x.PnPID == pick.Value);
                     }
                 }
                 if (!boltPick.HasValue)
                 {
-                    var pick = TakeFromBucket(boltFallback, FallbackKey(f), drop);
+                    var pick = TakeFromBucket(boltFallback, FallbackKey(f), rawDrop);
                     if (pick.HasValue)
                     {
-                        drop.Add(pick.Value);
+                        rawDrop.Add(pick.Value);
                         bolts.RemoveAll(x => x.PnPID == pick.Value);
                     }
                 }
             }
 
-            return drop;
+            // Final safety pass — drop only well-typed parts. Earlier
+            // builds had bugs where Pipe records sneaked into the
+            // bolt/gasket fallback buckets (PartFamilyLongDesc happened
+            // to mention 'bolt' or NominalDiameter matched a flange),
+            // and entire pipe runs vanished from the spec. Restrict
+            // exclusions to categories that genuinely belong to a
+            // valve-companion tuple.
+            var safe = new HashSet<int>();
+            foreach (var id in rawDrop)
+            {
+                if (!byId.TryGetValue(id, out var r)) continue;
+                var cat = r.PartCategory ?? "";
+                if (cat.Equals("Pipe", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (cat.Equals("Fittings", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (cat.Equals("Valves", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (cat.Equals("Equipment", System.StringComparison.OrdinalIgnoreCase))
+                    continue;
+                safe.Add(id);
+            }
+            return safe;
         }
 
         // ---- helpers ----------------------------------------------------

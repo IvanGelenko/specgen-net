@@ -66,14 +66,28 @@ namespace PipingSpecPlugin.Spec
             bool prevCaching = true;
             try { prevCaching = dlm.EnableCaching; } catch { }
             try { dlm.EnableCaching = false; } catch { }
+
+            // Flush pending in-memory changes to the DataLinks store
+            // *before* querying. The active document holds added /
+            // edited parts in its Database until AcceptChanges() syncs
+            // them; without this the spec sees the state at last save
+            // and misses freshly placed components and line renames.
+            // ReloadLinkMap and AuditLinks force the DLM to drop its
+            // cached row map and rebuild it from the live blob so the
+            // next SelectAcPpRowIds query reflects what the user just
+            // did in the drawing.
+            try { dlm.AcceptChanges(); } catch { }
             try { dlm.ReloadLinkMap(); } catch { }
+            try { dlm.AuditLinks(); } catch { }
 
             bool prevProjCaching = true;
             if (projectDlm != null)
             {
                 try { prevProjCaching = projectDlm.EnableCaching; } catch { }
                 try { projectDlm.EnableCaching = false; } catch { }
+                try { projectDlm.AcceptChanges(); } catch { }
                 try { projectDlm.ReloadLinkMap(); } catch { }
+                try { projectDlm.AuditLinks(); } catch { }
             }
 
             try

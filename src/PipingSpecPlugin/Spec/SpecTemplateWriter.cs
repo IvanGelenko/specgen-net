@@ -76,6 +76,18 @@ namespace PipingSpecPlugin.Spec
             NormalizeStencilCells(stencil);
             NormalizeStencilHeight(stencil);
 
+            // Capture the per-column styling (font, size, paragraph
+            // alignment, ...) from the master stencil row *before* the
+            // build loop starts writing into clones. The reference cells
+            // remember the original template formatting; every data row
+            // we write will inherit pPr+rPr from these so the output
+            // looks identical to the template's first data row regardless
+            // of how many rows we append.
+            var styleRef = (TableRow)stencilSrc.CloneNode(deep: true);
+            NormalizeStencilCells(styleRef);
+            NormalizeStencilHeight(styleRef);
+            var styleCells = styleRef.Elements<TableCell>().ToList();
+
             var groups = GroupRows(rows, groupByLine);
             var pos = 1;
             var cursor = 0;
@@ -89,7 +101,7 @@ namespace PipingSpecPlugin.Spec
                         ? SpecConstants.NullLineLabel
                         : $"Линия {lineKey}";
                     var row = NextRow(table, reserved, ref cursor, stencil);
-                    WriteSubHeader(row, lineLabel);
+                    WriteSubHeader(row, lineLabel, styleCells);
                     inserted.Add(row);
                 }
 
@@ -98,13 +110,13 @@ namespace PipingSpecPlugin.Spec
                     SpecConstants.CategoryLabelRu.TryGetValue(cat, out var catLabel);
                     if (string.IsNullOrEmpty(catLabel)) catLabel = cat;
                     var hdr = NextRow(table, reserved, ref cursor, stencil);
-                    WriteSubHeader(hdr, catLabel);
+                    WriteSubHeader(hdr, catLabel, styleCells);
                     inserted.Add(hdr);
 
                     foreach (var sr in items)
                     {
                         var dr = NextRow(table, reserved, ref cursor, stencil);
-                        WriteDataRow(dr, pos++, sr);
+                        WriteDataRow(dr, pos++, sr, styleCells);
                         inserted.Add(dr);
                     }
                 }
@@ -229,7 +241,8 @@ namespace PipingSpecPlugin.Spec
 
         // --- cell writers ------------------------------------------------
 
-        static void WriteSubHeader(TableRow row, string text)
+        static void WriteSubHeader(TableRow row, string text,
+                                    List<TableCell> styleCells = null)
         {
             // Section headers span all 9 columns. Word's horizontal merge
             // works by giving the first cell HorizontalMergeValues.Restart
@@ -259,12 +272,15 @@ namespace PipingSpecPlugin.Spec
                         : MergedCellValues.Continue,
                 });
             }
-            SetCellText(cells[0], text, bold: true);
+            SetCellText(cells[0], text, bold: true,
+                        styleCell: styleCells != null && styleCells.Count > 0 ? styleCells[0] : null);
             for (var i = 1; i < cells.Count; i++)
-                SetCellText(cells[i], "", bold: false);
+                SetCellText(cells[i], "", bold: false,
+                            styleCell: styleCells != null && i < styleCells.Count ? styleCells[i] : null);
         }
 
-        static void WriteDataRow(TableRow row, int pos, SpecRow r)
+        static void WriteDataRow(TableRow row, int pos, SpecRow r,
+                                  List<TableCell> styleCells = null)
         {
             var cells = row.Elements<TableCell>().ToList();
             if (cells.Count < 9) return;
@@ -278,44 +294,58 @@ namespace PipingSpecPlugin.Spec
                 foreach (var hm in tcPr.Elements<HorizontalMerge>().ToList())
                     hm.Remove();
             }
+            TableCell Style(int i) => styleCells != null && i < styleCells.Count
+                ? styleCells[i] : null;
             // Columns (from the template):
             //  0 Поз.  1 Наименование  2 Тип/марка  3 Код  4 Поставщик
             //  5 Ед. изм.  6 Кол.  7 Масса 1 ед., кг  8 Примечание
-            SetCellText(cells[0], pos.ToString());
-            SetCellText(cells[1], r.Name ?? "");
-            SetCellText(cells[2], r.TypeMark ?? "");
-            SetCellText(cells[3], r.ItemCode ?? "");
-            SetCellText(cells[4], r.Manufacturer ?? "");
-            SetCellText(cells[5], r.Unit ?? "");
-            SetCellText(cells[6], FormatNumber(r.Qty, r.Unit == "м" ? 1 : 0));
-            SetCellText(cells[7], r.Weight > 0 ? FormatNumber(r.Weight, 3) : "");
-            SetCellText(cells[8], r.Note ?? "");
+            SetCellText(cells[0], pos.ToString(), styleCell: Style(0));
+            SetCellText(cells[1], r.Name ?? "", styleCell: Style(1));
+            SetCellText(cells[2], r.TypeMark ?? "", styleCell: Style(2));
+            SetCellText(cells[3], r.ItemCode ?? "", styleCell: Style(3));
+            SetCellText(cells[4], r.Manufacturer ?? "", styleCell: Style(4));
+            SetCellText(cells[5], r.Unit ?? "", styleCell: Style(5));
+            SetCellText(cells[6], FormatNumber(r.Qty, r.Unit == "м" ? 1 : 0), styleCell: Style(6));
+            SetCellText(cells[7], r.Weight > 0 ? FormatNumber(r.Weight, 3) : "", styleCell: Style(7));
+            SetCellText(cells[8], r.Note ?? "", styleCell: Style(8));
         }
 
-        static void SetCellText(TableCell cell, string text, bool bold = false)
+        /// <summary>
+        /// Replace the cell's contents with one paragraph/run containing
+        /// <paramref name="text"/>. Paragraph + run formatting (font,
+        /// size, alignment, color) is copied from <paramref name="styleCell"/>
+        /// when provided — that's the master stencil cell, so every
+        /// output row inherits the same look as the template's first
+        /// data row. Falls back to the cell's own existing formatting
+        /// when no styleCell is supplied.
+        /// </summary>
+        static void SetCellText(TableCell cell, string text,
+                                 bool bold = false, TableCell styleCell = null)
         {
-            // Drop any existing paragraphs (we keep the first one's pPr
-            // through ClearRowText so style is preserved) and put one
-            // paragraph with a single run holding the text.
-            // Also preserve the first Run's RunProperties (rPr) so font, size
-            // and color from the stencil template are kept.
-            var existing = cell.Elements<Paragraph>().FirstOrDefault();
             ParagraphProperties pPr = null;
             RunProperties originalRPr = null;
 
-            if (existing != null)
+            // Prefer the master styleCell as the source of formatting —
+            // it stays untouched throughout the build, so every row
+            // gets identical font/size/alignment. The cell's own
+            // formatting is a fallback for headers that don't pass a
+            // styleCell or for templates where styleCells weren't
+            // captured.
+            var source = styleCell?.Elements<Paragraph>().FirstOrDefault()
+                      ?? cell.Elements<Paragraph>().FirstOrDefault();
+            if (source != null)
             {
-                pPr = existing.Elements<ParagraphProperties>().FirstOrDefault();
+                pPr = source.Elements<ParagraphProperties>().FirstOrDefault();
                 pPr = pPr != null ? (ParagraphProperties)pPr.CloneNode(true) : null;
-
-                var firstRun = existing.Elements<Run>().FirstOrDefault();
+                var firstRun = source.Elements<Run>().FirstOrDefault();
                 if (firstRun != null)
                 {
                     var rPr = firstRun.Elements<RunProperties>().FirstOrDefault();
                     originalRPr = rPr != null ? (RunProperties)rPr.CloneNode(true) : null;
                 }
-                existing.Remove();
             }
+
+            foreach (var p2 in cell.Elements<Paragraph>().ToList()) p2.Remove();
 
             var p = new Paragraph();
             if (pPr != null) p.AppendChild(pPr);
@@ -325,9 +355,7 @@ namespace PipingSpecPlugin.Spec
             {
                 run.AppendChild(originalRPr);
                 if (bold && !originalRPr.Elements<Bold>().Any())
-                {
                     originalRPr.AppendChild(new Bold());
-                }
             }
             else if (bold)
             {

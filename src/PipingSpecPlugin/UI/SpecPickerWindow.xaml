@@ -76,6 +76,9 @@
                         <CheckBox x:Name="IncludePipeBendsAsPipeChk"
                                   Content="Учитывать изгибы как трубу (длина изгиба прибавляется к соседней трубе)"
                                   IsChecked="True" Margin="0,2,0,2"/>
+                        <CheckBox x:Name="OpenAfterGenerateChk"
+                                  Content="Открыть документ после генерации"
+                                  IsChecked="True" Margin="0,2,0,2"/>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>

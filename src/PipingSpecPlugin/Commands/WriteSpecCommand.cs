@@ -60,8 +60,31 @@ namespace PipingSpecPlugin.Commands
             var dwgLeaf = activeDoc != null && !string.IsNullOrEmpty(activeDoc.Name)
                 ? Path.GetFileName(activeDoc.Name) : "";
 
+            // Modeless progress popup: parented to AutoCAD's main window
+            // so it inherits z-order, shown as Dialog so we can pump events
+            // on the same thread. CollectFromProject reports against it
+            // via the Action<int,int,string> callback below.
+            var progress = new UI.ProgressWindow();
+            new WindowInteropHelper(progress).Owner = AcadApp.MainWindow.Handle;
+            progress.Indeterminate("Поиск чертежей проекта…");
+            progress.Show();
+
             Say("[Спецификация] Сканирование проекта…");
-            var scan = CollectFromProject(project, Say, Trace);
+            ScanResult scan;
+            try
+            {
+                scan = ScanWithCache(project, Say, Trace, progress);
+            }
+            finally
+            {
+                progress.Complete();
+            }
+            if (progress.IsCancelled)
+            {
+                Say("[Спецификация] Сканирование отменено пользователем.");
+                return;
+            }
+
             Say($"[Спецификация] Найдено компонентов: {scan.records.Count}"
               + (scan.ownedPnPIds.Count > 0
                     ? $"; исключено патрубков оборудования: {scan.ownedPnPIds.Count}"
@@ -196,10 +219,12 @@ namespace PipingSpecPlugin.Commands
             settings.ExcludeEquipment = result.ExcludeEquipment;
             settings.ExcludeConnectors = result.ExcludeConnectors;
             settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;
+            settings.OpenAfterGenerate = result.OpenAfterGenerate;
             settings.Save();
 
             Say($"[Спецификация] Готово: {specRows.Count} строк → {outputPath}");
-            TryOpenInWord(outputPath, Say);
+            if (result.OpenAfterGenerate)
+                TryOpenInWord(outputPath, Say);
         }
 
         // --- helpers -----------------------------------------------------
@@ -262,11 +287,16 @@ namespace PipingSpecPlugin.Commands
             public int skippedFiles;
         }
 
-        static ScanResult CollectFromProject(PlantProject project,
-            Action<string> say, Action<string> trace)
+        /// <summary>
+        /// Wrap CollectFromProject with a per-session cache. Two
+        /// consecutive WRITESPEC clicks against an unchanged project
+        /// skip the long scan entirely.
+        /// </summary>
+        static ScanResult ScanWithCache(PlantProject project,
+            Action<string> say, Action<string> trace, UI.ProgressWindow progress)
         {
-            var scan = new ScanResult();
-
+            // Build the file list once so cache fingerprinting and the
+            // real scan see the same set.
             Project piping = null;
             foreach (var pp in project.ProjectParts)
                 if (pp is Autodesk.ProcessPower.P3dProjectParts.PipingProject)
@@ -274,9 +304,8 @@ namespace PipingSpecPlugin.Commands
             if (piping == null)
             {
                 say("[Спецификация] В проекте нет дисциплины Piping.");
-                return scan;
+                return new ScanResult();
             }
-
             var dwgFiles = ((Autodesk.ProcessPower.P3dProjectParts.PipingProject)piping)
                 .ProjectFiles
                 .Where(f => !string.IsNullOrEmpty(f.Name)
@@ -284,21 +313,62 @@ namespace PipingSpecPlugin.Commands
                             && IsUnderPlant3dModels(f))
                 .ToList();
 
-            trace($"Чертежей в Plant 3D Models: {dwgFiles.Count}");
+            var dwgPaths = new List<string>(dwgFiles.Count);
+            foreach (var f in dwgFiles)
+            {
+                try { dwgPaths.Add(f.ResolvedFilePath ?? f.AbsoluteFileName); }
+                catch { }
+            }
             var activeDocPath = AcadApp.DocumentManager.MdiActiveDocument?.Name ?? "";
+            var fingerprint = ScanCache.Fingerprint(dwgPaths, activeDocPath);
+            var key = project.ProjectFolderPath ?? project.Name ?? "";
+
+            var cached = ScanCache.TryGet(key, fingerprint);
+            if (cached != null)
+            {
+                trace("ScanCache HIT — пропускаем сканирование.");
+                progress.Report(dwgFiles.Count, dwgFiles.Count, "Загрузка из кэша…");
+                return new ScanResult
+                {
+                    records = cached.Records,
+                    activeDwgRecords = cached.ActiveDwgRecords,
+                    ownedPnPIds = cached.EquipmentOwnedPnPIds,
+                    topology = cached.Topology,
+                    skippedFiles = cached.SkippedFiles,
+                };
+            }
+            trace("ScanCache MISS — выполняем полное сканирование.");
+
+            var result = CollectFromProject(project, dwgFiles, piping, activeDocPath,
+                                            say, trace, progress);
+            if (!progress.IsCancelled)
+            {
+                ScanCache.Put(key, new ScanCache.Entry
+                {
+                    Records = result.records,
+                    ActiveDwgRecords = result.activeDwgRecords,
+                    EquipmentOwnedPnPIds = result.ownedPnPIds,
+                    Topology = result.topology,
+                    SkippedFiles = result.skippedFiles,
+                    Fingerprint = fingerprint,
+                });
+            }
+            return result;
+        }
+
+        static ScanResult CollectFromProject(PlantProject project,
+            List<PnPProjectFile> dwgFiles, Project piping, string activeDocPath,
+            Action<string> say, Action<string> trace, UI.ProgressWindow progress)
+        {
+            var scan = new ScanResult();
+
+            trace($"Чертежей в Plant 3D Models: {dwgFiles.Count}");
             var projectDlm = piping.DataLinksManager as DataLinksManager;
 
             for (var i = 0; i < dwgFiles.Count; i++)
             {
+                if (progress.IsCancelled) break;
                 var f = dwgFiles[i];
-                if ((i + 1) % 5 == 0 || i + 1 == dwgFiles.Count)
-                {
-                    say($"[Спецификация] Сканирование: {i + 1} из {dwgFiles.Count}…");
-                    // DoEvents позволяет UI-потоку обновить статус-бар
-                    // и не "зависнуть" на больших проектах. В контексте
-                    // WRITESPEC мы — UI thread по факту.
-                    WinForms.Application.DoEvents();
-                }
 
                 string path = null;
                 try { path = !string.IsNullOrEmpty(f.ResolvedFilePath) ? f.ResolvedFilePath : f.AbsoluteFileName; }
@@ -306,8 +376,11 @@ namespace PipingSpecPlugin.Commands
                 if (string.IsNullOrEmpty(path) || !File.Exists(path))
                 {
                     trace($"Пропущен (не найден на диске): {f.Name}");
+                    progress.Report(i + 1, dwgFiles.Count, $"Пропущен: {f.Name}");
                     continue;
                 }
+
+                progress.Report(i, dwgFiles.Count, $"Чертёж: {Path.GetFileName(path)}");
 
                 try
                 {
@@ -334,6 +407,7 @@ namespace PipingSpecPlugin.Commands
                         trace($"  inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
                     scan.skippedFiles++;
                 }
+                progress.Report(i + 1, dwgFiles.Count, $"Готово: {Path.GetFileName(path)}");
             }
             return scan;
         }

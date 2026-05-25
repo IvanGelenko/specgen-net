@@ -14,6 +14,15 @@ namespace PipingSpecPlugin.Settings
     /// </summary>
     public class PluginSettings
     {
+        // Bumped whenever the JSON schema gains or removes a field in a
+        // way that needs a migration. Load() reads this first and runs
+        // Upgrade() before deserialising the rest of the object — same
+        // pattern as a database migrations table. Bumping the constant
+        // and adding an Upgrade case is the only way to change the
+        // file shape safely; never silently rename a property.
+        public const int CurrentSchemaVersion = 2;
+        public int SchemaVersion { get; set; } = CurrentSchemaVersion;
+
         // Path to the user's preferred .docx Word template. Empty means
         // "use built-in default".
         public string TemplatePath { get; set; } = "";
@@ -44,6 +53,10 @@ namespace PipingSpecPlugin.Settings
         // listing only one Pipe entry per run.
         public bool IncludePipeBendsAsPipe { get; set; } = true;
 
+        // Open the resulting .docx in Word automatically. Default on,
+        // matches the Python edition's behaviour.
+        public bool OpenAfterGenerate { get; set; } = true;
+
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "PipingSpecPlugin", "settings.json");
@@ -55,7 +68,25 @@ namespace PipingSpecPlugin.Settings
                 var path = FilePath;
                 if (!File.Exists(path)) return new PluginSettings();
                 var json = File.ReadAllText(path);
-                return JsonSerializer.Deserialize<PluginSettings>(json) ?? new PluginSettings();
+                // Read SchemaVersion first so we can patch the JSON
+                // before binding it to the strongly-typed class. Cheap
+                // peek via JsonDocument keeps the path single-pass.
+                int oldVersion = 0;
+                try
+                {
+                    using var doc = JsonDocument.Parse(json);
+                    if (doc.RootElement.ValueKind == JsonValueKind.Object
+                        && doc.RootElement.TryGetProperty("SchemaVersion", out var v)
+                        && v.ValueKind == JsonValueKind.Number)
+                        oldVersion = v.GetInt32();
+                }
+                catch { /* leave oldVersion = 0 */ }
+
+                var loaded = JsonSerializer.Deserialize<PluginSettings>(json)
+                             ?? new PluginSettings();
+                if (oldVersion < CurrentSchemaVersion)
+                    loaded.Upgrade(oldVersion);
+                return loaded;
             }
             catch
             {
@@ -64,6 +95,32 @@ namespace PipingSpecPlugin.Settings
                 // failure on every command invocation.
                 return new PluginSettings();
             }
+        }
+
+        /// <summary>
+        /// Forward-only migration of the in-memory object. Each <c>case</c>
+        /// patches v(N) into v(N+1) — fall-through is intentional, so a
+        /// jump from v0 to v2 runs both migrations in order. Settings
+        /// written back to disk on next Save() carry CurrentSchemaVersion.
+        /// </summary>
+        void Upgrade(int from)
+        {
+            switch (from)
+            {
+                case 0:
+                    // v0 was the unversioned default; fields that didn't
+                    // exist (Statuses, Categories, Lines, ExcludeXxx,
+                    // IncludePipeBendsAsPipe) get their constructor
+                    // defaults — no field-level work needed.
+                    goto case 1;
+                case 1:
+                    // v1 → v2: introduced OpenAfterGenerate. Existing
+                    // users expect the historical behaviour (Word always
+                    // opened) so keep the default true.
+                    OpenAfterGenerate = true;
+                    break;
+            }
+            SchemaVersion = CurrentSchemaVersion;
         }
 
         public void Save()

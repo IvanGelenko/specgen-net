@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <Nullable>disable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <!-- The plug-in itself references AcMgd / AcDbMgd / PnP*Mgd, none of
+         which are CLR-loadable outside the AutoCAD process. To keep
+         tests runnable on any dev box, pull only the pure-logic Spec/
+         files into this project by source rather than referencing the
+         plug-in DLL. -->
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartRecord.cs" Link="Spec\PartRecord.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRow.cs" Link="Spec\SpecRow.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecConstants.cs" Link="Spec\SpecConstants.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRowBuilder.cs" Link="Spec\SpecRowBuilder.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\ValveCompanionFinder.cs" Link="Spec\ValveCompanionFinder.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\ScanCache.cs" Link="Spec\ScanCache.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
+    <PackageReference Include="xunit" Version="2.9.0" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+</Project>

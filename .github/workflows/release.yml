@@ -8,7 +8,8 @@ name: Release
 # Runs on a SELF-HOSTED Windows runner that has AutoCAD Plant 3D 2026 and
 # Inno Setup 6 installed — the plug-in references 9 AutoCAD/Plant 3D DLLs
 # that don't exist on GitHub-hosted runners, so a hosted runner can't build
-# it. The runner needs labels: [self-hosted, windows, autocad].
+# it. A default Windows runner registration already provides the
+# self-hosted + windows labels used below; no extra labels are required.
 #
 # The tag (vX.Y.Z) is the single source of truth for the version: it is
 # stamped into the assembly, the bundle manifest and the installer. The
@@ -25,7 +26,7 @@ permissions:
 
 jobs:
   release:
-    runs-on: [self-hosted, windows, autocad]
+    runs-on: [self-hosted, windows]
 
     steps:
       - name: Checkout

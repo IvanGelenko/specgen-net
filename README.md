@@ -89,9 +89,10 @@ git push origin v1.2.0
 ```
 
 The `.github/workflows/release.yml` workflow runs on a **self-hosted Windows
-runner** (labels `self-hosted, windows, autocad`) that has AutoCAD Plant 3D
-2026 and Inno Setup 6 — a GitHub-hosted runner can't build the plug-in
-because it references AutoCAD/Plant 3D DLLs from the local install. The
+runner** (labels `self-hosted, windows` — the defaults a Windows runner gets)
+that has AutoCAD Plant 3D 2026 and Inno Setup 6 — a GitHub-hosted runner
+can't build the plug-in because it references AutoCAD/Plant 3D DLLs from the
+local install. The
 workflow stamps the version from the tag, runs the tests, builds
 `PipingSpecPlugin-Setup.exe` via `build.cmd`, and publishes a GitHub Release
 with that asset. The tag `vX.Y.Z` is the single source of truth for the

@@ -1,18 +1,23 @@
 # PipingSpecPlugin (.NET)
 
 Native AutoCAD Plant 3D plug-in (C# / .NET 8) that generates a piping
-specification from the active project.
+specification (`.docx`) from the active project.
 
-This is a full rewrite of the Python-based
-[specgen](https://github.com/IvanGelenko/specgen) tool. The Python edition
-talks to `Piping.dcf` directly via SQLite; this edition talks to the live
-Plant 3D in-memory model through the `PnP*Mgd` APIs, so it sees unsaved
-changes and can register a ribbon button natively without `.cuix` plumbing.
+The plug-in talks to the live Plant 3D in-memory model through the
+`PnP*Mgd` APIs, so it sees unsaved changes and registers its ribbon button
+natively — no `.cuix` plumbing required.
 
-Status: **feature parity with Python edition (in progress)**. Available
-commands: `WRITESPEC` (whole project), `WRITESPECDWG` (active drawing),
-`SPECTEMPLATE` (pick/change template), plus the diagnostic helpers
-`PSPING`, `GENSPEC`, `LISTPARTS`, `LISTPROJECT`, `SPECUI`.
+## Commands
+
+| Command | What it does |
+|---|---|
+| `WRITESPEC` | Generate a spec; scope (whole project / active drawing) comes from the saved preference and the picker dialog. |
+| `WRITESPECPROJ` | Generate a spec for the **whole project**, ignoring the saved scope. Bound to the ribbon's **Весь проект** button. |
+| `WRITESPECDWG` | Generate a spec for the **active drawing** only. Bound to the ribbon's **Текущий чертёж** button. |
+
+After `NETLOAD`, AutoCAD's ribbon shows a **Спецификация** tab with
+**Весь проект** and **Текущий чертёж** buttons. The output template is
+picked from the dialog the commands open.
 
 ## Targets
 
@@ -42,34 +47,16 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
 1. Build the solution.
 2. Open Plant 3D 2026 and a project drawing.
 3. `NETLOAD` → pick `src\PipingSpecPlugin\bin\Release\PipingSpecPlugin.dll`.
-4. Type `PSPING` → a message box should pop confirming the plug-in is alive.
-5. Type `GENSPEC` → the editor should print the active Plant 3D project's
-   name, folder, `.xml` file, and the current drawing path. If no Plant 3D
-   project is open it prints a `No Plant 3D project is currently open`
-   notice — that's expected on a plain AutoCAD drawing.
-6. Type `LISTPARTS` → the editor should print the total row count for the
-   active drawing followed by a breakdown by category (top-level class)
-   and the top-15 full class names. Empty/non-Plant 3D drawings get an
-   explanatory notice instead.
-7. Type `SPECUI` → a modal WPF window opens with the same data as
-   `LISTPARTS` shown in two trees. Close it with the **Close** button or
-   <kbd>Esc</kbd>. This is a smoke test of WPF in-process under AutoCAD,
-   not the final UI.
-8. Type `WRITESPEC` → a save-as dialog opens; pick a `.docx` path. The
-   resulting file has a heading and a (category, count) table. Settings
-   live at `%APPDATA%\PipingSpecPlugin\settings.json` — the same path
-   used by the Python edition, so picking output dirs / templates
-   carries over between the two plug-ins.
-9. After loading the DLL, AutoCAD's ribbon should show a new
-   **Spec Generator** tab with **Generate / Preview / Project info /
-   Project totals** buttons that invoke `WRITESPEC` / `SPECUI` /
-   `GENSPEC` / `LISTPROJECT` respectively. Registered programmatically
-   — no `.cuix` plumbing required.
-10. Type `LISTPROJECT` → tallies row counts across every drawing in
-    the project (opens each as a read-only side-database; the active
-    drawing is read in-memory so unsaved edits are included). On a
-    large project this takes a few seconds — the editor prints a
-    `Scanning N drawing(s)...` heartbeat before the totals.
+4. The ribbon should show a **Спецификация** tab with **Весь проект** and
+   **Текущий чертёж** buttons (registered programmatically — no `.cuix`).
+5. Click **Весь проект** (or type `WRITESPEC`) → the picker dialog opens
+   with statuses / categories / lines from the project. Confirm and pick a
+   `.docx` output path.
+6. The resulting file has the spec table filled per line and category. If
+   no Plant 3D project is open, a notice explains that a project must be
+   opened first.
+7. A run log is written alongside each generation — use it to diagnose a
+   part that didn't make it into the spec.
 
 > **Rebuild while AutoCAD is open?** AutoCAD locks `PipingSpecPlugin.dll`
 > for the rest of the session after `NETLOAD`, so a second `dotnet build`
@@ -78,7 +65,8 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
 > versioned copy. AutoCAD doesn't notice you replaced the file — you
 > *must* restart it to reload an updated DLL.
 
-## Roadmap
+## Settings
 
-See [IMPROVEMENTS](https://github.com/IvanGelenko/specgen/blob/main/IMPROVEMENTS.md)
-in the Python repo for the feature backlog being ported here.
+User settings live at `%APPDATA%\PipingSpecPlugin\settings.json` (output
+directory, template path, picker preferences). See `ARCHITECTURE.md` for
+the schema and migration model.

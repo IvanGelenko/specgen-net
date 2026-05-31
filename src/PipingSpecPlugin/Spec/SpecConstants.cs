@@ -3,10 +3,9 @@ using System.Collections.Generic;
 namespace PipingSpecPlugin.Spec
 {
     /// <summary>
-    /// Sentinels and Russian labels copied verbatim from the Python
-    /// edition's generate_spec.py. Keep the sentinel strings identical
-    /// — the .docx template's section header text matches exactly and
-    /// the Python edition's settings file uses these same constants.
+    /// Sentinels and Russian labels used throughout the spec pipeline.
+    /// Keep the section-header strings identical to the .docx template's
+    /// header text — the writer locates the table to fill by matching them.
     /// </summary>
     public static class SpecConstants
     {

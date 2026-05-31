@@ -10,12 +10,9 @@ using WinForms = System.Windows.Forms;
 namespace PipingSpecPlugin.UI
 {
     /// <summary>
-    /// Picker dialog mirroring the Python edition's tkinter UI. Lets the
-    /// user filter by status / category / line and pick exclude rules
-    /// before producing the spec. All choices persist into PluginSettings
-    /// so the next launch starts where this one ended (matches the
-    /// "ui_prefs" key the Python edition writes — same shape so users
-    /// flipping between editions don't have to re-tick everything).
+    /// Picker dialog. Lets the user filter by status / category / line and
+    /// pick exclude rules before producing the spec. All choices persist
+    /// into PluginSettings so the next launch starts where this one ended.
     /// </summary>
     public partial class SpecPickerWindow : Window
     {
@@ -421,8 +418,7 @@ namespace PipingSpecPlugin.UI
 
     /// <summary>
     /// Plain-old data container the picker hands back to the WRITESPEC
-    /// command. Same shape as the Python edition's "run_args" dict so
-    /// the persisted PluginSettings can map across editions.
+    /// command.
     /// </summary>
     public class SpecPickerResult
     {

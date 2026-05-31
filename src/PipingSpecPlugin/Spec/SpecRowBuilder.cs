@@ -18,10 +18,10 @@ namespace PipingSpecPlugin.Spec
         public bool GroupByLine = false;
         public bool ExcludeEquipment = true;
         public bool ExcludeConnectors = true;
-        // ExcludeValveCompanions is a Python edition feature that needs a
-        // separate AssetOwnership-style query we don't have wired up yet;
-        // false here keeps behaviour close to the Python default for the
-        // common case (the test project has no companion valves either).
+        // Default false on the options object itself; the picker and saved
+        // settings drive the real value (which defaults to true). When on,
+        // the caller must also supply ValveCompanionPnPIds from
+        // ValveCompanionFinder.Discover.
         public bool ExcludeValveCompanions = false;
 
         // PnPIDs of parts that are owned by equipment (nozzles, manways,
@@ -51,11 +51,9 @@ namespace PipingSpecPlugin.Spec
 
     /// <summary>
     /// Aggregates raw PartRecords into SpecRows ready for the docx
-    /// template. Mirrors the logic in the Python edition's fetch_rows()
-    /// — including the dedup-by-PnPID step, the pipe length conversion,
-    /// the weight-variance warning and the 10% pipe margin note. Keep
-    /// names and order in sync with that function so behaviour stays
-    /// comparable across the two editions.
+    /// template. Handles the dedup-by-PnPID step, the pipe length
+    /// conversion, the weight-variance warning and the 10% pipe margin
+    /// note.
     /// </summary>
     public class SpecRowBuilder
     {
@@ -435,9 +433,8 @@ namespace PipingSpecPlugin.Spec
 
         static string NormalizeCategory(PartRecord r)
         {
-            // Match Python's CATEGORY_SQL: equipment is detected via the
-            // AssetOwnership table (we don't have it; use PartCategory as-is)
-            // and supports via the iso symbol definition substring.
+            // Supports are detected via the iso symbol definition substring;
+            // everything else uses PartCategory as-is.
             if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
                 && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT", StringComparison.OrdinalIgnoreCase) >= 0)
                 return "Supports";

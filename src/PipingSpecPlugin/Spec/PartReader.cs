@@ -9,9 +9,8 @@ namespace PipingSpecPlugin.Spec
     /// <summary>
     /// PartReader output: the row records plus a set of PnPIDs that are
     /// owned by Equipment in the same drawing (nozzles, manways, internal
-    /// supports, etc.). The Python edition gets the latter from the
-    /// AssetOwnership SQLite table; on managed API we get the same data
-    /// via DataLinksManager.GetRelatedRowIds on Equipment rows.
+    /// supports, etc.). The owned set is derived from
+    /// DataLinksManager.GetRelatedRowIds on Equipment rows.
     /// </summary>
     public class PartReadResult
     {
@@ -20,8 +19,7 @@ namespace PipingSpecPlugin.Spec
         // PnPID -> neighbouring PnPIDs through P3dPartConnection. Built
         // by calling DataLinksManager.GetRelatedRowIds on every row;
         // includes connectors (Buttweld, Universal) as standalone nodes
-        // so valve-companion discovery can walk Valve → Connector →
-        // Flange the same way the Python edition's SQL does.
+        // so valve-companion discovery can walk Valve → Connector → Flange.
         public Dictionary<int, List<int>> Topology = new();
         // Diagnostic counts so WRITESPEC can show whether topology /
         // equipment recognition found anything. Updated by BuildTopology.
@@ -216,9 +214,8 @@ namespace PipingSpecPlugin.Spec
                     }
                 }
 
-                // Build topology by walking ConnectionIterator on every part
-                // ObjectId in model space. This is the managed API equivalent
-                // of Python's P3dPartConnection SQL — it returns the same
+                // Build topology by walking ConnectionManager.GetConnections
+                // on every part ObjectId in model space, yielding the
                 // connector-mediated part-to-part graph. GetRelatedRowIds was
                 // attempted earlier but came back empty on real projects, so
                 // we go through the connection manager directly.
@@ -243,8 +240,7 @@ namespace PipingSpecPlugin.Spec
         /// Iterate every entity in model space and ask ConnectionManager
         /// for its *direct* P3dPartConnection neighbours. Each Connection
         /// is a single record with ObjectId1/ObjectId2 — the two ports
-        /// that physically touch. This is the managed equivalent of the
-        /// Python edition's P3dPartConnection SQL join.
+        /// that physically touch.
         ///
         /// Earlier attempt used ConnectionIterator, which (empirically)
         /// walked the *transitive closure* of the network from the
@@ -252,8 +248,8 @@ namespace PipingSpecPlugin.Spec
         /// from a valve came back as its neighbour. That produced false
         /// positives in companion detection (every flange in the
         /// connected network got dropped). GetConnections returns just
-        /// the immediate edges, so two-hop Valve → Connector → Flange
-        /// works the same way as Python's two-JOIN walk.
+        /// the immediate edges, so a two-hop Valve → Connector → Flange
+        /// walk stays local to the joint.
         /// </summary>
         static void BuildTopology(Database db, DataLinksManager dlm,
                                   PartReadResult result)
@@ -317,10 +313,10 @@ namespace PipingSpecPlugin.Spec
                             if (toRowId == 0) continue;
 
                             // Equipment node ⇒ its neighbour is an owned part
-                            // (Python equivalent: SELECT Owned FROM AssetOwnership
-                            // joined on the vessel). Two-hop walk also picks up
-                            // connector-bridged children — IsPnP3dConnector on the
-                            // neighbour triggers a follow-on lookup.
+                            // (nozzle, manway, internal support). Two-hop walk
+                            // also picks up connector-bridged children —
+                            // IsPnP3dConnector on the neighbour triggers a
+                            // follow-on lookup.
                             if (isEquipment)
                             {
                                 result.EquipmentOwnedPnPIds.Add(toRowId);
@@ -479,8 +475,8 @@ namespace PipingSpecPlugin.Spec
             Dictionary<int, string> lineGroupCache)
         {
             // Query drawing-local DLM first since partRowId is drawing-local.
-            // In SQLite-based projects, drawing-local and project-wide PnPIDs
-            // belong to different namespaces — querying projectDlm first with
+            // Drawing-local and project-wide PnPIDs belong to different
+            // namespaces — querying projectDlm first with
             // a drawing-local partRowId can match an unrelated row (e.g. a connector)
             // and return the wrong line tag.
             int lgRowId = QueryLineGroupRowId(drawingDlm, partRowId);

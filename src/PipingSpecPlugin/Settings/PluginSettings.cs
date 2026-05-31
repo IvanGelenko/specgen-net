@@ -6,9 +6,8 @@ namespace PipingSpecPlugin.Settings
 {
     /// <summary>
     /// User settings persisted to <c>%APPDATA%\PipingSpecPlugin\settings.json</c>.
-    /// This is intentionally the SAME folder the Python edition uses so a
-    /// user can flip between the .NET and Python plug-ins without losing
-    /// their template choice. Don't rename the folder casually.
+    /// Don't rename the folder casually — existing users would lose their
+    /// saved template choice and output directory.
     /// Schema is forward-compatible: unknown fields are ignored on load,
     /// missing fields fall back to defaults.
     /// </summary>
@@ -57,8 +56,7 @@ namespace PipingSpecPlugin.Settings
         // listing only one Pipe entry per run.
         public bool IncludePipeBendsAsPipe { get; set; } = true;
 
-        // Open the resulting .docx in Word automatically. Default on,
-        // matches the Python edition's behaviour.
+        // Open the resulting .docx in Word automatically. Default on.
         public bool OpenAfterGenerate { get; set; } = true;
 
         // When true, output each element on a separate row in the spec rather

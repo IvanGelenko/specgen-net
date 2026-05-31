@@ -2,9 +2,7 @@ namespace PipingSpecPlugin.Spec
 {
     /// <summary>
     /// Raw Plant 3D EngineeringItem row, read straight from
-    /// DataLinksManager.GetAllProperties. Mirrors the SELECT in the Python
-    /// edition's fetch_rows() one-to-one so the downstream bucket logic
-    /// can stay structurally identical. Strings are kept exactly as
+    /// DataLinksManager.GetAllProperties. Strings are kept exactly as
     /// stored — trimming and null-handling happen in SpecRowBuilder.
     /// </summary>
     public class PartRecord
@@ -48,9 +46,9 @@ namespace PipingSpecPlugin.Spec
         // — their PartCategory is empty but the class is "P3dConnector".
         public string PnPClassName;
 
-        // Optional pressure class / facing (used by valve-companion fallback
-        // match — Python's "fallback_key" relies on Spec + NominalDiameter,
-        // but we keep these around for future refinements).
+        // Optional pressure class / facing. The valve-companion fallback
+        // match keys on Spec + NominalDiameter; these are kept around for
+        // future refinements.
         public string PressureClass;
         public string Facing;
 

@@ -2,8 +2,6 @@ namespace PipingSpecPlugin.Spec
 {
     /// <summary>
     /// Aggregated spec row — one line in the resulting .docx table.
-    /// Mirrors the Python edition's SpecRow dataclass field-for-field;
-    /// keep names in sync so any future template work transfers cleanly.
     /// </summary>
     public class SpecRow
     {

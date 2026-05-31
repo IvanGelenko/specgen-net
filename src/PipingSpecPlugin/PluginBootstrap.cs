@@ -11,9 +11,8 @@ namespace PipingSpecPlugin
     /// <summary>
     /// AutoCAD calls <see cref="IExtensionApplication.Initialize"/> exactly
     /// once per session when our assembly is loaded (via NETLOAD or the
-    /// AutoLoader bundle). We use it to register a native ribbon tab —
-    /// the Python edition has to ship a .cuix file and ask users to load
-    /// it; doing it in code here removes that whole step.
+    /// AutoLoader bundle). We use it to register a native ribbon tab in
+    /// code, so no .cuix file has to be shipped or loaded by the user.
     /// Ribbon registration is wrapped in try/catch because a malformed
     /// ribbon node can prevent the plug-in from loading entirely, which
     /// would also block the commands. Better to log and continue.

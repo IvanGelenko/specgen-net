@@ -6,12 +6,11 @@ namespace PipingSpecPlugin.Spec
 {
     /// <summary>
     /// Discovers parts that should be excluded when the user picks
-    /// "Exclude valve companions". Mirrors the Python edition's
-    /// <c>_discover_valve_companion_pnpids</c>: walk Valve → Connector
-    /// → Flange through the topology graph to find companion flanges,
-    /// then for each companion flange pull in the nearest gasket and
-    /// bolt set by 3D distance, with a (Spec, NominalDiameter, LineTag)
-    /// fallback when coordinates are missing.
+    /// "Exclude valve companions": walk Valve → Connector → Flange
+    /// through the topology graph to find companion flanges, then for
+    /// each companion flange pull in the nearest gasket and bolt set by
+    /// 3D distance, with a (Spec, NominalDiameter, LineTag) fallback
+    /// when coordinates are missing.
     /// </summary>
     public static class ValveCompanionFinder
     {
@@ -23,8 +22,8 @@ namespace PipingSpecPlugin.Spec
             if (topology == null) topology = new Dictionary<int, List<int>>();
 
             // Threshold: 4 inches if the project uses imperial length
-            // units, 100 mm otherwise (matches Python's check on the
-            // first non-null LengthUnit found in EngineeringItems).
+            // units, 100 mm otherwise — decided by the first non-null
+            // LengthUnit found across the EngineeringItems.
             var firstUnit = records
                 .Select(r => (r.LengthUnit ?? "").ToLowerInvariant())
                 .FirstOrDefault(u => !string.IsNullOrEmpty(u));
@@ -81,10 +80,9 @@ namespace PipingSpecPlugin.Spec
 
             // Step 2: each companion flange has a matching gasket + bolt
             // set. We need to know which records are gaskets vs bolts.
-            // Python uses the Gasket / BoltSet sub-tables; on managed
-            // API we approximate by description / category keywords.
-            // It's good enough for the common case — gaskets and bolts
-            // have very distinct PartFamilyLongDesc text.
+            // We classify by description / category keywords — good enough
+            // for the common case, since gaskets and bolts have very
+            // distinct PartFamilyLongDesc text.
             var gaskets = new List<PartRecord>();
             var bolts = new List<PartRecord>();
             foreach (var r in deduped)
@@ -102,9 +100,9 @@ namespace PipingSpecPlugin.Spec
                 else if (IsBolt(r)) bolts.Add(r);
             }
 
-            // Fallback buckets keyed by (Spec, NominalDiameter, LineTag).
-            // Python uses these when 3D coords are missing or no proximity
-            // match is close enough.
+            // Fallback buckets keyed by (Spec, NominalDiameter, LineTag),
+            // used when 3D coords are missing or no proximity match is
+            // close enough.
             var gasketFallback = new Dictionary<string, List<PartRecord>>();
             var boltFallback = new Dictionary<string, List<PartRecord>>();
             foreach (var g in gaskets) AppendToBucket(gasketFallback, FallbackKey(g), g);
@@ -210,7 +208,7 @@ namespace PipingSpecPlugin.Spec
 
         static (double x, double y, double z)? GetCoords(PartRecord r)
         {
-            // Prefer Position; fall back to COG (matches Python).
+            // Prefer Position; fall back to COG when it isn't populated.
             var x = ParseDouble(r.PositionX) ?? ParseDouble(r.CogX);
             var y = ParseDouble(r.PositionY) ?? ParseDouble(r.CogY);
             var z = ParseDouble(r.PositionZ) ?? ParseDouble(r.CogZ);

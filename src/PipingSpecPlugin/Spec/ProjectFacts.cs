@@ -10,10 +10,7 @@ namespace PipingSpecPlugin.Spec
     ///
     /// We compute this off the same PartRecord stream the spec builder
     /// consumes — a single read of the drawings powers both the picker
-    /// and the final aggregation. The Python edition does three separate
-    /// SQL queries instead; we can't, because there's no Piping.dcf to
-    /// query through the managed API, only the per-drawing DataLinks
-    /// blob.
+    /// and the final aggregation, so the drawings are never read twice.
     /// </summary>
     public class ProjectFacts
     {
@@ -33,7 +30,7 @@ namespace PipingSpecPlugin.Spec
             var facts = new ProjectFacts { Records = list };
 
             // Statuses: empty/null collapses into a single "<no status>"
-            // bucket marked with the same sentinel the Python edition uses.
+            // bucket marked with the SpecConstants sentinel.
             var statusCounts = new Dictionary<string, int>();
             foreach (var r in list)
             {

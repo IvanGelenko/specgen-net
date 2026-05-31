@@ -9,8 +9,7 @@ using DocumentFormat.OpenXml.Wordprocessing;
 namespace PipingSpecPlugin.Spec
 {
     /// <summary>
-    /// Writes a populated spec into a .docx that follows the same layout
-    /// the Python edition uses:
+    /// Writes a populated spec into a .docx that follows this layout:
     ///   1. find the table whose body contains a single-cell header row
     ///      with text "Изделия и материалы";
     ///   2. find a 9-cell row anywhere in that table and use it as the
@@ -413,10 +412,10 @@ namespace PipingSpecPlugin.Spec
         // --- grouping ----------------------------------------------------
 
         /// <summary>
-        /// Produces line → category → [SpecRow] in the same order the
-        /// Python edition uses: lines sorted alphabetically with the
-        /// untagged bucket last; inside each line, categories in
-        /// CategoryOrder followed by anything else, with "Прочее" last.
+        /// Produces line → category → [SpecRow] in display order: lines
+        /// sorted alphabetically with the untagged bucket last; inside each
+        /// line, categories in CategoryOrder followed by anything else,
+        /// with "Прочее" last.
         /// </summary>
         static List<(string lineKey, List<(string cat, List<SpecRow> items)> byCat)>
             GroupRows(IList<SpecRow> rows, bool groupByLine)

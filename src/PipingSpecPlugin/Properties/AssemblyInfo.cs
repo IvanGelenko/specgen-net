@@ -22,4 +22,5 @@ using Autodesk.AutoCAD.Runtime;
 // (early diagnostic commands like PSPING / LISTPARTS / GENSPEC) was
 // removed for the production cut.
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.WriteSpecCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.MoveToLayerCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

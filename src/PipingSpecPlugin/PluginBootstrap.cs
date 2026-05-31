@@ -115,6 +115,14 @@ namespace PipingSpecPlugin
                 "icon32.png"));
 
             tab.Panels.Add(new RibbonPanel { Source = panelSource });
+
+            var layersSource = new RibbonPanelSource { Title = "Слои" };
+            layersSource.Items.Add(MakeButton("Разнести по слоям", "MOVEBYTAG",
+                "Перенести арматуру и оборудование активного чертежа на слои "
+                + "по их идентификатору (Tag).",
+                "icon32.png"));
+            tab.Panels.Add(new RibbonPanel { Source = layersSource });
+
             ribbon.Tabs.Add(tab);
         }
 

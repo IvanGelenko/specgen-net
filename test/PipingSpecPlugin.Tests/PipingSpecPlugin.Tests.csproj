@@ -22,6 +22,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PipeBendFolder.cs" Link="Spec\PipeBendFolder.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateInfo.cs" Link="Update\UpdateInfo.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateChecker.cs" Link="Update\UpdateChecker.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Layers\TagLayerMover.cs" Link="Layers\TagLayerMover.cs" />
   </ItemGroup>
 
   <ItemGroup>

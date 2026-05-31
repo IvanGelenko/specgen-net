@@ -21,7 +21,10 @@ echo === [1/3] dotnet build ===
 set BUILDOUT=src\PipingSpecPlugin\bin\Release-v%APPVERSION%
 rmdir /s /q "%BUILDOUT%" 2>nul
 
-dotnet build src\PipingSpecPlugin\PipingSpecPlugin.csproj -c Release "-p:OutDir=%CD%\%BUILDOUT%\\" -p:Version=%APPVERSION% -p:AssemblyVersion=%APPVERSION%.0 -p:FileVersion=%APPVERSION%.0
+rem Pass only -p:Version. AssemblyVersion / FileVersion are generated from
+rem it by the csproj (GenerateVersionInfo target); passing them explicitly
+rem here would duplicate the attributes and fail the build.
+dotnet build src\PipingSpecPlugin\PipingSpecPlugin.csproj -c Release "-p:OutDir=%CD%\%BUILDOUT%\\" -p:Version=%APPVERSION%
 if errorlevel 1 (
     echo dotnet build failed.
     exit /b 1

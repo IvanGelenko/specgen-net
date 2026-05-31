@@ -1,0 +1,81 @@
+name: Release
+
+# Publish a release installer when a version tag is pushed.
+#
+#   git tag v1.2.0
+#   git push origin v1.2.0
+#
+# Runs on a SELF-HOSTED Windows runner that has AutoCAD Plant 3D 2026 and
+# Inno Setup 6 installed — the plug-in references 9 AutoCAD/Plant 3D DLLs
+# that don't exist on GitHub-hosted runners, so a hosted runner can't build
+# it. The runner needs labels: [self-hosted, windows, autocad].
+#
+# The tag (vX.Y.Z) is the single source of truth for the version: it is
+# stamped into the assembly, the bundle manifest and the installer. The
+# in-plugin updater (UpdateChecker) reads that assembly version and the
+# release tag to decide whether an update is available.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write   # required to create the GitHub Release
+
+jobs:
+  release:
+    runs-on: [self-hosted, windows, autocad]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          # refs/tags/v1.2.0 -> 1.2.0
+          $tag = "${{ github.ref_name }}"
+          $version = $tag.TrimStart('v')
+          if ($version -notmatch '^\d+\.\d+\.\d+$') {
+            Write-Error "Tag '$tag' is not vX.Y.Z"
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          # Keep the VERSION file consistent with the tag so build.cmd
+          # (which reads it) stamps the same number.
+          Set-Content -Path VERSION -Value $version -NoNewline -Encoding ascii
+          Write-Host "Building version $version"
+
+      - name: Run unit tests
+        shell: pwsh
+        run: dotnet test test/PipingSpecPlugin.Tests/PipingSpecPlugin.Tests.csproj -c Release --nologo
+
+      - name: Build plugin + installer
+        shell: cmd
+        run: build.cmd
+
+      - name: Verify installer asset exists
+        shell: pwsh
+        run: |
+          $exe = "dist_installer/PipingSpecPlugin-Setup.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Error "Installer not produced at $exe"
+            exit 1
+          }
+          $v = (Get-Item "src/PipingSpecPlugin/bin/Release-v${{ steps.ver.outputs.version }}/PipingSpecPlugin.dll").VersionInfo.FileVersion
+          Write-Host "Built DLL FileVersion: $v"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: PipingSpecPlugin ${{ steps.ver.outputs.version }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          # The asset name MUST stay exactly PipingSpecPlugin-Setup.exe —
+          # the in-plugin updater (UpdateChecker.InstallerAssetName) matches
+          # it by name.
+          files: dist_installer/PipingSpecPlugin-Setup.exe

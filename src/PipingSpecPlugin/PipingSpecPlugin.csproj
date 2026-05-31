@@ -25,7 +25,38 @@
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <!-- Default plug-in version. build.cmd / CI override with -p:Version=X.Y.Z
+         (from the VERSION file or the git tag). The AssemblyVersion /
+         FileVersion attributes are generated from this below — they are NOT
+         hard-coded in AssemblyInfo.cs, so the override actually takes effect
+         and the in-plugin update check reads the right version. -->
+    <Version Condition=" '$(Version)' == '' ">1.1.5</Version>
   </PropertyGroup>
+
+  <!-- Emit AssemblyVersion / AssemblyFileVersion from $(Version) into a
+       generated source file. We can't rely on the SDK's normal attribute
+       generation because GenerateAssemblyInfo=false (the manual
+       AssemblyInfo.cs carries AutoCAD's CommandClass / ExtensionApplication
+       attributes). This target fills only the version gap. -->
+  <Target Name="GenerateVersionInfo" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <_VersionFourPart>$(Version).0</_VersionFourPart>
+      <_GenVersionFile>$(IntermediateOutputPath)VersionInfo.g.cs</_GenVersionFile>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyVersionAttribute">
+        <_Parameter1>$(_VersionFourPart)</_Parameter1>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyFileVersionAttribute">
+        <_Parameter1>$(_VersionFourPart)</_Parameter1>
+      </AssemblyAttribute>
+    </ItemGroup>
+    <WriteCodeFragment AssemblyAttributes="@(AssemblyAttribute)"
+                       Language="C#"
+                       OutputFile="$(_GenVersionFile)">
+      <Output TaskParameter="OutputFile" ItemName="Compile" />
+    </WriteCodeFragment>
+  </Target>
 
   <!-- Override with: msbuild /p:AcadInstallDir="D:\Autodesk\AutoCAD 2026" -->
   <PropertyGroup>

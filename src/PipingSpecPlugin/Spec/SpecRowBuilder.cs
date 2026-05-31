@@ -46,6 +46,10 @@ namespace PipingSpecPlugin.Spec
         public HashSet<int> BendsConsumed = null;
         public Dictionary<int, double> ExtraPipeMetres = null;
         public Dictionary<int, string> ExtraPipeLineTags = null;
+        // Full procurement identity (line, ND, spec, material) of each
+        // orphan bend, used to reroute its metres to a same-bore sibling
+        // pipe rather than the first pipe on the line. Null when off.
+        public Dictionary<int, BendOrphanInfo> ExtraPipeOrphanInfo = null;
         public bool DisableElementGrouping = false;
     }
 
@@ -313,18 +317,33 @@ namespace PipingSpecPlugin.Spec
                     _opts.ExtraPipeLineTags.TryGetValue(orphanPipePid, out var bendLine);
                     if (string.IsNullOrEmpty(bendLine)) continue;
 
-                    // Try to land the metres on any pipe bucket sharing
-                    // the bend's LineTag. The bucket key is
-                    // (line|nd|spec|material) — exact ND/spec match is
-                    // ideal but unavailable, so we match by line prefix.
+                    // Stage 1 — exact procurement match. The bend carries
+                    // its own ND/spec/material; the bucket key is
+                    // (line|nd|spec|material). Prefer a sibling pipe of the
+                    // SAME bore so a 24" bend's metres never land on a 2"
+                    // pipe just because they share a line.
                     Bucket target = null;
-                    foreach (var pkv in pipeFallbackBuckets)
+                    if (_opts.ExtraPipeOrphanInfo != null
+                        && _opts.ExtraPipeOrphanInfo.TryGetValue(orphanPipePid, out var info))
                     {
-                        if (pkv.Key.StartsWith(
-                                bendLine + "|",
-                                System.StringComparison.Ordinal))
-                        { target = pkv.Value; break; }
+                        var exactKey = $"{bendLine}|{info.NominalDiameter:F6}|{info.Spec}|{info.Material}";
+                        pipeFallbackBuckets.TryGetValue(exactKey, out target);
                     }
+
+                    // Stage 2 — same-line fallback. No same-bore sibling
+                    // exists, so land the metres on any pipe of that line
+                    // rather than dropping them entirely.
+                    if (target == null)
+                    {
+                        foreach (var pkv in pipeFallbackBuckets)
+                        {
+                            if (pkv.Key.StartsWith(
+                                    bendLine + "|",
+                                    System.StringComparison.Ordinal))
+                            { target = pkv.Value; break; }
+                        }
+                    }
+
                     if (target != null)
                     {
                         target.Qty += orphanMetres;
@@ -432,32 +451,7 @@ namespace PipingSpecPlugin.Spec
         static string CollapseWs(string s) => WsRun.Replace(s ?? "", " ").Trim();
 
         static string NormalizeCategory(PartRecord r)
-        {
-            // Supports are detected via the iso symbol definition substring;
-            // everything else uses PartCategory as-is.
-            if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
-                && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT", StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Supports";
-            var cat = r.PartCategory ?? "";
-            if (!string.IsNullOrEmpty(cat)) return cat;
-
-            // PartCategory is empty for several Plant 3D part families.
-            // Promote each to a synthetic category so they get their
-            // own picker chip — otherwise the user can only include
-            // them through 'Без категории', which lumps unrelated
-            // things together.
-            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
-            if (cls == "p3dconnector" || cls == "buttweld"
-                || cls == "universal" || cls == "weldspec"
-                || cls.Contains("weld") || cls.Contains("connector"))
-                return "P3dConnector";
-            if (cls == "vessel" || cls == "pump"
-                || cls.Contains("equipment") || cls.Contains("vessel")
-                || cls.Contains("pump") || cls.Contains("tank")
-                || cls.Contains("exchanger") || cls.Contains("compressor"))
-                return "Equipment";
-            return "";
-        }
+            => CategoryClassifier.Normalize(r);
 
         /// <summary>
         /// Equipment-attached nozzles ("штуцера") — vessel sub-objects
@@ -477,24 +471,7 @@ namespace PipingSpecPlugin.Spec
         }
 
         static bool IsConnector(string category, PartRecord r)
-        {
-            // P3dConnector-class rows are connectors by class. The
-            // keyword sweep below still runs for Fasteners (where some
-            // weld-stud variants land) and for any rare empty-category
-            // leftovers.
-            if (category == "P3dConnector") return true;
-            if (!(string.IsNullOrEmpty(category)
-                  || category == SpecConstants.NullCategory
-                  || category == "Fasteners"))
-                return false;
-            foreach (var fld in new[] { r.ShortDescription, r.PartSizeLongDesc, r.PartFamilyLongDesc })
-            {
-                var t = (fld ?? "").ToLowerInvariant();
-                foreach (var kw in SpecConstants.ConnectorKeywords)
-                    if (t.Contains(kw)) return true;
-            }
-            return false;
-        }
+            => CategoryClassifier.IsConnector(category, r);
 
         static string BuildName(string category, PartRecord r)
         {

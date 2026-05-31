@@ -281,6 +281,41 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
+        public void Orphan_Bend_Metres_Route_To_Same_Bore_Sibling_Not_First_Pipe()
+        {
+            // Bend's own target pipe got filtered out, so its 1.5 m are
+            // stranded in ExtraPipeMetres. Two sibling pipes survive on the
+            // same line: a 2" and a 24". The bend is 24", so its metres must
+            // land on the 24" pipe — not the first pipe encountered (2").
+            var smallPipe = Pipe(10, 3000);   // helper hardcodes 24"...
+            smallPipe.NominalDiameter = "2";  // ...override to a 2" bore
+            smallPipe.PartSizeLongDesc = "PIPE 2in";
+            var bigPipe = Pipe(11, 4000);     // genuine 24" sibling
+
+            // Stranded bend: target pid 99 is absent from the record set,
+            // so its metres can only be placed via the reroute post-pass.
+            var opts = new SpecBuilderOptions
+            {
+                ExtraPipeMetres = new Dictionary<int, double> { { 99, 1.5 } },
+                ExtraPipeLineTags = new Dictionary<int, string> { { 99, "L1" } },
+                ExtraPipeOrphanInfo = new Dictionary<int, BendOrphanInfo>
+                {
+                    { 99, new BendOrphanInfo
+                        { LineTag = "L1", NominalDiameter = 24, Spec = "CS150", Material = "CS" } },
+                },
+            };
+            var builder = new SpecRowBuilder(opts);
+            var rows = builder.Build(new[] { smallPipe, bigPipe });
+
+            var small = rows.Single(r => r.Name.Contains("2in"));
+            var big = rows.Single(r => r.Name.Contains("PIPE 11"));
+            // 2" pipe stays at its own 3.0 m; 24" pipe gains the 1.5 m bend
+            // (4.0 + 1.5 = 5.5).
+            Assert.Equal(3.0, small.Qty);
+            Assert.Equal(5.5, big.Qty);
+        }
+
+        [Fact]
         public void PipeBend_Stays_Standalone_When_Flag_Off()
         {
             var pipe = Pipe(1, 5000);

@@ -25,6 +25,14 @@ namespace PipingSpecPlugin.Spec
         // equipment recognition found anything. Updated by BuildTopology.
         public int EquipmentCount;
         public int EquipmentNeighbourCount;
+        // Rows we saw in the row-id set but could NOT turn into a record:
+        // GetAllProperties threw or returned null, or BuildRecord bailed.
+        // Surfaced in last-run.log so "a part went missing" can be traced
+        // to the read stage instead of vanishing silently.
+        public int SkippedRows;
+        // True if the WorkingDatabase swap for a side-DB read failed — the
+        // read may then hit RowNotInThisDatabase on some rows.
+        public bool WorkingDbSwapFailed;
     }
 
     /// <summary>
@@ -38,13 +46,24 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public static class PartReader
     {
-        public static PartReadResult Read(Database db, DataLinksManager projectDlm = null)
+        public static PartReadResult Read(Database db, DataLinksManager projectDlm = null,
+                                          System.Action<string> trace = null)
         {
+            void Trace(string msg) { try { trace?.Invoke(msg); } catch { } }
+
             var result = new PartReadResult();
             DataLinksManager dlm;
             try { dlm = DataLinksManager.GetManager(db); }
-            catch { return result; }
-            if (dlm == null) return result;
+            catch (System.Exception ex)
+            {
+                Trace($"PartReader: GetManager не удался — {ex.GetType().Name}: {ex.Message}");
+                return result;
+            }
+            if (dlm == null)
+            {
+                Trace("PartReader: DataLinksManager отсутствует для чертежа.");
+                return result;
+            }
 
             var lineGroupCache = new Dictionary<int, string>();
 
@@ -63,7 +82,14 @@ namespace PipingSpecPlugin.Spec
                 if (db != prevWorking)
                 {
                     try { HostApplicationServices.WorkingDatabase = db; swapped = true; }
-                    catch { /* not always allowed — fall back to per-row try/catch */ }
+                    catch (System.Exception ex)
+                    {
+                        // Not always allowed — fall back to per-row try/catch.
+                        // Flag it: a failed swap is a common root cause of
+                        // rows silently dropping with RowNotInThisDatabase.
+                        result.WorkingDbSwapFailed = true;
+                        Trace($"PartReader: swap WorkingDatabase не удался — {ex.GetType().Name}: {ex.Message}");
+                    }
                 }
 
                 try { prevCaching = dlm.EnableCaching; } catch { }
@@ -150,7 +176,11 @@ namespace PipingSpecPlugin.Spec
                 // live blob, so plain SelectAcPpRowIds returns fresh data.
                 Autodesk.ProcessPower.DataObjects.PnPRowIdArray rowIds;
                 try { rowIds = dlm.SelectAcPpRowIds(db); }
-                catch { return result; }
+                catch (System.Exception ex)
+                {
+                    Trace($"PartReader: SelectAcPpRowIds не удался — {ex.GetType().Name}: {ex.Message}");
+                    return result;
+                }
 
                 var rowIdSet = new HashSet<int>();
                 if (rowIds != null)
@@ -193,10 +223,21 @@ namespace PipingSpecPlugin.Spec
                     try
                     {
                         var props = dlm.GetAllProperties(rowId, true);
-                        if (props == null) continue;
+                        if (props == null)
+                        {
+                            result.SkippedRows++;
+                            Trace($"PartReader: rowId {rowId} пропущен — GetAllProperties вернул null.");
+                            continue;
+                        }
                         rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache);
                     }
-                    catch { /* skip broken rows */ }
+                    catch (System.Exception ex)
+                    {
+                        // One broken part must not kill the whole spec — but
+                        // record it so "a part went missing" is traceable.
+                        result.SkippedRows++;
+                        Trace($"PartReader: rowId {rowId} пропущен — {ex.GetType().Name}: {ex.Message}");
+                    }
                     if (rec == null) continue;
                     result.Records.Add(rec);
 
@@ -210,7 +251,7 @@ namespace PipingSpecPlugin.Spec
                     if (string.Equals(rec.PartCategory, "Equipment",
                                       System.StringComparison.OrdinalIgnoreCase))
                     {
-                        CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds);
+                        CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds, Trace);
                     }
                 }
 
@@ -407,11 +448,6 @@ namespace PipingSpecPlugin.Spec
             if (!list.Contains(to)) list.Add(to);
         }
 
-        // Back-compat helper for diagnostic commands (LISTPARTS / LISTPROJECT)
-        // that don't care about the owned-by-equipment set.
-        public static IEnumerable<PartRecord> ReadRows(Database db)
-            => Read(db).Records;
-
         /// <summary>
         /// Populate <paramref name="ownedIds"/> with PnPIDs the given
         /// equipment row owns. Tries the AssetOwnership relationship
@@ -419,7 +455,8 @@ namespace PipingSpecPlugin.Spec
         /// query — Plant 3D's wrappers don't expose the schema so we
         /// can't pick a single overload with certainty.
         /// </summary>
-        static void CollectAssetOwnership(DataLinksManager dlm, int rowId, HashSet<int> ownedIds)
+        static void CollectAssetOwnership(DataLinksManager dlm, int rowId, HashSet<int> ownedIds,
+                                          System.Action<string> trace = null)
         {
             // Try the explicit relationship overload with several names
             // it could plausibly be registered under. AcceptedRelations
@@ -447,16 +484,21 @@ namespace PipingSpecPlugin.Spec
                 catch { /* try the next candidate */ }
             }
 
-            // Fallback: bare related-rows. Includes other connection
-            // types but is better than nothing — at worst we exclude a
-            // couple of parts that touch the vessel through pipe runs,
-            // which still belong with the vessel anyway.
+            // Fallback: bare related-rows. Includes other connection types,
+            // so it can over-exclude — a pipe run merely touching the vessel
+            // gets marked owned and dropped from the spec. We log every
+            // rowId excluded via this imprecise path so a "missing pipe"
+            // can be traced back here instead of vanishing silently.
             try
             {
                 var related = dlm.GetRelatedRowIds(rowId);
                 if (related == null) return;
                 foreach (int id in related)
-                    if (id != rowId) ownedIds.Add(id);
+                {
+                    if (id == rowId) continue;
+                    if (ownedIds.Add(id))
+                        trace?.Invoke($"AssetOwnership(fallback): rowId {id} помечен owned для оборудования {rowId} (мог быть трубой).");
+                }
             }
             catch { }
         }

@@ -28,6 +28,44 @@ namespace PipingSpecPlugin
                 editor?.WriteMessage("\n[PipingSpecPlugin] Ribbon registration failed: "
                     + ex.GetType().Name + ": " + ex.Message);
             }
+
+            try { TryCheckForUpdates(); }
+            catch { /* updates must never block or break load */ }
+        }
+
+        /// <summary>
+        /// Kick off a background check against GitHub Releases. Runs fire-
+        /// and-forget so plug-in load isn't blocked by the network; if a
+        /// newer build is found we marshal back onto the AutoCAD UI thread
+        /// (captured here) to show the modal notification. Honours the
+        /// CheckForUpdates opt-out and stays completely silent on failure.
+        /// </summary>
+        static void TryCheckForUpdates()
+        {
+            if (!Settings.PluginSettings.Load().CheckForUpdates) return;
+
+            // Capture the UI-thread dispatcher now, while we're on it.
+            var dispatcher = System.Windows.Threading.Dispatcher.CurrentDispatcher;
+
+            // Fire-and-forget by design: the check must not block load. The
+            // discard documents that the un-awaited task is intentional.
+            _ = System.Threading.Tasks.Task.Run(async () =>
+            {
+                var info = await Update.UpdateService.CheckAsync().ConfigureAwait(false);
+                if (info == null || !info.UpdateAvailable) return;
+
+                _ = dispatcher.BeginInvoke(new Action(() =>
+                {
+                    try
+                    {
+                        var win = new UI.UpdateWindow(info);
+                        new System.Windows.Interop.WindowInteropHelper(win).Owner =
+                            AcadApp.MainWindow.Handle;
+                        win.ShowDialog();
+                    }
+                    catch { /* never let the notification crash AutoCAD */ }
+                }));
+            });
         }
 
         public void Terminate() { /* nothing to clean up yet */ }

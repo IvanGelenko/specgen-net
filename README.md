@@ -70,3 +70,17 @@ msbuild PipingSpecPlugin.sln /p:Configuration=Release ^
 User settings live at `%APPDATA%\PipingSpecPlugin\settings.json` (output
 directory, template path, picker preferences). See `ARCHITECTURE.md` for
 the schema and migration model.
+
+## Updates
+
+On load the plug-in checks GitHub Releases for a newer build (in the
+background — load is never blocked) and, if one is found, shows a
+notification with an **Обновить** button. It downloads
+`PipingSpecPlugin-Setup.exe` and launches it; the install completes after
+AutoCAD is closed (the loaded DLL is locked for the session). The check
+can be turned off via the **Проверять обновления** checkbox in the picker.
+
+**Publishing a release:** bump `VERSION`, run `build.cmd`, then create a
+GitHub release tagged `vX.Y.Z` (matching `VERSION`) and attach the built
+`dist_installer\PipingSpecPlugin-Setup.exe` as an asset named exactly
+`PipingSpecPlugin-Setup.exe` — the updater matches that asset name.

@@ -18,6 +18,21 @@ namespace PipingSpecPlugin.Spec
     /// neighbour whose PartCategory is "Pipe" and PnPClassName is NOT
     /// itself "PipeBend".
     /// </summary>
+    /// <summary>
+    /// Procurement identity of a bend whose metres were folded into a
+    /// target pipe. If that pipe later gets filtered out, SpecRowBuilder
+    /// uses this to reroute the stranded metres to a *sibling* pipe with
+    /// the SAME diameter / spec / material on the same line — not just the
+    /// first pipe it finds on the line (which could be a different bore).
+    /// </summary>
+    public struct BendOrphanInfo
+    {
+        public string LineTag;          // SpecConstants.NullLine when untagged
+        public double NominalDiameter;  // parsed ND, for exact bore match
+        public string Spec;
+        public string Material;
+    }
+
     public class PipeBendFoldResult
     {
         public HashSet<int> BendsConsumed = new();
@@ -27,6 +42,10 @@ namespace PipingSpecPlugin.Spec
         // stranded metres (when the target pipe got filtered out) to
         // another pipe sharing the same line.
         public Dictionary<int, string> ExtraPipeLineTags = new();
+        // Richer than ExtraPipeLineTags: the bend's full procurement
+        // identity, so a reroute can match diameter/spec exactly before
+        // falling back to a same-line-only match.
+        public Dictionary<int, BendOrphanInfo> ExtraPipeOrphanInfo = new();
     }
 
     public static class PipeBendFolder
@@ -65,10 +84,17 @@ namespace PipingSpecPlugin.Spec
                 // tagged differently), the first one's line wins.
                 if (!result.ExtraPipeLineTags.ContainsKey(pipePid))
                 {
-                    result.ExtraPipeLineTags[pipePid] =
-                        string.IsNullOrEmpty(bend.LineNumberTag)
+                    var bendLine = string.IsNullOrEmpty(bend.LineNumberTag)
                             ? SpecConstants.NullLine
                             : bend.LineNumberTag;
+                    result.ExtraPipeLineTags[pipePid] = bendLine;
+                    result.ExtraPipeOrphanInfo[pipePid] = new BendOrphanInfo
+                    {
+                        LineTag = bendLine,
+                        NominalDiameter = ParseDouble(bend.NominalDiameter),
+                        Spec = (bend.Spec ?? "").Trim(),
+                        Material = (bend.Material ?? "").Trim(),
+                    };
                 }
                 result.BendsConsumed.Add(bend.PnPID);
             }

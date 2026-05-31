@@ -110,14 +110,32 @@ namespace PipingSpecPlugin.Commands
                     if (activeModified)
                     {
                         Say($"[Спецификация] Автосохранение {Path.GetFileName(activeDocName)}...");
-                        try { activeDoc.Database.SaveAs(activeDocName, true, DwgVersion.Current, activeDoc.Database.SecurityParameters); }
-                        catch { try { activeDoc.Database.Save(); } catch { } }
+                        bool saved = false;
+                        try { activeDoc.Database.SaveAs(activeDocName, true, DwgVersion.Current, activeDoc.Database.SecurityParameters); saved = true; }
+                        catch (System.Exception ex)
+                        {
+                            Trace($"SaveAs активного {Path.GetFileName(activeDocName)} не удался: {ex.Message}; пробую Save()");
+                            try { activeDoc.Database.Save(); saved = true; }
+                            catch (System.Exception ex2) { Trace($"Save() активного тоже не удался: {ex2.Message}"); }
+                        }
+                        // Если оба сохранения упали — диск содержит устаревшую
+                        // версию, и спецификация будет неполной без следа.
+                        // Предупреждаем явно, а не молчим.
+                        if (!saved)
+                            Say($"[Спецификация] ВНИМАНИЕ: не удалось сохранить {Path.GetFileName(activeDocName)} — данные могут быть устаревшими.");
                     }
                 }
-                catch { }
+                catch (System.Exception ex) { Trace($"Проверка модификации активного документа не удалась: {ex.Message}"); }
 
                 // Фоновые открытые чертежи с несохранёнными изменениями —
                 // закрываем и открываем заново, чтобы их данные оказались на диске.
+                //
+                // Снимок путей делаем ДО закрытия/открытия: CloseAndSave + Open
+                // мутируют docMgr, поэтому итерировать по нему напрямую нельзя
+                // (InvalidOperationException / пропуск документов). Сначала
+                // собираем список «грязных» фоновых чертежей, затем работаем
+                // по снимку — мутация коллекции больше на цикл не влияет.
+                var dirtyBackgroundPaths = new List<string>();
                 foreach (Document doc in docMgr)
                 {
                     if (doc == null || string.IsNullOrEmpty(doc.Name) || doc == activeDoc) continue;
@@ -126,33 +144,49 @@ namespace PipingSpecPlugin.Commands
                         dynamic acadDoc = doc.GetAcadDocument();
                         bool bgModified = !acadDoc.Saved;
                         if (bgModified)
-                        {
-                            Say($"[Спецификация] Сохранение и перезапуск {Path.GetFileName(doc.Name)}...");
-                            string docPath = doc.Name;
-                            try
-                            {
-                                doc.CloseAndSave(docPath);
-                                docMgr.Open(docPath, false);
-                            }
-                            catch (System.Exception ex)
-                            {
-                                Trace($"Ошибка перезапуска {Path.GetFileName(docPath)}: {ex.Message}");
-                            }
-                        }
+                            dirtyBackgroundPaths.Add(doc.Name);
                     }
-                    catch { }
+                    catch (System.Exception ex)
+                    {
+                        Trace($"Не удалось проверить состояние {Path.GetFileName(doc.Name)}: {ex.Message}");
+                    }
+                }
+
+                foreach (string docPath in dirtyBackgroundPaths)
+                {
+                    Say($"[Спецификация] Сохранение и перезапуск {Path.GetFileName(docPath)}...");
+                    Document doc = FindOpenDocument(docMgr, docPath);
+                    if (doc == null)
+                    {
+                        Trace($"Документ {Path.GetFileName(docPath)} больше не открыт — пропуск перезапуска.");
+                        continue;
+                    }
+                    try
+                    {
+                        doc.CloseAndSave(docPath);
+                        docMgr.Open(docPath, false);
+                    }
+                    catch (System.Exception ex)
+                    {
+                        Trace($"Ошибка перезапуска {Path.GetFileName(docPath)}: {ex.Message}");
+                    }
                 }
 
                 // Восстанавливаем активный документ
                 if (!string.IsNullOrEmpty(activeDocName))
                 {
-                    foreach (Document d in docMgr)
+                    Document restored = FindOpenDocument(docMgr, activeDocName);
+                    if (restored != null)
                     {
-                        if (d != null && PathEquals(d.Name, activeDocName))
+                        try { docMgr.MdiActiveDocument = restored; }
+                        catch (System.Exception ex)
                         {
-                            docMgr.MdiActiveDocument = d;
-                            break;
+                            Trace($"Не удалось вернуть активным {Path.GetFileName(activeDocName)}: {ex.Message}");
                         }
+                    }
+                    else
+                    {
+                        Trace($"Активный документ {Path.GetFileName(activeDocName)} не найден среди открытых после перезапуска.");
                     }
                 }
 
@@ -416,6 +450,7 @@ namespace PipingSpecPlugin.Commands
                 BendsConsumed = bendFold?.BendsConsumed,
                 ExtraPipeMetres = bendFold?.ExtraPipeMetres,
                 ExtraPipeLineTags = bendFold?.ExtraPipeLineTags,
+                ExtraPipeOrphanInfo = bendFold?.ExtraPipeOrphanInfo,
                 DisableElementGrouping = result.DisableElementGrouping,
             });
             var specRows = builder.Build(input);
@@ -504,7 +539,12 @@ namespace PipingSpecPlugin.Commands
             settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;
             settings.OpenAfterGenerate = result.OpenAfterGenerate;
             settings.DisableElementGrouping = result.DisableElementGrouping;
-            settings.Save();
+            settings.CheckForUpdates = result.CheckForUpdates;
+            // The .docx is already on disk; a settings-write failure (e.g.
+            // %APPDATA% read-only / disk full) must not turn a successful
+            // generation into an error. Log it and move on.
+            try { settings.Save(); }
+            catch (System.Exception ex) { Trace($"Не удалось сохранить настройки: {ex.Message}"); }
 
             Say($"[Спецификация] Готово: {specRows.Count} строк → {outputPath}");
             if (result.OpenAfterGenerate)
@@ -732,7 +772,17 @@ namespace PipingSpecPlugin.Commands
             using var db = new Database(false, true);
             db.ReadDwgFile(path, FileShare.ReadWrite, true, "");
             db.CloseInput(true);
-            return PartReader.Read(db, projectDlm);
+            string dwgName = Path.GetFileName(path);
+            var result = PartReader.Read(db, projectDlm,
+                msg => trace?.Invoke($"  [{dwgName}] {msg}"));
+
+            // Surface read-stage drops in the log: a part that vanished here
+            // never reaches the filter pipeline, so DropReasons won't show it.
+            if (result != null && result.SkippedRows > 0)
+                trace?.Invoke($"  [{dwgName}] пропущено строк при чтении: {result.SkippedRows} (см. строки выше)");
+            if (result != null && result.WorkingDbSwapFailed)
+                trace?.Invoke($"  [{dwgName}] ВНИМАНИЕ: swap WorkingDatabase не удался — часть строк могла не прочитаться.");
+            return result;
         }
 
         /// <summary>
@@ -755,6 +805,17 @@ namespace PipingSpecPlugin.Commands
                        StringComparison.OrdinalIgnoreCase) >= 0
                 || normalized.StartsWith("Plant 3D Models\\",
                        StringComparison.OrdinalIgnoreCase);
+        }
+
+        // Locate a still-open Document by path. Used after we close/reopen
+        // background drawings: the original Document objects from the
+        // pre-mutation snapshot are stale, so we re-resolve by path each time.
+        static Document FindOpenDocument(DocumentCollection docMgr, string path)
+        {
+            foreach (Document d in docMgr)
+                if (d != null && PathEquals(d.Name, path))
+                    return d;
+            return null;
         }
 
         static bool PathEquals(string a, string b)

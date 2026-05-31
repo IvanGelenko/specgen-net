@@ -282,6 +282,7 @@ namespace PipingSpecPlugin.UI
             IncludePipeBendsAsPipeChk.IsChecked = _settings.IncludePipeBendsAsPipe;
             OpenAfterGenerateChk.IsChecked = _settings.OpenAfterGenerate;
             DisableElementGroupingChk.IsChecked = _settings.DisableElementGrouping;
+            CheckForUpdatesChk.IsChecked = _settings.CheckForUpdates;
             // ExcludeEquipment and ExcludeConnectors no longer have
             // standalone check-boxes — both ship as ordinary category
             // chips ('Оборудование', 'Сварные швы / коннекторы') in the
@@ -396,6 +397,7 @@ namespace PipingSpecPlugin.UI
                 IncludePipeBendsAsPipe = IncludePipeBendsAsPipeChk.IsChecked == true,
                 OpenAfterGenerate = OpenAfterGenerateChk.IsChecked == true,
                 DisableElementGrouping = DisableElementGroupingChk.IsChecked == true,
+                CheckForUpdates = CheckForUpdatesChk.IsChecked == true,
                 // Equipment and connectors are toggled through their
                 // category check-boxes now; the result fields stay only
                 // for back-compat with the settings file. Both false so
@@ -434,5 +436,6 @@ namespace PipingSpecPlugin.UI
         public bool IncludePipeBendsAsPipe;
         public bool OpenAfterGenerate;
         public bool DisableElementGrouping;
+        public bool CheckForUpdates;
     }
 }

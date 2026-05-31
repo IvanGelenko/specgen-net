@@ -20,12 +20,6 @@ namespace PipingSpecPlugin.Spec
         public const string NullLine = "__NO_LINE__";
         public const string NullLineLabel = "Без номера линии";
 
-        // Statuses considered "active" — anything else gets skipped by
-        // default. The Russian variants exist because in localized
-        // installs Plant 3D writes 'Новое' / 'Новый' instead of 'New'.
-        public static readonly string[] DefaultActiveStatuses =
-            { "New", "Новое", "Новый" };
-
         // Order matches the layout the user signed off on:
         // Оборудование → Трубы → Детали → Арматура → Приборы →
         // Спецдетали → Опоры → Сварные швы → Фланцы → Крепёж.

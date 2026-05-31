@@ -19,7 +19,7 @@ namespace PipingSpecPlugin.Settings
         // pattern as a database migrations table. Bumping the constant
         // and adding an Upgrade case is the only way to change the
         // file shape safely; never silently rename a property.
-        public const int CurrentSchemaVersion = 3;
+        public const int CurrentSchemaVersion = 4;
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
         // Path to the user's preferred .docx Word template. Empty means
@@ -62,6 +62,11 @@ namespace PipingSpecPlugin.Settings
         // When true, output each element on a separate row in the spec rather
         // than aggregate identical items.
         public bool DisableElementGrouping { get; set; } = false;
+
+        // Check GitHub Releases for a newer plug-in build on load and show a
+        // notification if one is found. Default on; users on locked-down /
+        // offline machines can turn it off to avoid the (silent) network call.
+        public bool CheckForUpdates { get; set; } = true;
 
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
@@ -128,6 +133,11 @@ namespace PipingSpecPlugin.Settings
                 case 2:
                     // v2 → v3: introduced DisableElementGrouping.
                     DisableElementGrouping = false;
+                    goto case 3;
+                case 3:
+                    // v3 → v4: introduced CheckForUpdates. Default on so
+                    // existing users start getting update notifications.
+                    CheckForUpdates = true;
                     break;
             }
             SchemaVersion = CurrentSchemaVersion;

@@ -108,7 +108,15 @@ namespace PipingSpecPlugin.Spec
             foreach (var g in gaskets) AppendToBucket(gasketFallback, FallbackKey(g), g);
             foreach (var b in bolts) AppendToBucket(boltFallback, FallbackKey(b), b);
 
-            foreach (var fId in companionFlanges)
+            // Iterate flanges in a STABLE order (by PnPID). The gasket/bolt
+            // pick is greedy — each flange removes its nearest match from
+            // the shared pool — so iteration order decides which flange wins
+            // a contested gasket when two are near-equidistant. A HashSet's
+            // order is undefined, which made the spec wobble between runs on
+            // dense joints. Sorting makes the result deterministic.
+            var orderedFlanges = companionFlanges.ToList();
+            orderedFlanges.Sort();
+            foreach (var fId in orderedFlanges)
             {
                 if (!byId.TryGetValue(fId, out var f)) continue;
                 var fCoords = GetCoords(f);
@@ -239,7 +247,17 @@ namespace PipingSpecPlugin.Spec
                 var dy = fc.y - pc.Value.y;
                 var dz = fc.z - pc.Value.z;
                 var dist = System.Math.Sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist < bestDist) { bestDist = dist; bestId = p.PnPID; }
+                if (dist >= bestDist) continue;
+
+                // Closer than the running best — but if it's an exact tie
+                // with the current pick, prefer the lower PnPID so the
+                // result is stable regardless of pool order.
+                bool isTie = bestId.HasValue
+                             && System.Math.Abs(dist - bestDist) <= 1e-9;
+                if (isTie && p.PnPID >= bestId.Value) continue;
+
+                bestDist = dist;
+                bestId = p.PnPID;
             }
             return bestId;
         }

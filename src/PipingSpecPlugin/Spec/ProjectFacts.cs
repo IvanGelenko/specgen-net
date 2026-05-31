@@ -91,45 +91,9 @@ namespace PipingSpecPlugin.Spec
         }
 
         static bool IsConnector(PartRecord r)
-        {
-            var cat = NormalizeCategoryPublic(r);
-            if (cat == "P3dConnector") return true;
-            if (!(string.IsNullOrEmpty(cat)
-                  || cat == SpecConstants.NullCategory
-                  || cat == "Fasteners"))
-                return false;
-            foreach (var fld in new[] { r.ShortDescription, r.PartSizeLongDesc, r.PartFamilyLongDesc })
-            {
-                var t = (fld ?? "").ToLowerInvariant();
-                foreach (var kw in SpecConstants.ConnectorKeywords)
-                    if (t.Contains(kw)) return true;
-            }
-            return false;
-        }
+            => CategoryClassifier.IsConnector(NormalizeCategoryPublic(r), r);
 
-        // Mirrors SpecRowBuilder.NormalizeCategory, exposed so this class
-        // can run before the builder. Keep in sync if the support
-        // detection logic ever changes.
         static string NormalizeCategoryPublic(PartRecord r)
-        {
-            if (!string.IsNullOrEmpty(r.ContentIsoSymbolDefinition)
-                && r.ContentIsoSymbolDefinition.IndexOf("TYPE=SUPPORT",
-                    System.StringComparison.OrdinalIgnoreCase) >= 0)
-                return "Supports";
-            var cat = r.PartCategory ?? "";
-            if (!string.IsNullOrEmpty(cat)) return cat;
-            // Same synthetic-category promotion as SpecRowBuilder.
-            var cls = (r.PnPClassName ?? "").ToLowerInvariant();
-            if (cls == "p3dconnector" || cls == "buttweld"
-                || cls == "universal" || cls == "weldspec"
-                || cls.Contains("weld") || cls.Contains("connector"))
-                return "P3dConnector";
-            if (cls == "vessel" || cls == "pump"
-                || cls.Contains("equipment") || cls.Contains("vessel")
-                || cls.Contains("pump") || cls.Contains("tank")
-                || cls.Contains("exchanger") || cls.Contains("compressor"))
-                return "Equipment";
-            return "";
-        }
+            => CategoryClassifier.Normalize(r);
     }
 }

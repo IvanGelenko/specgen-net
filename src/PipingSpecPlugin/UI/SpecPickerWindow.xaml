@@ -86,6 +86,10 @@
                                   IsChecked="False" Margin="0,2,0,2">
                             <TextBlock Text="Без группировки элементов" TextWrapping="Wrap"/>
                         </CheckBox>
+                        <CheckBox x:Name="CheckForUpdatesChk"
+                                  IsChecked="True" Margin="0,2,0,2">
+                            <TextBlock Text="Проверять обновления плагина при запуске" TextWrapping="Wrap"/>
+                        </CheckBox>
                     </StackPanel>
                 </GroupBox>
             </DockPanel>

@@ -329,5 +329,143 @@ namespace PipingSpecPlugin.Tests
             Assert.Equal(1.0, rowsNoGroup[0].Qty);
             Assert.Equal(1.0, rowsNoGroup[1].Qty);
         }
+
+        [Fact]
+        public void Rows_Sort_Within_Category_By_NominalDiameter_Ascending()
+        {
+            // Three flanges of different nominal sizes, distinct names so
+            // they land in three separate buckets. After sorting the
+            // smallest ND must come first.
+            var big = Flange(1);
+            big.NominalDiameter = "24"; big.NominalUnit = "in";
+            big.PartSizeLongDesc = "FLANGE 24";
+            var small = Flange(2);
+            small.NominalDiameter = "2"; small.NominalUnit = "in";
+            small.PartSizeLongDesc = "FLANGE 2";
+            var mid = Flange(3);
+            mid.NominalDiameter = "8"; mid.NominalUnit = "in";
+            mid.PartSizeLongDesc = "FLANGE 8";
+
+            var builder = new SpecRowBuilder();
+            var rows = builder.Build(new[] { big, mid, small });
+
+            Assert.Equal(3, rows.Count);
+            Assert.Equal("FLANGE 2", rows[0].Name);
+            Assert.Equal("FLANGE 8", rows[1].Name);
+            Assert.Equal("FLANGE 24", rows[2].Name);
+        }
+
+        [Fact]
+        public void Pipes_With_Different_Specs_But_Identical_Properties_Are_Merged()
+        {
+            var p1 = Pipe(1, 4000, spec: "CS300");
+            var p2 = Pipe(2, 3000, spec: "CS150");
+            // Same name to share a bucket
+            p2.PartSizeLongDesc = p1.PartSizeLongDesc;
+            var builder = new SpecRowBuilder();
+            var rows = builder.Build(new[] { p1, p2 });
+
+            var pipeRow = Assert.Single(rows);
+            Assert.Equal("Pipe", pipeRow.Category);
+            // 4.0 + 3.0 = 7.0 m
+            Assert.Equal(7.0, pipeRow.Qty);
+        }
+
+        [Fact]
+        public void Rows_Sort_Mixes_Inches_And_Millimetres_Correctly()
+        {
+            // A 50 mm flange and a 2-inch (50.8 mm) flange are visually
+            // similar but must order by their mm equivalent — 50 first,
+            // then 2". Confirms the unit conversion is applied before
+            // comparison rather than the raw "NominalDiameter" string.
+            var inFlange = Flange(1);
+            inFlange.NominalDiameter = "2"; inFlange.NominalUnit = "in";
+            inFlange.PartSizeLongDesc = "FLANGE 2in";
+            var mmFlange = Flange(2);
+            mmFlange.NominalDiameter = "50"; mmFlange.NominalUnit = "mm";
+            mmFlange.PartSizeLongDesc = "FLANGE 50mm";
+            var bigMm = Flange(3);
+            bigMm.NominalDiameter = "600"; bigMm.NominalUnit = "mm";
+            bigMm.PartSizeLongDesc = "FLANGE 600mm";
+
+            var builder = new SpecRowBuilder();
+            var rows = builder.Build(new[] { bigMm, inFlange, mmFlange });
+
+            Assert.Equal(3, rows.Count);
+            // 50 mm < 2 in (50.8 mm) < 600 mm
+            Assert.Equal("FLANGE 50mm", rows[0].Name);
+            Assert.Equal("FLANGE 2in", rows[1].Name);
+            Assert.Equal("FLANGE 600mm", rows[2].Name);
+        }
+
+        [Fact]
+        public void Rows_With_Zero_Or_Missing_NominalDiameter_Sort_To_End_Of_Category()
+        {
+            // A flange with no nominal diameter should land at the bottom
+            // of the Flange category — better to break ties at the tail
+            // than to claim it's the smallest item in the run.
+            var sized = Flange(1);
+            sized.NominalDiameter = "4"; sized.NominalUnit = "in";
+            sized.PartSizeLongDesc = "FLANGE WITH SIZE";
+            var noSize = Flange(2);
+            noSize.NominalDiameter = ""; noSize.NominalUnit = "";
+            noSize.PartSizeLongDesc = "FLANGE NO SIZE";
+
+            var builder = new SpecRowBuilder();
+            var rows = builder.Build(new[] { noSize, sized });
+            Assert.Equal(2, rows.Count);
+            Assert.Equal("FLANGE WITH SIZE", rows[0].Name);
+            Assert.Equal("FLANGE NO SIZE", rows[1].Name);
+        }
+
+        [Fact]
+        public void NominalDiameterMm_Is_Populated_On_SpecRow()
+        {
+            // SpecRow exposes the parsed ND in mm so downstream consumers
+            // (template writer, future Excel writer) can group by size.
+            var p2in = Pipe(1, 1000);
+            p2in.NominalDiameter = "2"; p2in.NominalUnit = "in";
+
+            var builder = new SpecRowBuilder();
+            var row = Assert.Single(builder.Build(new[] { p2in }));
+            Assert.Equal(50.8, row.NominalDiameterMm, 3);  // 2 * 25.4
+        }
+
+        [Fact]
+        public void ND_Sort_Respects_LineTag_Then_Category_Then_ND()
+        {
+            // Two lines with mixed categories; check ordering is
+            // (LineTag, CategoryOrder, ND ascending). Build with
+            // groupByLine on so LineTag differs in the output.
+            var lineA_pipeBig = Pipe(1, 1000, line: "L1");
+            lineA_pipeBig.NominalDiameter = "24";
+            lineA_pipeBig.PartSizeLongDesc = "PIPE A24";
+            var lineA_pipeSmall = Pipe(2, 1000, line: "L1");
+            lineA_pipeSmall.NominalDiameter = "2";
+            lineA_pipeSmall.PartSizeLongDesc = "PIPE A2";
+            var lineB_pipe = Pipe(3, 1000, line: "L2");
+            lineB_pipe.NominalDiameter = "8";
+            lineB_pipe.PartSizeLongDesc = "PIPE B8";
+            var lineB_flange = Flange(4, line: "L2");
+            lineB_flange.NominalDiameter = "4";
+            lineB_flange.PartSizeLongDesc = "FLANGE B4";
+
+            var builder = new SpecRowBuilder(new SpecBuilderOptions
+            {
+                GroupByLine = true,
+            });
+            var rows = builder.Build(new[]
+            {
+                lineB_flange, lineA_pipeBig, lineB_pipe, lineA_pipeSmall,
+            });
+
+            Assert.Equal(4, rows.Count);
+            // L1: Pipe 2", Pipe 24"   (category Pipe only, sorted by ND)
+            // L2: Pipe 8", Flange 4"  (Pipe before Flange per CategoryOrder)
+            Assert.Equal("PIPE A2", rows[0].Name);
+            Assert.Equal("PIPE A24", rows[1].Name);
+            Assert.Equal("PIPE B8", rows[2].Name);
+            Assert.Equal("FLANGE B4", rows[3].Name);
+        }
     }
 }

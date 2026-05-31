@@ -17,5 +17,10 @@ namespace PipingSpecPlugin.Spec
         public double Weight;      // mass of one unit, kg
         public string Note = "";
         public string LineTag = "";  // P3dLineGroup tag or empty
+
+        // NominalDiameter in millimetres, parsed from the source NominalDiameter
+        // + NominalUnit. Used only for sort ordering — the rendered .docx pulls
+        // the size out of Name. 0 when the source didn't carry a usable diameter.
+        public double NominalDiameterMm;
     }
 }

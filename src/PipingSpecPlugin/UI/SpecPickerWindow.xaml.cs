@@ -23,6 +23,7 @@ namespace PipingSpecPlugin.UI
         readonly ProjectFacts _activeFacts;
         readonly PluginSettings _settings;
         readonly bool _activeDrawingAvailable;
+        readonly string _forcedScope;  // "proj", "dwg", or null
 
         // Populated by the user picking "Сгенерировать"; null if cancelled.
         public SpecPickerResult Result { get; private set; }
@@ -32,13 +33,15 @@ namespace PipingSpecPlugin.UI
                                 string projectName,
                                 string dwgName,
                                 PluginSettings settings,
-                                bool activeDrawingAvailable)
+                                bool activeDrawingAvailable,
+                                string forcedScope = null)
         {
             InitializeComponent();
             _facts = facts;
             _activeFacts = activeFacts;
             _settings = settings;
             _activeDrawingAvailable = activeDrawingAvailable;
+            _forcedScope = forcedScope;
 
             ProjectNameText.Text = projectName ?? "";
             DwgNameText.Text = string.IsNullOrEmpty(dwgName) ? "<не передан>" : dwgName;
@@ -47,6 +50,18 @@ namespace PipingSpecPlugin.UI
             if (!activeDrawingAvailable) ScopeDrawing.IsEnabled = false;
 
             ApplySavedScope();
+
+            // When the user invoked one of the two scope-specific ribbon
+            // buttons, both radios stay visible (so the chosen scope is
+            // obvious) but become read-only — switching at this point
+            // would contradict the button they just clicked.
+            if (_forcedScope == "proj" || _forcedScope == "dwg")
+            {
+                ScopeProject.IsChecked = _forcedScope == "proj";
+                ScopeDrawing.IsChecked = _forcedScope == "dwg";
+                ScopeProject.IsEnabled = false;
+                ScopeDrawing.IsEnabled = false;
+            }
             TemplatePathBox.Text = settings.TemplatePath ?? "";
 
             PopulateFilters();

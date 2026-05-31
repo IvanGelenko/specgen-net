@@ -30,7 +30,25 @@ namespace PipingSpecPlugin.Commands
     public class WriteSpecCommand
     {
         [CommandMethod("WRITESPEC", CommandFlags.Session)]
-        public void Run()
+        public void Run() => RunCore(forcedScope: null);
+
+        /// <summary>
+        /// Same flow as WRITESPEC but forces scope=proj — the ribbon's
+        /// "Весь проект" button. Bypasses the saved scope preference so
+        /// the user gets the project-wide spec they asked for regardless
+        /// of what was selected last time.
+        /// </summary>
+        [CommandMethod("WRITESPECPROJ", CommandFlags.Session)]
+        public void RunProject() => RunCore(forcedScope: "proj");
+
+        /// <summary>
+        /// Same flow as WRITESPEC but forces scope=dwg — the ribbon's
+        /// "Текущий чертёж" button. Refuses to run if no drawing is open.
+        /// </summary>
+        [CommandMethod("WRITESPECDWG", CommandFlags.Session)]
+        public void RunDrawing() => RunCore(forcedScope: "dwg");
+
+        void RunCore(string forcedScope)
         {
             using var logger = new RunLogger();
 
@@ -64,6 +82,19 @@ namespace PipingSpecPlugin.Commands
             var settings = PluginSettings.Load();
             var docMgr = AcadApp.DocumentManager;
             var activeDoc = docMgr.MdiActiveDocument;
+
+            // Fail fast if the user clicked "Текущий чертёж" but no DWG is
+            // open — no point spending minutes on a project-wide scan only
+            // to discover the request was unfulfillable.
+            if (forcedScope == "dwg"
+                && (activeDoc == null || string.IsNullOrEmpty(activeDoc.Name)))
+            {
+                const string msg = "Команда «Текущий чертёж» требует открытый чертёж Plant 3D.";
+                Say("[Спецификация] " + msg);
+                WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
+                    WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
+                return;
+            }
 
             if (activeDoc != null)
             {
@@ -135,8 +166,15 @@ namespace PipingSpecPlugin.Commands
                 }
             }
 
-            var dwgLeaf = activeDoc != null && !string.IsNullOrEmpty(activeDoc.Name)
-                ? Path.GetFileName(activeDoc.Name) : "";
+            // Capture the active document path BEFORE the picker dialog
+            // opens. Inside the dialog the user could close drawings or
+            // switch to a different doc, which would shift MdiActiveDocument
+            // under us. We commit to whatever was active at scan time —
+            // that's the drawing whose parts populated activeDwgRecords
+            // and whose path was tagged into PartRecord.SourceDwgPath.
+            var activePath = activeDoc != null ? (activeDoc.Name ?? "") : "";
+            var dwgLeaf = !string.IsNullOrEmpty(activePath)
+                ? Path.GetFileName(activePath) : "";
 
             // Modeless progress popup: parented to AutoCAD's main window
             // so it inherits z-order, shown as Dialog so we can pump events
@@ -232,7 +270,8 @@ namespace PipingSpecPlugin.Commands
 
             var picker = new SpecPickerWindow(facts, activeFacts, project.Name, dwgLeaf,
                                               settings,
-                                              activeDrawingAvailable: !string.IsNullOrEmpty(dwgLeaf));
+                                              activeDrawingAvailable: !string.IsNullOrEmpty(dwgLeaf),
+                                              forcedScope: forcedScope);
             new WindowInteropHelper(picker).Owner = AcadApp.MainWindow.Handle;
             if (picker.ShowDialog() != true)
             {
@@ -248,8 +287,34 @@ namespace PipingSpecPlugin.Commands
                 + $"excludeValveCompanions={result.ExcludeValveCompanions}; "
                 + $"includePipeBends={result.IncludePipeBendsAsPipe}");
 
-            // Активный чертеж — фильтруем по PnPID-ам.
+            // Default: feed every project record into the builder. The
+            // scope=dwg branch below narrows it to the active drawing by
+            // SourceDwgPath — see note there for why PnPID-based filtering
+            // would be wrong.
             IEnumerable<PartRecord> input = scan.records;
+            // Diagnostic: dump every Pipe row's BucketKey fields so we
+            // can see exactly which attribute separates pipes that SHOULD
+            // merge into one row but appear as separate spec lines.
+            // Key fields: Name | ND | Material | Spec | TypeMark | ItemCode | Manuf | LineTag
+            var allPipes = scan.records
+                .Where(r => string.Equals(r.PartCategory, "Pipe",
+                                           StringComparison.OrdinalIgnoreCase)
+                            && !r.IsPipeBend)
+                .ToList();
+            Trace($"Pipe partов (без bends): {allPipes.Count}");
+            foreach (var r in allPipes.Take(40))
+            {
+                var nm = string.IsNullOrWhiteSpace(r.PartSizeLongDesc)
+                       ? (string.IsNullOrWhiteSpace(r.PartFamilyLongDesc)
+                          ? r.ShortDescription : r.PartFamilyLongDesc)
+                       : r.PartSizeLongDesc;
+                Trace($"  pipe#{r.PnPID} line='{r.LineNumberTag ?? ""}' "
+                    + $"len={r.Length}{r.LengthUnit} "
+                    + $"ND={r.NominalDiameter} mat='{r.Material ?? ""}' "
+                    + $"spec='{r.Spec ?? ""}' std='{r.DesignStd ?? ""}' "
+                    + $"ic='{r.ItemCode ?? ""}' mf='{r.Manufacturer ?? ""}' "
+                    + $"name='{nm ?? ""}'");
+            }
             // Diagnostic: dump every Pipe row's resolved LineNumberTag.
             // Helps explain "why does a line show N pipes in Data
             // Manager but N-1 in the spec" cases — usually one pipe's
@@ -297,9 +362,16 @@ namespace PipingSpecPlugin.Commands
                 }
             }
 
-            if (result.Scope == "dwg" && activeDoc != null)
+            if (result.Scope == "dwg" && !string.IsNullOrEmpty(activePath))
             {
-                var activeIds = new HashSet<int>(scan.activeDwgRecords.Select(r => r.PnPID));
+                // Filter strictly by source DWG path. PnPID-based filtering
+                // is unsafe — IDs collide across drawings (drawing-local
+                // namespace) so a part from another DWG that happens to
+                // share a PnPID with anything in the active drawing would
+                // leak into the spec.
+                var inScope = scan.records
+                    .Where(r => PathEquals(r.SourceDwgPath, activePath))
+                    .ToList();
 
                 // Diagnostic: when the user picked specific lines, log
                 // how many parts of those lines live in OTHER drawings
@@ -309,7 +381,7 @@ namespace PipingSpecPlugin.Commands
                 {
                     var sel = new HashSet<string>(result.Lines, StringComparer.Ordinal);
                     var hiddenByScope = scan.records
-                        .Where(r => !activeIds.Contains(r.PnPID))
+                        .Where(r => !PathEquals(r.SourceDwgPath, activePath))
                         .Where(r => sel.Contains(string.IsNullOrEmpty(r.LineNumberTag)
                                                   ? SpecConstants.NullLine
                                                   : r.LineNumberTag))
@@ -327,7 +399,7 @@ namespace PipingSpecPlugin.Commands
                     }
                 }
 
-                input = scan.records.Where(r => activeIds.Contains(r.PnPID));
+                input = inScope;
             }
 
             var builder = new SpecRowBuilder(new SpecBuilderOptions
@@ -613,6 +685,14 @@ namespace PipingSpecPlugin.Commands
                 {
                     PartReadResult result = ReadOneDrawing(path, activeDocPath, projectDlm, trace);
                     if (result == null) continue;
+
+                    // Tag every record with the absolute path it came from.
+                    // The scope=dwg filter (and any future per-drawing
+                    // diagnostics) must compare by path rather than PnPID:
+                    // PnPIDs are drawing-local row-ids and the same int
+                    // identifies different parts across different DWGs.
+                    foreach (var r in result.Records)
+                        r.SourceDwgPath = path;
 
                     scan.records.AddRange(result.Records);
                     if (PathEquals(path, activeDocPath))

@@ -225,7 +225,7 @@ namespace PipingSpecPlugin.Spec
                 var toKg = WeightFactor(r.WeightUnit);
 
                 var key = new BucketKey(category, name, ndVal, nomUnit, material,
-                                        spec, typeMark, itemCode, manuf, currentLine,
+                                        typeMark, itemCode, manuf, currentLine,
                                         _opts.DisableElementGrouping ? r.PnPID : 0);
                 if (!buckets.TryGetValue(key, out var b))
                 {
@@ -403,6 +403,7 @@ namespace PipingSpecPlugin.Spec
                     Weight = Math.Round(weight, 3),
                     Note = note,
                     LineTag = k.LineTag,
+                    NominalDiameterMm = NominalDiameterToMm(k.NdVal, k.NomUnit),
                 });
             }
 
@@ -415,6 +416,13 @@ namespace PipingSpecPlugin.Spec
                 if (ai < 0) ai = 999;
                 if (bi < 0) bi = 999;
                 if (ai != bi) return ai.CompareTo(bi);
+                // Within a category, sort by nominal diameter ascending so
+                // the procurement table reads small→large. Zero/unknown
+                // diameters fall to the end of the category block.
+                var aNd = a.NominalDiameterMm > 0 ? a.NominalDiameterMm : double.MaxValue;
+                var bNd = b.NominalDiameterMm > 0 ? b.NominalDiameterMm : double.MaxValue;
+                var ndc = aNd.CompareTo(bNd);
+                if (ndc != 0) return ndc;
                 return string.Compare(a.Name ?? "", b.Name ?? "", StringComparison.Ordinal);
             });
             return result;
@@ -567,6 +575,31 @@ namespace PipingSpecPlugin.Spec
             }
         }
 
+        /// <summary>
+        /// Convert a (value, unit) pair from PartRecord.NominalDiameter /
+        /// NominalUnit into millimetres. Used to sort spec rows within a
+        /// category by physical size. Plant 3D typically writes either
+        /// "mm" or "in"; anything unrecognised falls through to mm so the
+        /// row still sorts numerically rather than vanishing to the tail.
+        /// </summary>
+        static double NominalDiameterToMm(double nd, string nomUnit)
+        {
+            if (nd <= 0) return 0;
+            var u = (nomUnit ?? "").Trim().ToLowerInvariant();
+            switch (u)
+            {
+                case "in":
+                case "\"":
+                case "inch":
+                case "inches": return nd * 25.4;
+                case "cm":     return nd * 10.0;
+                case "m":      return nd * 1000.0;
+                case "":
+                case "mm":
+                default:       return nd;
+            }
+        }
+
         sealed class Bucket
         {
             public double Qty;
@@ -576,20 +609,20 @@ namespace PipingSpecPlugin.Spec
 
         readonly struct BucketKey : IEquatable<BucketKey>
         {
-            public readonly string Category, Name, NomUnit, Material, Spec, TypeMark, ItemCode, Manufacturer, LineTag;
+            public readonly string Category, Name, NomUnit, Material, TypeMark, ItemCode, Manufacturer, LineTag;
             public readonly double NdVal;
             public readonly int PnPID;
-            public BucketKey(string c, string n, double nd, string nu, string m, string s,
+            public BucketKey(string c, string n, double nd, string nu, string m,
                              string tm, string ic, string mf, string lt, int pnpid = 0)
-            { Category=c; Name=n; NdVal=nd; NomUnit=nu; Material=m; Spec=s; TypeMark=tm; ItemCode=ic; Manufacturer=mf; LineTag=lt; PnPID=pnpid; }
+            { Category=c; Name=n; NdVal=nd; NomUnit=nu; Material=m; TypeMark=tm; ItemCode=ic; Manufacturer=mf; LineTag=lt; PnPID=pnpid; }
             public bool Equals(BucketKey o)
                 => Category==o.Category && Name==o.Name && NdVal.Equals(o.NdVal)
-                && NomUnit==o.NomUnit && Material==o.Material && Spec==o.Spec
+                && NomUnit==o.NomUnit && Material==o.Material
                 && TypeMark==o.TypeMark && ItemCode==o.ItemCode
                 && Manufacturer==o.Manufacturer && LineTag==o.LineTag && PnPID==o.PnPID;
             public override bool Equals(object o) => o is BucketKey k && Equals(k);
             public override int GetHashCode() => HashCode.Combine(
-                Category, Name, NdVal, NomUnit, Material, Spec,
+                Category, Name, NdVal, NomUnit, Material,
                 HashCode.Combine(TypeMark, ItemCode, Manufacturer, LineTag, PnPID));
         }
     }

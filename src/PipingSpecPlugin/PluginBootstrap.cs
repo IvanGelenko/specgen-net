@@ -70,8 +70,11 @@ namespace PipingSpecPlugin
             };
 
             var panelSource = new RibbonPanelSource { Title = "Спецификация" };
-            panelSource.Items.Add(MakeButton("Сгенерировать", "WRITESPEC",
-                "Открыть окно выбора фильтров и сгенерировать спецификацию (.docx).",
+            panelSource.Items.Add(MakeButton("Весь проект", "WRITESPECPROJ",
+                "Сгенерировать спецификацию по всему проекту Plant 3D (.docx).",
+                "icon32.png"));
+            panelSource.Items.Add(MakeButton("Текущий чертёж", "WRITESPECDWG",
+                "Сгенерировать спецификацию только по активному чертежу (.docx).",
                 "icon32.png"));
 
             tab.Panels.Add(new RibbonPanel { Source = panelSource });

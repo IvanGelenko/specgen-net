@@ -60,6 +60,14 @@ namespace PipingSpecPlugin.Spec
         // spec. Falls back to 1 when the property is missing.
         public string Quantity;
 
+        // Absolute path of the DWG this record was read from. PnPID alone
+        // can't identify the source drawing — row-ids live in the
+        // drawing-local namespace and the same int can name different
+        // parts in different files. Scope=dwg filtering must compare by
+        // this path, not by PnPID. Populated by WriteSpecCommand after
+        // each ReadOneDrawing; null if unknown.
+        public string SourceDwgPath;
+
         /// <summary>
         /// True when this record represents a Plant 3D PipeBend (a curved
         /// pipe segment with its own engineering item). Used by the

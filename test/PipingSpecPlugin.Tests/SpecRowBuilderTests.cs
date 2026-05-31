@@ -47,6 +47,28 @@ namespace PipingSpecPlugin.Tests
                 Status = "Новое",
             };
 
+        // Identical valves by default (same size/material/spec) so they
+        // aggregate; pass a distinct tag to exercise tag collection.
+        static PartRecord Valve(int pid, string tag = null, string line = "L1")
+            => new PartRecord
+            {
+                PnPID = pid,
+                PartCategory = "Valves",
+                PnPClassName = "GateValve",
+                PartSizeLongDesc = "GATE VALVE 4in",
+                ShortDescription = "Gate Valve",
+                NominalDiameter = "4",
+                NominalUnit = "in",
+                Material = "CS",
+                Spec = "CS150",
+                Weight = "12.0",
+                WeightUnit = "kg",
+                DesignStd = "ГОСТ 9697",
+                EquipTag = tag,
+                LineNumberTag = line,
+                Status = "Новое",
+            };
+
         static PartRecord BoltSet(int pid, int numInSet, string line = "L1")
             => new PartRecord
             {
@@ -338,6 +360,59 @@ namespace PipingSpecPlugin.Tests
             var rows = builder.Build(new[] { f, p });
             Assert.Equal("Pipe", rows[0].Category);
             Assert.Equal("Flanges", rows[1].Category);
+        }
+
+        [Fact]
+        public void Valve_Tag_Goes_Into_TypeMark_Column()
+        {
+            var v = Valve(1, tag: "gv-001");
+            var row = Assert.Single(new SpecRowBuilder().Build(new[] { v }));
+            Assert.Equal("Valves", row.Category);
+            // Identifier lands in the "Тип, марка…" column, not the standard.
+            Assert.Equal("gv-001", row.TypeMark);
+        }
+
+        [Fact]
+        public void Identical_Valves_Different_Tags_Merge_With_Comma_Separated_Tags()
+        {
+            // Same valve type/size/material, three different identifiers →
+            // ONE row, qty 3, tags joined with ", " in TypeMark.
+            var v1 = Valve(1, tag: "gv-001");
+            var v2 = Valve(2, tag: "gv-002");
+            var v3 = Valve(3, tag: "gv-003");
+            var row = Assert.Single(new SpecRowBuilder().Build(new[] { v1, v2, v3 }));
+            Assert.Equal(3, row.Qty);
+            Assert.Equal("gv-001, gv-002, gv-003", row.TypeMark);
+        }
+
+        [Fact]
+        public void Duplicate_Tags_Are_Not_Repeated_In_TypeMark()
+        {
+            var v1 = Valve(1, tag: "gv-001");
+            var v2 = Valve(2, tag: "gv-001");  // same tag
+            var row = Assert.Single(new SpecRowBuilder().Build(new[] { v1, v2 }));
+            Assert.Equal(2, row.Qty);
+            Assert.Equal("gv-001", row.TypeMark);  // de-duplicated
+        }
+
+        [Fact]
+        public void Valve_Without_Tag_Falls_Back_To_Standard_In_TypeMark()
+        {
+            var v = Valve(1, tag: null);  // DesignStd = "ГОСТ 9697"
+            var row = Assert.Single(new SpecRowBuilder().Build(new[] { v }));
+            Assert.Equal("ГОСТ 9697", row.TypeMark);
+        }
+
+        [Fact]
+        public void Tagged_And_Untagged_Identical_Valves_Stay_Separate()
+        {
+            // The tagged valve carries an identifier (TypeMark via tags), the
+            // untagged one carries the standard — different "Тип, марка…"
+            // values, so they are NOT the same procurement line.
+            var tagged = Valve(1, tag: "gv-001");
+            var untagged = Valve(2, tag: null);
+            var rows = new SpecRowBuilder().Build(new[] { tagged, untagged });
+            Assert.Equal(2, rows.Count);
         }
 
         [Fact]

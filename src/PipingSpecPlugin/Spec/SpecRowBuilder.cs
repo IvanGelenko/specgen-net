@@ -200,7 +200,7 @@ namespace PipingSpecPlugin.Spec
 
                 var isPipe = category == "Pipe";
                 var name = BuildName(category, r);
-                var typeMark = BuildTypeMark(r);
+                var typeMark = BuildTypeMark(category, r);
                 var ndVal = ParseDouble(r.NominalDiameter);
                 var nomUnit = (r.NominalUnit ?? "").Trim().ToLowerInvariant();
                 var material = (r.Material ?? "").Trim();
@@ -233,6 +233,14 @@ namespace PipingSpecPlugin.Spec
                 {
                     b = new Bucket { LineTag = currentLine };
                     buckets[key] = b;
+                }
+
+                // Collect the identifier of tagged valves/equipment so the
+                // "Тип, марка…" column can list every tag in the merged row.
+                if (TypeMarkUsesTag(category))
+                {
+                    var tag = TagOf(r);
+                    if (tag != null) b.Tags.Add(tag);
                 }
 
                 if (isPipe)
@@ -408,11 +416,18 @@ namespace PipingSpecPlugin.Spec
                     note = weightWarning;
                 }
 
+                // Tagged valves/equipment carry their identifier(s) in the
+                // bucket. Join them with ", " — that's the "Тип, марка…"
+                // value. Otherwise fall back to the key's TypeMark (standard).
+                var typeMarkOut = b.Tags.Count > 0
+                    ? string.Join(", ", b.Tags)
+                    : k.TypeMark;
+
                 result.Add(new SpecRow
                 {
                     Category = k.Category,
                     Name = k.Name,
-                    TypeMark = k.TypeMark,
+                    TypeMark = typeMarkOut,
                     ItemCode = k.ItemCode,
                     Manufacturer = k.Manufacturer,
                     Unit = isPipe ? "м" : "шт.",
@@ -475,24 +490,36 @@ namespace PipingSpecPlugin.Spec
 
         static string BuildName(string category, PartRecord r)
         {
-            if (category == "Equipment" && !string.IsNullOrWhiteSpace(r.EquipTag))
-            {
-                var tag = r.EquipTag.Trim();
-                var desc = FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "";
-                desc = desc.Trim();
-                string name;
-                if (!string.IsNullOrEmpty(desc))
-                    name = desc.Contains(tag) ? desc : $"{desc} {tag}";
-                else
-                    name = tag;
-                return CollapseWs(name);
-            }
+            // Note: for Equipment the Tag (identifier) used to be appended to
+            // the name. It now goes into the "Тип, марка…" column instead
+            // (see BuildTypeMark / TagOf), so the name is just the description.
             var n = FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "";
             return CollapseWs(n);
         }
 
-        static string BuildTypeMark(PartRecord r)
+        // Categories whose identifier (Tag) is written into the
+        // "Тип, марка, обозначение документа, опросного листа" column.
+        static bool TypeMarkUsesTag(string category)
+            => category == "Valves" || category == "Equipment";
+
+        /// <summary>The trimmed Tag of a part, or null when it has none.</summary>
+        static string TagOf(PartRecord r)
+            => string.IsNullOrWhiteSpace(r.EquipTag) ? null : r.EquipTag.Trim();
+
+        /// <summary>
+        /// "Тип, марка…" cell content for a row that did NOT collect tags
+        /// (everything except tagged valves/equipment). Falls back to the
+        /// design standard. For valves/equipment the tags are aggregated in
+        /// the bucket and joined at output, so this returns empty for them.
+        /// </summary>
+        static string BuildTypeMark(string category, PartRecord r)
         {
+            if (TypeMarkUsesTag(category) && TagOf(r) != null)
+                // Tag is collected into the bucket and rendered later — keep
+                // it OUT of the key so identical parts with different tags
+                // still merge into one row.
+                return "";
+
             var std = !string.IsNullOrWhiteSpace(r.DesignStd) ? r.DesignStd.Trim() : "";
             if (string.IsNullOrEmpty(std))
                 std = !string.IsNullOrWhiteSpace(r.CompatibleStandard) ? r.CompatibleStandard.Trim() : "";
@@ -579,6 +606,12 @@ namespace PipingSpecPlugin.Spec
             public double Qty;
             public readonly List<double> Weights = new List<double>();
             public string LineTag;
+            // Tags collected for tagged valves/equipment. Identical parts
+            // with different identifiers merge into one row; their tags are
+            // joined with ", " into the "Тип, марка…" column. Ordinal-sorted
+            // set keeps the order stable and de-duplicates.
+            public readonly SortedSet<string> Tags =
+                new SortedSet<string>(StringComparer.Ordinal);
         }
 
         readonly struct BucketKey : IEquatable<BucketKey>

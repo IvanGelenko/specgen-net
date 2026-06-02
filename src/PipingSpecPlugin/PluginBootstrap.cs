@@ -129,6 +129,11 @@ namespace PipingSpecPlugin
                 + "свободного порта, совпадающего с портом соседней детали, "
                 + "создаётся соединение Plant 3D.",
                 "icon32.png"));
+            toolsSource.Items.Add(MakeButton("Диагностика связей", "CONNECTALLDIAG",
+                "Анализ без изменения чертежа: показать в логе все свободные "
+                + "порты и причины, по которым пары не соединяются. Полезно, "
+                + "когда «Соединить смежные» пропускает фланцы.",
+                "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = toolsSource });
 
             var helpSource = new RibbonPanelSource { Title = "Справка" };

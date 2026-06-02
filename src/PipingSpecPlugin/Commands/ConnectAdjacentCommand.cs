@@ -63,8 +63,35 @@ namespace PipingSpecPlugin.Commands
         // still keeps buckets small on real drawings.
         const double CellSize = 200.0;
 
+        // When true (set by CONNECTALLDIAG): dump every port and every
+        // near-miss pair with the reason it was rejected, and DON'T mutate
+        // the drawing. Lets us see on a real sheet why flange ports fail to
+        // mate before changing the matching thresholds. Not thread-safe, but
+        // AutoCAD commands run single-threaded so a static flag is fine.
+        static bool Diagnostic;
+
         [CommandMethod("CONNECTALL")]
         public void Run()
+        {
+            Diagnostic = false;
+            RunCore();
+        }
+
+        /// <summary>
+        /// Dry-run diagnostic: scans and logs every free port and every
+        /// rejected near-miss pair with the reason, but creates NO
+        /// connections. Use this on a drawing where flanges fail to connect,
+        /// then send the log to see the real port geometry and the rejection
+        /// reasons.
+        /// </summary>
+        [CommandMethod("CONNECTALLDIAG")]
+        public void RunDiag()
+        {
+            Diagnostic = true;
+            RunCore();
+        }
+
+        void RunCore()
         {
             using var logger = new RunLogger();
 
@@ -86,7 +113,9 @@ namespace PipingSpecPlugin.Commands
             }
             void Trace(string line) => logger.Log(line);
 
-            Say($"[Соединить смежные] Запуск, лог: {logger.Path}");
+            Say(Diagnostic
+                ? $"[Соединить смежные · ДИАГНОСТИКА] Анализ без записи, лог: {logger.Path}"
+                : $"[Соединить смежные] Запуск, лог: {logger.Path}");
 
             var db = doc.Database;
 
@@ -148,7 +177,10 @@ namespace PipingSpecPlugin.Commands
                             ref skippedError, Trace);
                     }
 
-                    tr.Commit();
+                    // Diagnostic mode must never persist anything — abort so
+                    // even an accidental write is rolled back.
+                    if (Diagnostic) tr.Abort();
+                    else tr.Commit();
                 }
                 catch (System.Exception ex)
                 {
@@ -169,10 +201,14 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            var summary =
-                $"Создано соединений: {connectionsMade}. "
-              + $"Деталей просмотрено: {partsScanned}, свободных портов: {freePorts}."
-              + (skippedError > 0 ? $" Ошибок: {skippedError} (см. лог)." : "");
+            var summary = Diagnostic
+                ? $"ДИАГНОСТИКА (ничего не записано). "
+                  + $"Потенциальных соединений: {connectionsMade}. "
+                  + $"Деталей: {partsScanned}, свободных портов: {freePorts}. "
+                  + $"Детали по портам и причинам отказа — в логе:\n{logger.Path}"
+                : $"Создано соединений: {connectionsMade}. "
+                  + $"Деталей просмотрено: {partsScanned}, свободных портов: {freePorts}."
+                  + (skippedError > 0 ? $" Ошибок: {skippedError} (см. лог)." : "");
             Say("[Соединить смежные] " + summary);
             WinForms.MessageBox.Show(summary, "Соединить смежные",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
@@ -237,9 +273,14 @@ namespace PipingSpecPlugin.Commands
                     try { isSymbolic = port.IsSymbolic; } catch { }
                     if (isSymbolic) continue;
 
-                    string portName;
-                    try { portName = port.Name; } catch { continue; }
-                    if (string.IsNullOrEmpty(portName)) continue;  // can't re-fetch later
+                    // Port name is optional in Plant 3D — flange / dynamic
+                    // ports frequently have none. We re-fetch the live Port in
+                    // pass 2; prefer the name when present, else fall back to
+                    // the collection index (PortIndex below). A blank name is
+                    // NOT a reason to drop the port — doing so silently
+                    // excluded every nameless flange port from connection.
+                    string portName = null;
+                    try { portName = port.Name; } catch { }
 
                     // IsConnected needs a Pair; build a throwaway one here.
                     // The Pair (and the Port it wraps) is discarded with this
@@ -264,6 +305,16 @@ namespace PipingSpecPlugin.Commands
                     double engage = 0.0;
                     try { engage = port.EngagementLength; } catch { }
 
+                    string endType = null;
+                    try { endType = port.EndType; } catch { }
+
+                    if (Diagnostic)
+                        trace($"  PORT {className} idx={i} name='{portName ?? ""}' "
+                            + $"end='{endType ?? ""}' "
+                            + $"pos=({pos.X:F2},{pos.Y:F2},{pos.Z:F2}) "
+                            + $"dir=({dir.X:F3},{dir.Y:F3},{dir.Z:F3}) "
+                            + $"engage={engage:F2}");
+
                     freePorts++;
                     var key = CellKey(pos);
                     if (!grid.TryGetValue(key, out var list))
@@ -272,9 +323,11 @@ namespace PipingSpecPlugin.Commands
                     {
                         EntId = entId,
                         PortName = portName,
+                        PortIndex = i,
                         Position = pos,
                         Direction = dir,
                         Engagement = engage,
+                        ClassName = className,
                     });
                 }
             }
@@ -303,7 +356,7 @@ namespace PipingSpecPlugin.Commands
                 {
                     if (used.Contains(anchor)) continue;
 
-                    var mates = FindMates(anchor, grid, used);
+                    var mates = FindMates(anchor, grid, used, trace);
                     if (mates.Count == 0) continue;
 
                     // Resolve the anchor's live Port once; reuse for every
@@ -327,6 +380,16 @@ namespace PipingSpecPlugin.Commands
                         {
                             trace($"CanConnect бросил: {ex.GetType().Name}: {ex.Message}");
                         }
+
+                        if (Diagnostic)
+                        {
+                            // Dry run: report the verdict, connect nothing.
+                            trace($"  CANDIDATE {anchor.Label} ↔ {mate.Label}: "
+                                + $"CanConnect={canConnect}");
+                            if (canConnect) made++;   // count would-be connections
+                            continue;
+                        }
+
                         if (!canConnect) continue;
 
                         try
@@ -373,13 +436,18 @@ namespace PipingSpecPlugin.Commands
             {
                 var ports = part.GetPorts(PortType.Both);
                 if (ports == null) return null;
-                var p = ports[pref.PortName];   // string indexer
+                // Prefer the name when we have one (stable across re-fetch);
+                // fall back to the collection index for nameless ports —
+                // flange/dynamic ports often have no name.
+                Port p = !string.IsNullOrEmpty(pref.PortName)
+                    ? ports[pref.PortName]   // string indexer
+                    : ports[pref.PortIndex]; // int indexer
                 if (p == null || p.IsNull) return null;
                 return p;
             }
             catch (System.Exception ex)
             {
-                trace($"Не удалось получить порт '{pref.PortName}': "
+                trace($"Не удалось получить порт '{pref.Label}': "
                     + $"{ex.GetType().Name}: {ex.Message}");
                 return null;
             }
@@ -395,7 +463,7 @@ namespace PipingSpecPlugin.Commands
         /// </summary>
         static List<PortRef> FindMates(PortRef anchor,
             Dictionary<(long, long, long), List<PortRef>> grid,
-            HashSet<PortRef> used)
+            HashSet<PortRef> used, Action<string> trace = null)
         {
             var result = new List<PortRef>();
             var (cx, cy, cz) = CellKey(anchor.Position);
@@ -411,7 +479,14 @@ namespace PipingSpecPlugin.Commands
                     if (used.Contains(b)) continue;
                     // A part never connects to itself.
                     if (b.EntId == anchor.EntId) continue;
-                    if (Mates(anchor, b)) result.Add(b);
+
+                    if (Mates(anchor, b, out var why)) result.Add(b);
+                    else if (Diagnostic && trace != null
+                             && anchor.Position.DistanceTo(b.Position) < CellSize)
+                        // Only log near-misses (within a cell) — that's where
+                        // a flange pair we EXPECTED to mate would show up.
+                        trace($"  NOMATCH {anchor.Label} ↔ {b.Label}: {why} "
+                            + $"(gap={anchor.Position.DistanceTo(b.Position):F2})");
                 }
             }
             return result;
@@ -426,27 +501,47 @@ namespace PipingSpecPlugin.Commands
         /// When either direction is unknown (zero vector) we can only fall
         /// back to the coincidence test.
         /// </summary>
-        static bool Mates(PortRef a, PortRef b)
+        static bool Mates(PortRef a, PortRef b, out string why)
         {
+            why = null;
             double gap = a.Position.DistanceTo(b.Position);
-            if (gap <= PositionTolerance) return true;
+            if (gap <= PositionTolerance) return true;   // coincident
 
             const double minDirLen = 1e-6;
             if (a.Direction.Length < minDirLen || b.Direction.Length < minDirLen)
+            {
+                why = "нет направления порта (и не совпадают позиции)";
                 return false;
+            }
 
             // Opposing faces: unit directions roughly antiparallel.
             var ua = a.Direction.GetNormal();
             var ub = b.Direction.GetNormal();
-            if (ua.DotProduct(ub) > OpposingDirCos) return false;
+            double dot = ua.DotProduct(ub);
+            if (dot > OpposingDirCos)
+            {
+                why = $"направления не встречны (dot={dot:F3} > {OpposingDirCos})";
+                return false;
+            }
 
             // The ports must actually face across the gap, not sit side by
             // side: the vector from a to b should run along a's outward
             // direction. Reject lateral near-misses (parallel pipes touching).
             var aToB = b.Position - a.Position;
-            if (aToB.DotProduct(ua) <= 0) return false;
+            double along = aToB.DotProduct(ua);
+            if (along <= 0)
+            {
+                why = $"порт смотрит не в сторону соседа (along={along:F2})";
+                return false;
+            }
 
-            return gap <= a.Engagement + b.Engagement + EngagementSlack;
+            double maxGap = a.Engagement + b.Engagement + EngagementSlack;
+            if (gap > maxGap)
+            {
+                why = $"зазор больше суммы engagement (gap={gap:F2} > {maxGap:F2})";
+                return false;
+            }
+            return true;
         }
 
         // Cell size is the max gap we bridge, so any mating pair lands in the
@@ -459,10 +554,15 @@ namespace PipingSpecPlugin.Commands
         sealed class PortRef
         {
             public ObjectId EntId;
-            public string PortName;
+            public string PortName;      // may be null/empty — use PortIndex then
+            public int PortIndex;        // position in the part's PortCollection
             public Point3d Position;
-            public Vector3d Direction;   // ZeroVector when unknown
+            public Vector3d Direction;   // zero vector when unknown
             public double Engagement;    // 0 for hard-coincident ports
+            public string ClassName;     // for diagnostics
+
+            public string Label =>
+                $"{ClassName}#{(string.IsNullOrEmpty(PortName) ? "[" + PortIndex + "]" : PortName)}";
         }
     }
 }

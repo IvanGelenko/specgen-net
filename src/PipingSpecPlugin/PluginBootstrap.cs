@@ -123,6 +123,14 @@ namespace PipingSpecPlugin
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = layersSource });
 
+            var toolsSource = new RibbonPanelSource { Title = "Связи" };
+            toolsSource.Items.Add(MakeButton("Соединить смежные", "CONNECTALL",
+                "Соединить все смежные детали активного чертежа: для каждого "
+                + "свободного порта, совпадающего с портом соседней детали, "
+                + "создаётся соединение Plant 3D.",
+                "icon32.png"));
+            tab.Panels.Add(new RibbonPanel { Source = toolsSource });
+
             var helpSource = new RibbonPanelSource { Title = "Справка" };
             helpSource.Items.Add(MakeButton("О программе", "SPECABOUT",
                 "Информация о плагине и его версии.",

@@ -30,6 +30,12 @@ namespace PipingSpecPlugin.Spec
         // Only one cache slot — the user is virtually always working on a
         // single project. Keeping a dictionary would just leak memory when
         // they switch projects mid-session.
+        //
+        // Not synchronised: every caller (WRITESPEC and friends) runs on the
+        // AutoCAD UI thread, so access is single-threaded by construction.
+        // If the scan is ever moved to a background task, guard these with a
+        // lock — the update check already runs off-thread but never touches
+        // this cache.
         static string _projectKey;
         static Entry _entry;
 

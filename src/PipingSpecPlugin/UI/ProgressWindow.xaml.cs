@@ -31,6 +31,13 @@ namespace PipingSpecPlugin.UI
             {
                 if (!_completing) _cts.Cancel();
             };
+            // CancellationTokenSource owns a wait handle; dispose it once the
+            // window is gone so a long AutoCAD session doesn't accumulate one
+            // per WRITESPEC run.
+            Closed += (_, __) =>
+            {
+                try { _cts.Dispose(); } catch { }
+            };
         }
 
         public void SetHeader(string text)

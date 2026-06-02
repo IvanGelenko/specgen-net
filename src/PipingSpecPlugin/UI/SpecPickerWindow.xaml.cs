@@ -179,10 +179,16 @@ namespace PipingSpecPlugin.UI
             var catKnown = _settings.KnownCategories == null ? null : new HashSet<string>(_settings.KnownCategories);
             foreach (var (key, count) in activeFacts.Categories)
             {
-                var label = key == SpecConstants.NullCategory
-                    ? SpecConstants.NullCategoryLabel
-                    : (SpecConstants.CategoryLabelRu.TryGetValue(key, out var ru) ? ru : key);
-                bool defaultOn = key != SpecConstants.NullCategory;
+                // Don't offer "Без категории": the builder unconditionally
+                // drops parts whose category couldn't be classified (they're
+                // unrecognised junk with no name/data and never belong in a
+                // procurement spec). Showing the chip promised the user they
+                // could include those parts, but ticking it produced nothing
+                // — a count-vs-output mismatch. Hiding it makes the picker
+                // honest.
+                if (key == SpecConstants.NullCategory) continue;
+                var label = SpecConstants.CategoryLabelRu.TryGetValue(key, out var ru) ? ru : key;
+                bool defaultOn = true;
                 bool isChecked;
                 if (catSaved == null)
                 {

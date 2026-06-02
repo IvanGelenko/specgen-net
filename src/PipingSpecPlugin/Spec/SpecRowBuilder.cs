@@ -117,11 +117,6 @@ namespace PipingSpecPlugin.Spec
             // pipe got filtered out.
             var pipeFallbackBuckets = new Dictionary<string, Bucket>(
                 System.StringComparer.Ordinal);
-            // Need access to lineTag from inside the isPipe block where
-            // raw line is captured in 'rawLine'; assign here to a
-            // mutable string used by the inner closure-style assignment.
-            // (No closure; the variable rawLine is in scope from the
-            // earlier dedup-by-PnPID block above.)
 
             foreach (var r in rowList)
             {
@@ -166,14 +161,12 @@ namespace PipingSpecPlugin.Spec
                 }
 
                 // Category filter — using Plant 3D's category key (not the
-                // localized label). NullCategory sentinel lets the user
-                // include rows where PartCategory is empty.
-                if (catSet != null)
-                {
-                    var catKey = string.IsNullOrEmpty(category) ? SpecConstants.NullCategory : category;
-                    if (!catSet.Contains(catKey))
-                    { Drop($"category-not-selected:{catKey}"); continue; }
-                }
+                // localized label). 'category' is guaranteed non-empty here:
+                // the empty-category drop above already removed unclassified
+                // rows, so there's no NullCategory case to handle — the
+                // picker doesn't offer that chip either.
+                if (catSet != null && !catSet.Contains(category))
+                { Drop($"category-not-selected:{category}"); continue; }
 
                 // Dedup by PnPID. A part can be linked to multiple lines
                 // (multi-membership in P3dLineGroupPartRelationship); we
@@ -201,7 +194,16 @@ namespace PipingSpecPlugin.Spec
                 var isPipe = category == "Pipe";
                 var name = BuildName(category, r);
                 var typeMark = BuildTypeMark(category, r);
-                var ndVal = ParseDouble(r.NominalDiameter);
+                // Quantise the nominal diameter before it enters the bucket
+                // key. The raw catalogue value can arrive as "100" or
+                // "100.00" (fine — same double) but also as a slightly
+                // different float for the SAME nominal size when it was
+                // converted between in/mm in different catalogue revisions
+                // (e.g. 3.99999 vs 4.0). Exact double equality in the key
+                // would then split one procurement item into two rows.
+                // Rounding to 3 decimals collapses those to one key while
+                // staying finer than any real nominal-size difference.
+                var ndVal = Math.Round(ParseDouble(r.NominalDiameter), 3);
                 var nomUnit = (r.NominalUnit ?? "").Trim().ToLowerInvariant();
                 var material = (r.Material ?? "").Trim();
                 var spec = (r.Spec ?? "").Trim();
@@ -214,7 +216,10 @@ namespace PipingSpecPlugin.Spec
                 if (isPipe)
                 {
                     var lenRaw = ParseDouble(r.Length);
-                    if (lenRaw <= 0.0)
+                    // Reject non-positive AND non-finite lengths. A NaN length
+                    // passes "<= 0" as false and would otherwise propagate into
+                    // b.Qty, turning the whole pipe row's quantity into NaN.
+                    if (!(lenRaw > 0.0) || double.IsInfinity(lenRaw))
                     {
                         zeroPipes++;
                         seenPids.Remove(r.PnPID);
@@ -268,7 +273,10 @@ namespace PipingSpecPlugin.Spec
                     var lw = ParseNullableDouble(r.LinearWeight);
                     if (lw.HasValue)
                     {
-                        b.Weights.Add(lw.Value * toKg);
+                        // LinearWeight is a per-length quantity (kg/m), so it
+                        // takes the linear factor, NOT toKg (which is derived
+                        // from WeightUnit and may be a non-linear unit).
+                        AddWeight(b, lw.Value * LinearWeightFactor(r.WeightUnit));
                     }
                     else
                     {
@@ -277,7 +285,7 @@ namespace PipingSpecPlugin.Spec
                         if (w.HasValue && l.HasValue && l.Value > 0)
                         {
                             var lenM = l.Value * toMeters;
-                            if (lenM > 0) b.Weights.Add(w.Value * toKg / lenM);
+                            if (lenM > 0) AddWeight(b, w.Value * toKg / lenM);
                         }
                     }
                 }
@@ -299,7 +307,7 @@ namespace PipingSpecPlugin.Spec
                         // In Plant 3D, the Weight property of multi-piece entities (like BoltSets)
                         // represents the total weight of the set. To get the unit weight of a single
                         // piece ("шт."), we divide the total weight by the quantity in the set.
-                        b.Weights.Add(w.Value * toKg / pieces);
+                        AddWeight(b, w.Value * toKg / pieces);
                     }
                 }
             }
@@ -393,7 +401,12 @@ namespace PipingSpecPlugin.Spec
                     }
                     else
                     {
-                        weight = b.Weights[0];
+                        // Weights agree within 5% — use the average rather
+                        // than Weights[0]. The first element depends on DWG
+                        // read order, which would make the same project emit
+                        // a slightly different weight between runs; the
+                        // average is order-independent and deterministic.
+                        weight = b.Weights.Average();
                     }
                 }
 
@@ -405,7 +418,10 @@ namespace PipingSpecPlugin.Spec
                     // reports the required length, then add a 10% safety
                     // note for procurement.
                     qty = Math.Ceiling(b.Qty * 10.0) / 10.0;
-                    var margin = (int)Math.Ceiling(qty * 1.1);
+                    // long, not int: a whole project's pipe length can in
+                    // principle exceed int.MaxValue mm; an int cast would
+                    // overflow to a negative margin.
+                    var margin = (long)Math.Ceiling(qty * 1.1);
                     var noteParts = new List<string> { $"с учетом 10% запаса: {margin} м" };
                     if (!string.IsNullOrEmpty(weightWarning)) noteParts.Add(weightWarning);
                     note = string.Join("; ", noteParts);
@@ -533,6 +549,20 @@ namespace PipingSpecPlugin.Spec
             return null;
         }
 
+        /// <summary>
+        /// Add a per-unit weight to the bucket, rejecting values that would
+        /// corrupt the aggregate. A NaN slips through any later Average()/Min()
+        /// and renders as "NaN кг" in the spec; a negative weight is physically
+        /// impossible and skews the variance check. Both are dropped (the row
+        /// then simply has no weight rather than a poisoned one). Zero is
+        /// allowed — some catalogue items legitimately carry no mass.
+        /// </summary>
+        static void AddWeight(Bucket b, double kg)
+        {
+            if (double.IsNaN(kg) || double.IsInfinity(kg) || kg < 0) return;
+            b.Weights.Add(kg);
+        }
+
         static double ParseDouble(string s)
             => ParseNullableDouble(s) ?? 0.0;
 
@@ -573,6 +603,28 @@ namespace PipingSpecPlugin.Spec
                 case "lb":   return 0.45359237;
                 case "lb/ft":return 1.488163943;
                 default:     return 1.0;
+            }
+        }
+
+        /// <summary>
+        /// Factor that turns a LINEAR weight (mass per length) into kg/m.
+        /// The pipe's WeightUnit describes the lump Weight field, which may
+        /// be a non-linear unit ("kg", "lb"); applying that to LinearWeight
+        /// (already a per-length quantity) would mis-scale it — e.g. "lb"
+        /// would shrink a kg/m value by 0.4536. So we only honour units that
+        /// are themselves linear: kg/m → 1, lb/ft → 1.488. Any non-linear or
+        /// unknown unit means "the catalogue gave LinearWeight in project
+        /// units" (kg/m for the metric projects this plug-in targets), so we
+        /// leave it unscaled rather than corrupt it.
+        /// </summary>
+        static double LinearWeightFactor(string unit)
+        {
+            var u = (unit ?? "").Trim().ToLowerInvariant();
+            switch (u)
+            {
+                case "kg/m":  return 1.0;
+                case "lb/ft": return 1.488163943;
+                default:      return 1.0;   // assume already kg/m
             }
         }
 

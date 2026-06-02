@@ -55,13 +55,17 @@ namespace PipingSpecPlugin.Spec
             foreach (var r in list)
             {
                 var cat = NormalizeCategoryPublic(r);
-                var key = string.IsNullOrEmpty(cat) ? SpecConstants.NullCategory : cat;
-                catCounts.TryGetValue(key, out var c);
-                catCounts[key] = c + 1;
+                // Skip unclassified parts entirely: the builder always drops
+                // them, so counting a "Без категории" bucket here would
+                // promise the picker something the spec can't deliver. Keeping
+                // facts and output in lock-step is the whole point of this
+                // class. (See the matching guard in SpecPickerWindow.)
+                if (string.IsNullOrEmpty(cat)) continue;
+                catCounts.TryGetValue(cat, out var c);
+                catCounts[cat] = c + 1;
             }
             facts.Categories = catCounts
-                .OrderBy(kv => kv.Key == SpecConstants.NullCategory ? 1 : 0)
-                .ThenBy(kv => kv.Key, System.StringComparer.Ordinal)
+                .OrderBy(kv => kv.Key, System.StringComparer.Ordinal)
                 .Select(kv => (kv.Key, kv.Value))
                 .ToList();
 

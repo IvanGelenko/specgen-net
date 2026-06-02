@@ -128,6 +128,28 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
+        public void Weight_Within_Tolerance_Is_Order_Independent()
+        {
+            // Two identical flanges whose weights agree within 5% must merge
+            // into one row with a weight that does NOT depend on the order
+            // they were read (regression for the old Weights[0] behaviour,
+            // which made the same project emit a different weight per run).
+            var fA = Flange(1); fA.Weight = "7.50";
+            var fB = Flange(2); fB.Weight = "7.70";   // ~2.7% heavier, under 5%
+            fB.PartSizeLongDesc = fA.PartSizeLongDesc; // share a bucket
+
+            var forward = new SpecRowBuilder().Build(new[] { fA, fB });
+            var reverse = new SpecRowBuilder().Build(new[] { fB, fA });
+
+            var rowF = Assert.Single(forward);
+            var rowR = Assert.Single(reverse);
+            // Same weight regardless of input order, and it's the average
+            // (7.60), not whichever happened to be first.
+            Assert.Equal(rowF.Weight, rowR.Weight);
+            Assert.Equal(7.60, rowF.Weight);
+        }
+
+        [Fact]
         public void Dedup_By_PnPID_Drops_Cross_Drawing_Duplicates()
         {
             // The same part may be reported by two side-DB scans because
@@ -151,6 +173,67 @@ namespace PipingSpecPlugin.Tests
             var rows = builder.Build(new[] { ok, stub });
             var pipe = Assert.Single(rows);
             Assert.Equal(5.0, pipe.Qty);
+        }
+
+        [Fact]
+        public void Near_Equal_Diameters_Merge_Into_One_Row()
+        {
+            // Same nominal pipe whose diameter arrived as a slightly
+            // different float (catalogue in/mm rounding). Before quantising
+            // the bucket-key diameter these split into two rows.
+            var a = Pipe(1, 1000);
+            var b = Pipe(2, 1000);
+            b.PartSizeLongDesc = a.PartSizeLongDesc;     // share name
+            a.NominalDiameter = "100.0";
+            b.NominalDiameter = "100.0001";              // 0.1 micron off
+            a.NominalUnit = b.NominalUnit = "mm";
+            var rows = new SpecRowBuilder().Build(new[] { a, b });
+            var row = Assert.Single(rows);
+            Assert.Equal(2.0, row.Qty);                  // 1 + 1 m merged
+        }
+
+        [Fact]
+        public void NaN_And_Negative_Weights_Do_Not_Poison_The_Row()
+        {
+            // A flange whose Weight field is garbage must not produce a
+            // "NaN кг" cell — the bad value is dropped, the good one wins.
+            var good = Flange(1); good.Weight = "7.5";
+            var nan = Flange(2); nan.Weight = "NaN";
+            var neg = Flange(3); neg.Weight = "-3";
+            foreach (var f in new[] { nan, neg })
+                f.PartSizeLongDesc = good.PartSizeLongDesc;   // share bucket
+            var rows = new SpecRowBuilder().Build(new[] { good, nan, neg });
+            var row = Assert.Single(rows);
+            Assert.Equal(7.5, row.Weight);                    // only the valid weight
+            Assert.False(double.IsNaN(row.Weight));
+        }
+
+        [Fact]
+        public void Uncategorised_Part_Is_Absent_From_Facts_And_Output()
+        {
+            // A part with no PartCategory and an unrecognised class can't be
+            // classified. It must NOT appear as a "Без категории" facts chip
+            // (which would promise the picker something the builder drops)
+            // and must NOT reach the spec output.
+            var junk = new PartRecord
+            {
+                PnPID = 99,
+                PartCategory = "",
+                PnPClassName = "SomethingUnknown",
+                ShortDescription = "mystery",
+                Status = "Новое",
+                LineNumberTag = "L1",
+            };
+            var pipe = Pipe(1, 1000);
+
+            var facts = ProjectFacts.From(new[] { junk, pipe });
+            Assert.DoesNotContain(facts.Categories,
+                c => c.key == SpecConstants.NullCategory);
+
+            var rows = new SpecRowBuilder().Build(new[] { junk, pipe });
+            // Only the pipe survives; the junk row is gone.
+            var row = Assert.Single(rows);
+            Assert.Equal("Pipe", row.Category);
         }
 
         [Fact]

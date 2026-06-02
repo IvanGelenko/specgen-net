@@ -33,7 +33,14 @@ namespace PipingSpecPlugin.Spec
             File.Copy(templatePath, outputPath, overwrite: true);
 
             using var doc = WordprocessingDocument.Open(outputPath, isEditable: true);
-            var body = doc.MainDocumentPart.Document.Body;
+            // A valid .docx always has a main document part with a body. If
+            // the template is corrupt or not really a Word document, these
+            // are null — surface a clear message instead of a bare
+            // NullReferenceException the user can't act on.
+            var body = doc.MainDocumentPart?.Document?.Body
+                ?? throw new InvalidOperationException(
+                    "Файл шаблона повреждён или не является корректным документом Word (.docx): "
+                  + "в нём отсутствует основная часть документа.");
 
             var (table, headerIdx) = FindMaterialsTable(body)
                 ?? throw new InvalidOperationException(
@@ -158,9 +165,14 @@ namespace PipingSpecPlugin.Spec
                     if (!IsHeaderRow(trs[i])) continue;
                     var txt = RowText(trs[i]).Trim().ToLowerInvariant()
                         .TrimEnd(':', '.', ' ');
-                    // Fuzzy matching: check if target is a substring of the header text (or vice versa)
-                    // to support templates with section numbers or slightly modified header titles.
-                    if (txt == target || txt.Contains(target) || target.Contains(txt)) return (t, i);
+                    // Match when the header equals the target, or CONTAINS it
+                    // (templates prefix a section number, e.g. "2 Изделия и
+                    // материалы"). We deliberately do NOT match the reverse
+                    // (target contains header): a short unrelated header that
+                    // happens to be a substring of "изделия и материалы"
+                    // (e.g. a stray "Изделия" cell) would otherwise hijack
+                    // the fill and write the spec into the wrong table.
+                    if (txt == target || txt.Contains(target)) return (t, i);
                 }
             }
             return null;

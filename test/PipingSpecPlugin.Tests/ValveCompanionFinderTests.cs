@@ -97,6 +97,41 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
+        public void Equidistant_Gaskets_Pick_Is_Deterministic()
+        {
+            // Two gaskets at the SAME distance from the flange. The pick must
+            // be the lower PnPID regardless of the order they're passed in —
+            // otherwise the spec wobbles between runs depending on DWG read
+            // order. (Regression for the tie-break that never fired because
+            // equidistant candidates were rejected before it.)
+            PartRecord[] Scene(bool lowFirst)
+            {
+                var v = Make(1, "Valves", "Valve");
+                var c = Make(2, "", "P3dConnector");
+                var f = Make(3, "Flanges", "Flange", x: 0, y: 0, z: 0);
+                // Both gaskets exactly 5 units away (opposite sides).
+                var gLow  = Make(10, "Fasteners", "Gasket", desc: "Gasket", x: 5, y: 0, z: 0);
+                var gHigh = Make(11, "Fasteners", "Gasket", desc: "Gasket", x: -5, y: 0, z: 0);
+                return lowFirst
+                    ? new[] { v, c, f, gLow, gHigh }
+                    : new[] { v, c, f, gHigh, gLow };
+            }
+            var topo = new Dictionary<int, List<int>>
+            {
+                { 1, new List<int> { 2 } },
+                { 2, new List<int> { 1, 3 } },
+                { 3, new List<int> { 2 } },
+            };
+            var dropA = ValveCompanionFinder.Discover(Scene(lowFirst: true), topo);
+            var dropB = ValveCompanionFinder.Discover(Scene(lowFirst: false), topo);
+            // Lower PnPID (10) chosen both ways; 11 stays in the spec.
+            Assert.Contains(10, dropA);
+            Assert.Contains(10, dropB);
+            Assert.DoesNotContain(11, dropA);
+            Assert.DoesNotContain(11, dropB);
+        }
+
+        [Fact]
         public void No_Valves_Returns_Empty_Set()
         {
             var f = Make(1, "Flanges", "Flange");

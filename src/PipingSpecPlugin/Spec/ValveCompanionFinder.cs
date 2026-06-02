@@ -236,7 +236,8 @@ namespace PipingSpecPlugin.Spec
         {
             var fNd = ParseDouble(flange.NominalDiameter) ?? 0;
             int? bestId = null;
-            var bestDist = threshold;
+            var bestDist = double.MaxValue;
+            const double tie = 1e-9;
             foreach (var p in pool)
             {
                 var pc = GetCoords(p);
@@ -247,17 +248,23 @@ namespace PipingSpecPlugin.Spec
                 var dy = fc.y - pc.Value.y;
                 var dz = fc.z - pc.Value.z;
                 var dist = System.Math.Sqrt(dx*dx + dy*dy + dz*dz);
-                if (dist >= bestDist) continue;
 
-                // Closer than the running best — but if it's an exact tie
-                // with the current pick, prefer the lower PnPID so the
-                // result is stable regardless of pool order.
-                bool isTie = bestId.HasValue
-                             && System.Math.Abs(dist - bestDist) <= 1e-9;
-                if (isTie && p.PnPID >= bestId.Value) continue;
+                // Only candidates within the proximity threshold qualify.
+                if (dist > threshold) continue;
 
-                bestDist = dist;
-                bestId = p.PnPID;
+                if (bestId == null)
+                {
+                    bestDist = dist; bestId = p.PnPID; continue;
+                }
+                // Strictly closer wins; an exact tie picks the lower PnPID so
+                // the result is independent of pool (DWG read) order. The old
+                // code rejected equidistant candidates before this tie-break
+                // could run, making the pick depend on read order.
+                if (dist < bestDist - tie
+                    || (System.Math.Abs(dist - bestDist) <= tie && p.PnPID < bestId.Value))
+                {
+                    bestDist = dist; bestId = p.PnPID;
+                }
             }
             return bestId;
         }

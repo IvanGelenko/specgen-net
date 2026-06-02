@@ -72,24 +72,33 @@ namespace PipingSpecPlugin
 
         static void TryRegisterRibbon()
         {
-            // Subscribe to ItemInitialized and keep it active so workspace
-            // changes or ribbon resets reconstruct our custom tab if it disappears.
+            // At plug-in load the ribbon is often not built yet
+            // (ComponentManager.Ribbon == null). If so, wait for the
+            // ItemInitialized event and build the tab once it appears.
+            // We unsubscribe as soon as the tab exists — keeping the handler
+            // live for the whole session means it fires on EVERY ribbon item
+            // initialisation (hundreds of times) and re-scans Tabs each time.
+            if (TryBuildTab()) return;
             ComponentManager.ItemInitialized += OnRibbonReady;
-            
-            var ribbon = ComponentManager.Ribbon;
-            if (ribbon != null)
-            {
-                BuildTab(ribbon);
-            }
         }
 
         static void OnRibbonReady(object sender, RibbonItemEventArgs e)
         {
+            if (TryBuildTab())
+                ComponentManager.ItemInitialized -= OnRibbonReady;
+        }
+
+        /// <summary>
+        /// Build the tab if the ribbon is available. Returns true when the
+        /// tab now exists (built just now or already present) — the signal
+        /// to stop listening; false only when the ribbon isn't ready yet.
+        /// </summary>
+        static bool TryBuildTab()
+        {
             var ribbon = ComponentManager.Ribbon;
-            if (ribbon != null)
-            {
-                BuildTab(ribbon);
-            }
+            if (ribbon == null) return false;
+            BuildTab(ribbon);
+            return true;
         }
 
         static void BuildTab(RibbonControl ribbon)

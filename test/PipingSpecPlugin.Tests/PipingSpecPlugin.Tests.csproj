@@ -17,6 +17,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecConstants.cs" Link="Spec\SpecConstants.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\CategoryClassifier.cs" Link="Spec\CategoryClassifier.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRowBuilder.cs" Link="Spec\SpecRowBuilder.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\ProjectFacts.cs" Link="Spec\ProjectFacts.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\ValveCompanionFinder.cs" Link="Spec\ValveCompanionFinder.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\ScanCache.cs" Link="Spec\ScanCache.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PipeBendFolder.cs" Link="Spec\PipeBendFolder.cs" />

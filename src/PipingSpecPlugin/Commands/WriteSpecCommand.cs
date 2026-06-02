@@ -50,11 +50,13 @@ namespace PipingSpecPlugin.Commands
 
         void RunCore(string forcedScope)
         {
-            using var logger = new RunLogger();
+            using var logger = new RunLogger(
+                forcedScope == "proj" ? "WRITESPECPROJ"
+              : forcedScope == "dwg" ? "WRITESPECDWG"
+              : "WRITESPEC");
 
-            void Say(string line)
+            void EditorWrite(string line)
             {
-                logger.Log(line);
                 try
                 {
                     // Re-acquire the editor each time: during close/reopen the
@@ -64,9 +66,23 @@ namespace PipingSpecPlugin.Commands
                 }
                 catch { /* swallow — happens when no doc context is active */ }
             }
+            void Say(string line) { logger.Log(line); EditorWrite(line); }
             void Trace(string line) => logger.Log(line);
+            // Surface a line to the editor AND mark it WARN/ERROR in the log,
+            // so the diagnostic file separates real problems from chatter.
+            void SayWarn(string line) { logger.Warn(line); EditorWrite(line); }
+            void SayErr(string line) { logger.Error(line); EditorWrite(line); }
 
             Say($"[Спецификация] Запуск, лог: {logger.Path}");
+
+            // Record the runtime context up front so a support log is
+            // self-contained (which AutoCAD build, which project).
+            try
+            {
+                Trace("AutoCAD: " + AcadApp.GetSystemVariable("ACADVER")
+                    + " / product " + AcadApp.GetSystemVariable("PRODUCT"));
+            }
+            catch { }
 
             var project = PlantApplication.CurrentProject;
             if (project == null)
@@ -122,7 +138,7 @@ namespace PipingSpecPlugin.Commands
                         // версию, и спецификация будет неполной без следа.
                         // Предупреждаем явно, а не молчим.
                         if (!saved)
-                            Say($"[Спецификация] ВНИМАНИЕ: не удалось сохранить {Path.GetFileName(activeDocName)} — данные могут быть устаревшими.");
+                            SayWarn($"[Спецификация] ВНИМАНИЕ: не удалось сохранить {Path.GetFileName(activeDocName)} — данные могут быть устаревшими.");
                     }
                 }
                 catch (System.Exception ex) { Trace($"Проверка модификации активного документа не удалась: {ex.Message}"); }
@@ -141,6 +157,12 @@ namespace PipingSpecPlugin.Commands
                     if (doc == null || string.IsNullOrEmpty(doc.Name) || doc == activeDoc) continue;
                     try
                     {
+                        // The active doc uses the DBMOD sysvar above, but DBMOD
+                        // is global — it only reflects the active document, so
+                        // for background docs we must ask each one's COM
+                        // AcadDocument.Saved instead. The two mechanisms are
+                        // intentional: there's no per-document dirty flag on
+                        // the managed Database that matches DBMOD.
                         dynamic acadDoc = doc.GetAcadDocument();
                         bool bgModified = !acadDoc.Saved;
                         if (bgModified)
@@ -262,6 +284,7 @@ namespace PipingSpecPlugin.Commands
             {
                 // Только реальные сбои (не "файл не Plant 3D"). При нуле
                 // не дергаем пользователя — это нормальный путь.
+                logger.Warn($"Сканирование: пропущено чертежей из-за ошибок чтения: {scan.skippedFiles} (см. строки FAILED выше).");
                 WinForms.MessageBox.Show(
                     $"При сканировании пропущено чертежей: {scan.skippedFiles}.\n" +
                     $"Подробности см. в логе:\n{logger.Path}\n\n" +
@@ -447,7 +470,7 @@ namespace PipingSpecPlugin.Commands
                         var byLine = hiddenByScope
                             .GroupBy(r => r.LineNumberTag ?? "")
                             .Select(g => $"{g.Key}: {g.Count()}");
-                        Say($"[Спецификация] ⚠ scope=dwg исключает "
+                        SayWarn($"[Спецификация] ⚠ scope=dwg исключает "
                           + $"{hiddenByScope.Count} парт(ов) из выбранных линий "
                           + $"которые находятся в других чертежах "
                           + $"({string.Join("; ", byLine)}). "
@@ -476,7 +499,7 @@ namespace PipingSpecPlugin.Commands
                 DisableElementGrouping = result.DisableElementGrouping,
             });
             var specRows = builder.Build(input);
-            foreach (var w in builder.Warnings) Trace("WARN: " + w);
+            foreach (var w in builder.Warnings) logger.Warn(w);
             if (builder.DropReasons.Count > 0)
             {
                 Trace("Фильтры (отброшено по причинам):");
@@ -487,7 +510,7 @@ namespace PipingSpecPlugin.Commands
             if (specRows.Count == 0)
             {
                 const string msg = "Спецификация пуста. Выбранные фильтры исключили все компоненты.";
-                Say("[Спецификация] " + msg);
+                SayWarn("[Спецификация] " + msg);
                 WinForms.MessageBox.Show(msg, "Спецификация Plant 3D",
                     WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
                 return;
@@ -507,8 +530,7 @@ namespace PipingSpecPlugin.Commands
             }
             catch (System.IO.IOException ex) when (IsFileLocked(ex))
             {
-                Trace($"FAILED: Sharing violation / file locked: {ex.Message}");
-                Say($"[Спецификация] Ошибка сохранения: файл занят другим процессом.");
+                SayErr($"[Спецификация] FAILED: файл занят другим процессом: {ex.Message}");
                 WinForms.MessageBox.Show(
                     $"Не удалось сохранить спецификацию.\n\nФайл уже открыт в Microsoft Word или другой программе:\n{outputPath}\n\nПожалуйста, закройте этот файл в Word и попробуйте снова.",
                     "Спецификация Plant 3D",
@@ -518,8 +540,7 @@ namespace PipingSpecPlugin.Commands
             }
             catch (System.Exception ex) when (ex is System.IO.FileFormatException || ex.GetType().FullName.Contains("OpenXml"))
             {
-                Trace($"FAILED: Invalid Word template: {ex.Message}");
-                Say($"[Спецификация] Ошибка сохранения: некорректный файл шаблона.");
+                SayErr($"[Спецификация] FAILED: некорректный файл шаблона: {ex.Message}");
                 WinForms.MessageBox.Show(
                     $"Выбранный файл шаблона поврежден или не является корректным документом Word (.docx):\n{result.TemplatePath}\n\nПожалуйста, проверьте файл шаблона.",
                     "Спецификация Plant 3D",
@@ -529,9 +550,8 @@ namespace PipingSpecPlugin.Commands
             }
             catch (System.Exception ex)
             {
-                Trace($"FAILED: {ex.GetType().Name}: {ex.Message}");
+                SayErr($"[Спецификация] FAILED: {ex.GetType().Name}: {ex.Message}");
                 Trace(ex.StackTrace ?? "");
-                Say($"[Спецификация] Ошибка сохранения: {ex.Message}");
                 WinForms.MessageBox.Show(
                     $"Ошибка сохранения спецификации:\n\n{ex.Message}\n\n" +
                     $"Подробности в логе:\n{logger.Path}",

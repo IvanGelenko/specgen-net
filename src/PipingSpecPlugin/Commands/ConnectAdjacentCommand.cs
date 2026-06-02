@@ -93,7 +93,7 @@ namespace PipingSpecPlugin.Commands
 
         void RunCore()
         {
-            using var logger = new RunLogger();
+            using var logger = new RunLogger(Diagnostic ? "CONNECTALLDIAG" : "CONNECTALL");
 
             var doc = AcadApp.DocumentManager.MdiActiveDocument;
             if (doc == null)
@@ -155,6 +155,9 @@ namespace PipingSpecPlugin.Commands
             // Lock the document — creating connections writes to the DWG, so
             // without the lock we'd hit eLockViolation. One transaction for
             // the whole pass keeps it atomic under a single Undo.
+            // ConnectionManager is a DisposableWrapper over a native object;
+            // dispose it too so each CONNECTALL run doesn't leak one.
+            using (cm)
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -192,7 +195,8 @@ namespace PipingSpecPlugin.Commands
 
             if (failReason != null)
             {
-                Say("[Соединить смежные] Ошибка: " + failReason);
+                logger.Error("[Соединить смежные] Ошибка: " + failReason);
+                try { ed.WriteMessage("\n[Соединить смежные] Ошибка: " + failReason); } catch { }
                 WinForms.MessageBox.Show(
                     "Не удалось выполнить операцию:\n\n" + failReason +
                     "\n\nПодробности в логе:\n" + logger.Path,
@@ -209,6 +213,7 @@ namespace PipingSpecPlugin.Commands
                 : $"Создано соединений: {connectionsMade}. "
                   + $"Деталей просмотрено: {partsScanned}, свободных портов: {freePorts}."
                   + (skippedError > 0 ? $" Ошибок: {skippedError} (см. лог)." : "");
+            if (skippedError > 0) logger.Warn($"Пропущено из-за ошибок: {skippedError} (см. строки выше).");
             Say("[Соединить смежные] " + summary);
             WinForms.MessageBox.Show(summary, "Соединить смежные",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
@@ -283,15 +288,21 @@ namespace PipingSpecPlugin.Commands
                     try { portName = port.Name; } catch { }
 
                     // IsConnected needs a Pair; build a throwaway one here.
-                    // The Pair (and the Port it wraps) is discarded with this
-                    // loop iteration — only the value data below survives.
+                    // Pair is a DisposableWrapper we own (we new'd it), so we
+                    // dispose it each iteration — otherwise a large drawing
+                    // leaks one native Pair per port probed. We only dispose
+                    // Pairs we create, never Ports/collections returned by the
+                    // API (their ownership is unclear — disposing them risks a
+                    // double-free crash).
                     bool connected = false;
+                    Pair probe = null;
                     try
                     {
-                        var probe = new Pair { ObjectId = entId, Port = port };
+                        probe = new Pair { ObjectId = entId, Port = port };
                         connected = cm.IsConnected(probe);
                     }
                     catch { }
+                    finally { try { probe?.Dispose(); } catch { } }
                     if (connected) continue;
 
                     Point3d pos;
@@ -359,51 +370,66 @@ namespace PipingSpecPlugin.Commands
                     var mates = FindMates(anchor, grid, used, trace);
                     if (mates.Count == 0) continue;
 
-                    // Resolve the anchor's live Port once; reuse for every
-                    // mate at this junction.
-                    var anchorPort = ResolvePort(tr, anchor, trace);
-                    if (anchorPort == null) { skippedError++; continue; }
-                    var anchorPair = new Pair { ObjectId = anchor.EntId, Port = anchorPort };
-
                     bool anchorUsed = false;
                     foreach (var mate in mates)
                     {
                         if (used.Contains(mate)) continue;
 
+                        // Re-fetch BOTH live Ports right before each Connect.
+                        // Connect mutates both parts, so a Port wrapper fetched
+                        // before a previous Connect in this same junction is
+                        // stale — reusing it across connects (multi-way tee:
+                        // 3+ mates on one anchor) risks touching freed native
+                        // memory. Re-resolving each time is the safe contract;
+                        // the extra GetPorts cost is negligible next to Connect.
+                        var anchorPort = ResolvePort(tr, anchor, trace);
+                        if (anchorPort == null) { skippedError++; break; }
                         var matePort = ResolvePort(tr, mate, trace);
                         if (matePort == null) { skippedError++; continue; }
+
+                        // Pairs are DisposableWrappers we own — dispose both on
+                        // every exit path (try/finally) so a dense drawing
+                        // doesn't leak two native Pairs per candidate.
+                        var anchorPair = new Pair { ObjectId = anchor.EntId, Port = anchorPort };
                         var matePair = new Pair { ObjectId = mate.EntId, Port = matePort };
-
-                        bool canConnect = false;
-                        try { canConnect = cm.CanConnect(anchorPair, matePair); }
-                        catch (System.Exception ex)
-                        {
-                            trace($"CanConnect бросил: {ex.GetType().Name}: {ex.Message}");
-                        }
-
-                        if (Diagnostic)
-                        {
-                            // Dry run: report the verdict, connect nothing.
-                            trace($"  CANDIDATE {anchor.Label} ↔ {mate.Label}: "
-                                + $"CanConnect={canConnect}");
-                            if (canConnect) made++;   // count would-be connections
-                            continue;
-                        }
-
-                        if (!canConnect) continue;
-
                         try
                         {
-                            cm.Connect(anchorPair, matePair);
-                            made++;
-                            used.Add(mate);
-                            anchorUsed = true;
+                            bool canConnect = false;
+                            try { canConnect = cm.CanConnect(anchorPair, matePair); }
+                            catch (System.Exception ex)
+                            {
+                                trace($"CanConnect бросил: {ex.GetType().Name}: {ex.Message}");
+                            }
+
+                            if (Diagnostic)
+                            {
+                                // Dry run: report the verdict, connect nothing.
+                                trace($"  CANDIDATE {anchor.Label} ↔ {mate.Label}: "
+                                    + $"CanConnect={canConnect}");
+                                if (canConnect) made++;   // count would-be connections
+                                continue;
+                            }
+
+                            if (!canConnect) continue;
+
+                            try
+                            {
+                                cm.Connect(anchorPair, matePair);
+                                made++;
+                                used.Add(mate);
+                                anchorUsed = true;
+                            }
+                            catch (System.Exception ex)
+                            {
+                                skippedError++;
+                                trace($"Connect не удался ({anchor.Label}↔{mate.Label}): "
+                                    + $"{ex.GetType().Name}: {ex.Message}");
+                            }
                         }
-                        catch (System.Exception ex)
+                        finally
                         {
-                            skippedError++;
-                            trace($"Connect не удался ({anchor.PortName}↔{mate.PortName}): "
-                                + $"{ex.GetType().Name}: {ex.Message}");
+                            try { anchorPair.Dispose(); } catch { }
+                            try { matePair.Dispose(); } catch { }
                         }
                     }
 

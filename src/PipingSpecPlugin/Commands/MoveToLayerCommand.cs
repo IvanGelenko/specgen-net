@@ -8,7 +8,6 @@ using PipingSpecPlugin.Layers;
 using PipingSpecPlugin.Settings;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using WinForms = System.Windows.Forms;
-using P3dRuntime = Autodesk.ProcessPower.AcPp3dObjectsUtils.Runtime;
 
 namespace PipingSpecPlugin.Commands
 {
@@ -28,7 +27,7 @@ namespace PipingSpecPlugin.Commands
         [CommandMethod("MOVEBYTAG")]
         public void Run()
         {
-            using var logger = new RunLogger();
+            using var logger = new RunLogger("MOVEBYTAG");
 
             var doc = AcadApp.DocumentManager.MdiActiveDocument;
             if (doc == null)
@@ -134,13 +133,15 @@ namespace PipingSpecPlugin.Commands
                 }
                 catch (System.Exception ex)
                 {
-                    Say("[Разнести по слоям] Ошибка прохода: " + ex.Message);
+                    logger.Error("[Разнести по слоям] Ошибка прохода: " + ex.Message);
+                    try { ed.WriteMessage("\n[Разнести по слоям] Ошибка прохода: " + ex.Message); } catch { }
                     Trace(ex.StackTrace ?? "");
                     try { tr.Abort(); } catch { }
                     return;
                 }
             }
 
+            if (skippedError > 0) logger.Warn($"Пропущено из-за ошибок: {skippedError} (см. строки выше).");
             var summary =
                 $"Перенесено деталей: {moved} (слоёв: {layersTouched.Count}). "
               + $"Пропущено без идентификатора: {skippedNoTag}."

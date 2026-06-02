@@ -299,6 +299,10 @@ namespace PipingSpecPlugin.Spec
             try { cm = new ConnectionManager(); }
             catch { return; }
 
+            // ConnectionManager wraps a native object (DisposableWrapper);
+            // BuildTopology runs once per drawing, so without disposing it a
+            // project-wide scan leaks one native handle per DWG.
+            using (cm)
             using (var tr = db.TransactionManager.StartTransaction())
             {
                 try
@@ -484,11 +488,16 @@ namespace PipingSpecPlugin.Spec
                 catch { /* try the next candidate */ }
             }
 
-            // Fallback: bare related-rows. Includes other connection types,
-            // so it can over-exclude — a pipe run merely touching the vessel
-            // gets marked owned and dropped from the spec. We log every
-            // rowId excluded via this imprecise path so a "missing pipe"
-            // can be traced back here instead of vanishing silently.
+            // Fallback: bare related-rows. This is imprecise — it returns
+            // every related row regardless of relationship type, so a pipe
+            // run merely touching the vessel comes back here. Marking such a
+            // row "owned" would silently DROP it from the spec, which for a
+            // procurement document is the worst kind of error (under-count
+            // that looks complete). So we guard the fallback: only exclude
+            // rows whose own category is NOT a procurement category. Pipes,
+            // fittings, valves and flanges are never equipment-owned in a way
+            // that should hide them — mirrors the safety pass in
+            // ValveCompanionFinder.
             try
             {
                 var related = dlm.GetRelatedRowIds(rowId);
@@ -496,11 +505,39 @@ namespace PipingSpecPlugin.Spec
                 foreach (int id in related)
                 {
                     if (id == rowId) continue;
+                    if (IsProcurementCategory(dlm, id))
+                    {
+                        trace?.Invoke($"AssetOwnership(fallback): rowId {id} НЕ помечен owned — это закупочная категория (труба/деталь/арматура/фланец), оставляем в спецификации.");
+                        continue;
+                    }
                     if (ownedIds.Add(id))
-                        trace?.Invoke($"AssetOwnership(fallback): rowId {id} помечен owned для оборудования {rowId} (мог быть трубой).");
+                        trace?.Invoke($"AssetOwnership(fallback): rowId {id} помечен owned для оборудования {rowId}.");
                 }
             }
             catch { }
+        }
+
+        // True when the row's PartCategory is one a procurement spec must
+        // always keep, so the imprecise AssetOwnership fallback never hides
+        // it. Reads the single PartCategory property; any failure is treated
+        // as "not a procurement category" so behaviour stays conservative
+        // (the row can still be excluded as before).
+        static bool IsProcurementCategory(DataLinksManager dlm, int rowId)
+        {
+            string cat = null;
+            try
+            {
+                var props = dlm.GetAllProperties(rowId, true);
+                if (props != null)
+                    foreach (var kv in props)
+                        if (kv.Key == "PartCategory") { cat = kv.Value; break; }
+            }
+            catch { return false; }
+            if (string.IsNullOrEmpty(cat)) return false;
+            return cat.Equals("Pipe", System.StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("Fittings", System.StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("Valves", System.StringComparison.OrdinalIgnoreCase)
+                || cat.Equals("Flanges", System.StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>

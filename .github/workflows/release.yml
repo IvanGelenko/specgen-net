@@ -34,7 +34,7 @@ jobs:
 
       - name: Derive version from tag
         id: ver
-        shell: pwsh
+        shell: powershell
         run: |
           # refs/tags/v1.2.0 -> 1.2.0
           $tag = "${{ github.ref_name }}"
@@ -50,7 +50,7 @@ jobs:
           Write-Host "Building version $version"
 
       - name: Run unit tests
-        shell: pwsh
+        shell: powershell
         run: dotnet test test/PipingSpecPlugin.Tests/PipingSpecPlugin.Tests.csproj -c Release --nologo
 
       - name: Build plugin + installer
@@ -58,7 +58,7 @@ jobs:
         run: build.cmd
 
       - name: Verify installer asset exists
-        shell: pwsh
+        shell: powershell
         run: |
           $exe = "dist_installer/PipingSpecPlugin-Setup.exe"
           if (-not (Test-Path $exe)) {

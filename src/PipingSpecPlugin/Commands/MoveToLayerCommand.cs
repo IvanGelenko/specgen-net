@@ -99,7 +99,7 @@ namespace PipingSpecPlugin.Commands
                             || !className.StartsWith("AcPp", StringComparison.OrdinalIgnoreCase))
                             continue;
 
-                        if (!IsValveOrEquipment(entId, dlm, out var tag))
+                        if (!TryGetTag(entId, dlm, out var tag))
                             continue;
 
                         var layerName = TagLayerMover.SanitizeLayerName(tag);
@@ -151,46 +151,38 @@ namespace PipingSpecPlugin.Commands
         }
 
         /// <summary>
-        /// True when the entity is a Valve (PartCategory == "Valves") or
-        /// Equipment (IsPnP3dEquipment or PartCategory == "Equipment").
-        /// <paramref name="tag"/> receives the part's Tag property (may be
-        /// null/empty — the caller decides what to do with that).
+        /// True when the Plant 3D entity carries a non-empty Tag (identifier).
+        /// We move EVERY tagged part — valves, equipment, instruments (КИП),
+        /// supports (опоры) and anything else the modeller tagged — not just a
+        /// fixed category list, because all of those legitimately have a Tag
+        /// and the user organises the whole drawing by it. The category filter
+        /// that used to gate this (Valves/Equipment only) silently skipped
+        /// instruments and supports.
+        /// <paramref name="tag"/> receives the Tag value when present.
         /// </summary>
-        static bool IsValveOrEquipment(ObjectId entId, DataLinksManager dlm, out string tag)
+        static bool TryGetTag(ObjectId entId, DataLinksManager dlm, out string tag)
         {
             tag = null;
-
-            bool isEquipment = false;
-            try { isEquipment = P3dRuntime.IsPnP3dEquipment(entId); }
-            catch { }
 
             int rowId = 0;
             try { rowId = dlm.FindAcPpRowId(entId); }
             catch { }
+            if (rowId == 0) return false;   // not a data-linked Plant 3D part
 
-            string category = null;
-            if (rowId != 0)
+            try
             {
-                try
+                var props = dlm.GetAllProperties(rowId, true);
+                if (props != null)
                 {
-                    var props = dlm.GetAllProperties(rowId, true);
-                    if (props != null)
+                    foreach (var kv in props)
                     {
-                        foreach (var kv in props)
-                        {
-                            if (kv.Key == null) continue;
-                            if (category == null && kv.Key == "PartCategory") category = kv.Value;
-                            else if (tag == null && kv.Key == "Tag") tag = kv.Value;
-                            if (category != null && tag != null) break;
-                        }
+                        if (kv.Key == "Tag") { tag = kv.Value; break; }
                     }
                 }
-                catch { }
             }
+            catch { }
 
-            bool isValve = string.Equals(category, "Valves", StringComparison.OrdinalIgnoreCase);
-            bool isEquipCat = string.Equals(category, "Equipment", StringComparison.OrdinalIgnoreCase);
-            return isValve || isEquipCat || isEquipment;
+            return !string.IsNullOrWhiteSpace(tag);
         }
 
         /// <summary>

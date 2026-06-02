@@ -68,5 +68,14 @@ namespace PipingSpecPlugin.Spec
         // its description.
         public static readonly string[] ConnectorKeywords =
             { "buttweld", "universal", "weld joint", "weld connector" };
+
+        // Support keywords (case-insensitive substring match). Supports
+        // modelled as StructureMember (beams/frames) instead of Plant 3D
+        // Pipe Supports have no "TYPE=SUPPORT" iso symbol and an empty
+        // PartCategory, so they'd otherwise drop out as "empty-category".
+        // When such a part's description matches one of these, it lands
+        // in the "Supports" bucket. "опора" is the Russian catalogue word.
+        public static readonly string[] SupportKeywords =
+            { "опора", "support" };
     }
 }

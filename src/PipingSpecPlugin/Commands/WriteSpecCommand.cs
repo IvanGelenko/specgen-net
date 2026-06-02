@@ -219,11 +219,29 @@ namespace PipingSpecPlugin.Commands
             progress.Indeterminate("Поиск чертежей проекта…");
             progress.Show();
 
-            Say("[Спецификация] Сканирование проекта…");
+            // Fast path for the explicit "Текущий чертёж" ribbon button:
+            // scope is known BEFORE the picker opens, so we can read only
+            // the active DWG instead of sweeping the whole project. Safe
+            // because P3dPartConnection topology never crosses a drawing
+            // boundary (ConnectionManager.GetConnections is scoped to one
+            // Database) — bend-fold and valve-companion discovery operate
+            // entirely within the active sheet. The only thing lost is the
+            // cross-sheet "N parts of this line live in other drawings"
+            // diagnostic, which by definition has no data in single-DWG mode.
+            //
+            // Plain WRITESPEC (forcedScope == null) still scans the whole
+            // project even when the user later picks "dwg" in the dialog —
+            // there the scope isn't known until after the scan.
+            bool singleDwg = forcedScope == "dwg" && !string.IsNullOrEmpty(activePath);
+            Say(singleDwg
+                ? "[Спецификация] Сканирование текущего чертежа…"
+                : "[Спецификация] Сканирование проекта…");
             ScanResult scan;
             try
             {
-                scan = ScanWithCache(project, Say, Trace, progress);
+                scan = singleDwg
+                    ? ScanSingleDrawing(project, activePath, Say, Trace, progress)
+                    : ScanWithCache(project, Say, Trace, progress);
             }
             finally
             {
@@ -407,10 +425,14 @@ namespace PipingSpecPlugin.Commands
                     .Where(r => PathEquals(r.SourceDwgPath, activePath))
                     .ToList();
 
-                // Diagnostic: when the user picked specific lines, log
-                // how many parts of those lines live in OTHER drawings
-                // — they'll be silently excluded by the scope filter
-                // and it's the most common "why is qty short" answer.
+                // Diagnostic: when the user picked specific lines, log how
+                // many parts of those lines live in OTHER drawings — they'll
+                // be silently excluded by the scope filter and it's the most
+                // common "why is qty short" answer. Only meaningful when the
+                // scan actually swept the whole project (plain WRITESPEC with
+                // scope=dwg picked in the dialog). The "Текущий чертёж" button
+                // reads a single DWG, so scan.records only ever holds the
+                // active drawing and this block has nothing to report.
                 if (result.Lines != null)
                 {
                     var sel = new HashSet<string>(result.Lines, StringComparer.Ordinal);
@@ -615,6 +637,63 @@ namespace PipingSpecPlugin.Commands
             public HashSet<int> ownedPnPIds = new();
             public Dictionary<int, List<int>> topology = new();
             public int skippedFiles;
+        }
+
+        /// <summary>
+        /// Read a single DWG — the active drawing — instead of the whole
+        /// project. Used by the "Текущий чертёж" button (forcedScope=dwg)
+        /// where scope is fixed before the picker. Not cached: a one-file
+        /// read is already fast, and ScanCache is keyed on the full project
+        /// fingerprint which doesn't apply here.
+        ///
+        /// records == activeDwgRecords by construction (one and the same
+        /// drawing), so ProjectFacts/activeFacts in RunCore match and the
+        /// downstream scope=dwg filter is a no-op.
+        /// </summary>
+        static ScanResult ScanSingleDrawing(PlantProject project, string activePath,
+            Action<string> say, Action<string> trace, UI.ProgressWindow progress)
+        {
+            // Need the project DataLinksManager: a side-DB read alone can't
+            // resolve every property without the project-level link blob.
+            Project piping = null;
+            foreach (var pp in project.ProjectParts)
+                if (pp is Autodesk.ProcessPower.P3dProjectParts.PipingProject)
+                { piping = pp; break; }
+            var projectDlm = piping?.DataLinksManager as DataLinksManager;
+
+            progress.Report(0, 1, $"Чертёж: {Path.GetFileName(activePath)}");
+            var scan = new ScanResult();
+
+            if (!File.Exists(activePath))
+            {
+                say($"[Спецификация] Активный чертёж не найден на диске: {Path.GetFileName(activePath)}");
+                scan.skippedFiles++;
+                return scan;
+            }
+
+            try
+            {
+                PartReadResult result = ReadOneDrawing(activePath, activePath, projectDlm, trace);
+                if (result != null)
+                {
+                    foreach (var r in result.Records)
+                        r.SourceDwgPath = activePath;
+                    scan.records.AddRange(result.Records);
+                    scan.activeDwgRecords.AddRange(result.Records);
+                    foreach (var id in result.EquipmentOwnedPnPIds) scan.ownedPnPIds.Add(id);
+                    foreach (var kv in result.Topology)
+                        scan.topology[kv.Key] = new List<int>(kv.Value);
+                }
+            }
+            catch (System.Exception ex)
+            {
+                trace($"FAILED: {Path.GetFileName(activePath)}: {ex.GetType().Name}: {ex.Message}");
+                if (ex.InnerException != null)
+                    trace($"  inner: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                scan.skippedFiles++;
+            }
+            progress.Report(1, 1, $"Готово: {Path.GetFileName(activePath)}");
+            return scan;
         }
 
         /// <summary>

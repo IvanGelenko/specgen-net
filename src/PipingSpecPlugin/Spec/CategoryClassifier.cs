@@ -35,6 +35,21 @@ namespace PipingSpecPlugin.Spec
             var cat = r.PartCategory ?? "";
             if (!string.IsNullOrEmpty(cat)) return cat;
 
+            // Supports modelled as structure members (beams/frames) carry
+            // no "TYPE=SUPPORT" iso symbol and an empty PartCategory, so
+            // they'd drop out as empty-category. Recognise them by their
+            // description ("Опора …" in the Russian catalogue) so all the
+            // supports on a line make it into the spec, not just the one
+            // real Plant 3D Pipe Support. Keyed on description rather than
+            // the bare class name to avoid pulling in non-support
+            // StructureMember geometry.
+            foreach (var fld in new[] { r.ShortDescription, r.PartFamilyLongDesc, r.PartSizeLongDesc })
+            {
+                var t = (fld ?? "").ToLowerInvariant();
+                foreach (var kw in SpecConstants.SupportKeywords)
+                    if (t.Contains(kw)) return "Supports";
+            }
+
             var cls = (r.PnPClassName ?? "").ToLowerInvariant();
             if (cls == "p3dconnector" || cls == "buttweld"
                 || cls == "universal" || cls == "weldspec"

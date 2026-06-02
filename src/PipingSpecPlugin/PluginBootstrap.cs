@@ -123,6 +123,12 @@ namespace PipingSpecPlugin
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = layersSource });
 
+            var helpSource = new RibbonPanelSource { Title = "Справка" };
+            helpSource.Items.Add(MakeButton("О программе", "SPECABOUT",
+                "Информация о плагине и его версии.",
+                "icon32.png"));
+            tab.Panels.Add(new RibbonPanel { Source = helpSource });
+
             ribbon.Tabs.Add(tab);
         }
 

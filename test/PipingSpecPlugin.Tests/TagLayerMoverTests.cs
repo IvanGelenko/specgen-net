@@ -65,6 +65,44 @@ namespace PipingSpecPlugin.Tests
             Assert.Equal("a_b", TagLayerMover.SanitizeLayerName("a\nb"));
         }
 
+        [Theory]
+        // Plant 3D placeholders for "no value" must be treated as no tag, so
+        // the part stays on its current layer instead of moving to a junk layer.
+        [InlineData("")]
+        [InlineData("   ")]
+        [InlineData(null)]
+        [InlineData("<пусто>")]
+        [InlineData("<none>")]
+        [InlineData("<empty>")]
+        [InlineData("none")]
+        [InlineData("N/A")]
+        [InlineData("0")]
+        [InlineData("?")]
+        [InlineData("<anything>")]
+        [InlineData("{TagFormat}")]
+        [InlineData("%register%")]
+        // Separator-only tags from an unfilled tag-format template: these
+        // produced junk layers like "_-_" before. No alphanumeric → no tag.
+        [InlineData("-")]
+        [InlineData("- -")]
+        [InlineData("_/_")]
+        [InlineData(".")]
+        [InlineData("---")]
+        public void MeaninglessTag_ReturnsNullLayer(string raw)
+        {
+            Assert.True(TagLayerMover.IsMeaninglessTag(raw));
+            Assert.Null(TagLayerMover.SanitizeLayerName(raw));
+        }
+
+        [Theory]
+        [InlineData("gv-001")]
+        [InlineData("E-205")]
+        [InlineData("V_101.A")]
+        public void RealTag_IsNotMeaningless(string raw)
+        {
+            Assert.False(TagLayerMover.IsMeaninglessTag(raw));
+        }
+
         [Fact]
         public void OverLongName_IsTruncatedTo255()
         {

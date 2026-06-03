@@ -4,6 +4,7 @@ using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
+using Autodesk.ProcessPower.DataObjects;
 using PipingSpecPlugin.Layers;
 using PipingSpecPlugin.Settings;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
@@ -12,11 +13,14 @@ using WinForms = System.Windows.Forms;
 namespace PipingSpecPlugin.Commands
 {
     /// <summary>
-    /// MOVEBYTAG — moves every Valve and Equipment part in the active
-    /// drawing onto a layer named after its Plant 3D Tag (identifier),
-    /// e.g. a valve tagged "gv-001" lands on layer "gv-001". Parts with no
-    /// tag are left untouched and reported. The whole pass runs in a single
-    /// write transaction so one Undo reverts everything.
+    /// MOVEBYTAG — moves every tagged Plant 3D part in the active drawing
+    /// (valves, equipment, fittings, instruments, supports, …) onto a layer
+    /// named after its Plant 3D Tag (identifier), e.g. a valve tagged
+    /// "gv-001" lands on layer "gv-001". Parts are enumerated by DataLinks
+    /// rowId (SelectAcPpRowIds), so parts nested inside line-group blocks are
+    /// included — a plain Model-Space walk missed them. Parts with no usable
+    /// identifier are left untouched and reported. The whole pass runs in a
+    /// single write transaction so one Undo reverts everything.
     ///
     /// This is the plug-in's only DWG-mutating command; everything else is
     /// read-only. Hence the explicit document lock and the defensive
@@ -81,29 +85,25 @@ namespace PipingSpecPlugin.Commands
                 try
                 {
                     var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
-                    var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
-                    if (msId.IsNull)
+
+                    // Enumerate EVERY Plant 3D part by its DataLinks rowId —
+                    // the same query PartReader uses. Walking Model Space
+                    // alone (the old approach) only saw top-level entities and
+                    // silently missed valves/fittings nested inside line-group
+                    // blocks, so tagged armature never moved. SelectAcPpRowIds
+                    // returns rows for nested parts too; we then map each row
+                    // back to its AutoCAD entity to change its layer.
+                    var rowIds = CollectRowIds(db, dlm, Trace);
+                    Say($"[Разнести по слоям] Найдено деталей Plant 3D: {rowIds.Count}.");
+
+                    foreach (int rowId in rowIds)
                     {
-                        Say("[Разнести по слоям] Не найдено пространство модели.");
-                        tr.Commit();
-                        return;
-                    }
-                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
-
-                    foreach (ObjectId entId in ms)
-                    {
-                        // Fast filter: only Plant 3D entities (class "AcPp*").
-                        var className = entId.ObjectClass?.Name;
-                        if (className == null
-                            || !className.StartsWith("AcPp", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        if (!TryGetTag(entId, dlm, out var tag))
-                            continue;
-
+                        var tag = ReadTag(dlm, rowId);
                         var layerName = TagLayerMover.SanitizeLayerName(tag);
                         if (layerName == null)
                         {
+                            // No usable identifier → leave the part where it
+                            // is. (Log kept terse — these dominate the file.)
                             skippedNoTag++;
                             continue;
                         }
@@ -117,15 +117,40 @@ namespace PipingSpecPlugin.Commands
                                 continue;
                             }
 
-                            var ent = (Entity)tr.GetObject(entId, OpenMode.ForWrite);
-                            ent.LayerId = layerId;
-                            moved++;
-                            layersTouched.Add(layerName);
+                            // A row maps to one or more AutoCAD entities (a
+                            // part plus, e.g., its annotation). Move them all.
+                            bool movedAny = false;
+                            foreach (var entId in EntityIdsForRow(dlm, rowId, db))
+                            {
+                                if (entId.IsNull || entId.IsErased) continue;
+                                try
+                                {
+                                    var ent = (Entity)tr.GetObject(entId, OpenMode.ForWrite);
+                                    ent.LayerId = layerId;
+                                    movedAny = true;
+                                }
+                                catch (System.Exception ex)
+                                {
+                                    Trace($"Сущность строки {rowId} не перенесена: "
+                                        + $"{ex.GetType().Name}: {ex.Message}");
+                                }
+                            }
+
+                            if (movedAny)
+                            {
+                                moved++;
+                                layersTouched.Add(layerName);
+                            }
+                            else
+                            {
+                                skippedError++;
+                                Trace($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в чертеже.");
+                            }
                         }
                         catch (System.Exception ex)
                         {
                             skippedError++;
-                            Trace($"Деталь не перенесена ({className}): {ex.GetType().Name}: {ex.Message}");
+                            Trace($"Деталь не перенесена (строка {rowId}): {ex.GetType().Name}: {ex.Message}");
                         }
                     }
 
@@ -152,38 +177,109 @@ namespace PipingSpecPlugin.Commands
         }
 
         /// <summary>
-        /// True when the Plant 3D entity carries a non-empty Tag (identifier).
-        /// We move EVERY tagged part — valves, equipment, instruments (КИП),
-        /// supports (опоры) and anything else the modeller tagged — not just a
-        /// fixed category list, because all of those legitimately have a Tag
-        /// and the user organises the whole drawing by it. The category filter
-        /// that used to gate this (Valves/Equipment only) silently skipped
-        /// instruments and supports.
-        /// <paramref name="tag"/> receives the Tag value when present.
+        /// Collects the rowId of EVERY Plant 3D part in the drawing — valves,
+        /// equipment, fittings, instruments (КИП), supports (опоры) and the
+        /// like — including parts nested inside line-group blocks that a plain
+        /// Model-Space walk never reaches. Mirrors PartReader: SelectAcPpRowIds
+        /// is the primary query; a Model-Space scan supplements it with any
+        /// freshly-placed in-memory parts not yet in the row map.
         /// </summary>
-        static bool TryGetTag(ObjectId entId, DataLinksManager dlm, out string tag)
+        static HashSet<int> CollectRowIds(Database db, DataLinksManager dlm, Action<string> trace)
         {
-            tag = null;
+            var rowIdSet = new HashSet<int>();
 
-            int rowId = 0;
-            try { rowId = dlm.FindAcPpRowId(entId); }
-            catch { }
-            if (rowId == 0) return false;   // not a data-linked Plant 3D part
+            try
+            {
+                PnPRowIdArray rowIds = dlm.SelectAcPpRowIds(db);
+                if (rowIds != null)
+                    foreach (int id in rowIds)
+                        if (id != 0) rowIdSet.Add(id);
+            }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"SelectAcPpRowIds не удался — {ex.GetType().Name}: {ex.Message}");
+            }
 
+            // Supplement with model-space scan for unsaved/new parts.
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                if (!msId.IsNull)
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
+                    foreach (ObjectId entId in ms)
+                    {
+                        var className = entId.ObjectClass?.Name;
+                        if (className == null
+                            || !className.StartsWith("AcPp", StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        int rowId = 0;
+                        try { rowId = dlm.FindAcPpRowId(entId); } catch { }
+                        if (rowId != 0) rowIdSet.Add(rowId);
+                    }
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"Сканирование пространства модели не удалось — {ex.GetType().Name}: {ex.Message}");
+            }
+
+            return rowIdSet;
+        }
+
+        /// <summary>
+        /// Reads a row's raw Tag (identifier), or null. Whether that value is a
+        /// *usable* identifier (vs. empty/placeholder/separators) is decided by
+        /// <see cref="TagLayerMover.SanitizeLayerName"/> — not here — so the
+        /// "no identifier → don't move" rule lives in one tested place.
+        /// </summary>
+        static string ReadTag(DataLinksManager dlm, int rowId)
+        {
             try
             {
                 var props = dlm.GetAllProperties(rowId, true);
                 if (props != null)
-                {
                     foreach (var kv in props)
-                    {
-                        if (kv.Key == "Tag") { tag = kv.Value; break; }
-                    }
-                }
+                        if (string.Equals(kv.Key, "Tag", StringComparison.OrdinalIgnoreCase))
+                            return kv.Value;
             }
             catch { }
+            return null;
+        }
 
-            return !string.IsNullOrWhiteSpace(tag);
+        /// <summary>
+        /// Resolves a DataLinks rowId to the AutoCAD entity ObjectId(s) that
+        /// represent it in this drawing, so we can change their layer. A row
+        /// can map to several AcDb objects (the part plus annotation); the
+        /// caller moves each one it can open.
+        /// </summary>
+        static IEnumerable<ObjectId> EntityIdsForRow(DataLinksManager dlm, int rowId, Database db)
+        {
+            var result = new List<ObjectId>();
+            PpObjectIdArray ppIds;
+            try
+            {
+                var rowArr = new PnPRowIdArray();
+                rowArr.AddLast(rowId);
+                ppIds = dlm.SelectAcPpObjectIds(rowArr);
+            }
+            catch { return result; }
+
+            if (ppIds == null) return result;
+            foreach (var ppId in ppIds)
+            {
+                try
+                {
+                    var ids = dlm.MakeAcDbObjectIds(ppId);
+                    if (ids != null)
+                        foreach (ObjectId id in ids)
+                            result.Add(id);
+                }
+                catch { }
+            }
+            return result;
         }
 
         /// <summary>

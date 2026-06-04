@@ -137,6 +137,10 @@ namespace PipingSpecPlugin
                 "Выделить на чертеже все детали Plant 3D с заданным статусом "
                 + "строительства (например, «Существующее», «Новое», «Под снос»).",
                 "icon32.png"));
+            selectSource.Items.Add(MakeButton("Выбрать по линии", "SELECTBYLINE",
+                "Выделить на чертеже все детали Plant 3D с заданным номером "
+                + "линии (идентификатором линии).",
+                "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = selectSource });
 
             // Панель «Связи» (CONNECTALL / CONNECTALLDIAG) временно скрыта:

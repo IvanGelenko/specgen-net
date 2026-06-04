@@ -28,6 +28,7 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.WriteSpecCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.MoveToLayerCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByStatusCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByLineCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ConnectAdjacentCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.AboutCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

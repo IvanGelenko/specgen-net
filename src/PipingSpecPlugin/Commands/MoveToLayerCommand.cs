@@ -88,6 +88,13 @@ namespace PipingSpecPlugin.Commands
             // сущностей" errors that a drawing reopen cleared. Build a plan of
             // (layerName → entityIds) here, then mutate the DWG in phase 2.
             var plan = new List<(string layerName, List<ObjectId> ents)>();
+
+            // Save the drawing if it has unsaved edits, then re-sync DataLinks
+            // (same as the spec generator) so an edited Tag is read fresh, not
+            // at its pre-save value. Needs the doc locked (SaveAs writes DWG).
+            using (doc.LockDocument())
+                PartEntityIndex.SaveAndRefresh(doc, db, dlm, Trace);
+
             var rowIds = PartEntityIndex.CollectRowIds(db, dlm, Trace);
             Say($"[Разнести по слоям] Найдено деталей Plant 3D: {rowIds.Count}.");
 

@@ -68,11 +68,17 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
+            // Save the drawing if it has unsaved edits, then re-sync DataLinks
+            // — the same thing the spec generator does. Plant 3D only writes an
+            // edited property (e.g. a part's Status) into the DataLinks store on
+            // SAVE, so without this the status list reflects the pre-edit state.
+            // Needs the document locked (SaveAs writes the DWG).
+            using (doc.LockDocument())
+                PartEntityIndex.SaveAndRefresh(doc, db, dlm, Trace);
+
             // Group every part's entities by its Status. The empty/missing
             // status collapses into one "Без статуса" bucket so the user can
-            // still grab those parts. A document lock is not required — we only
-            // read the row map and resolve entity ids; we never open entities
-            // for write.
+            // still grab those parts.
             var byStatus = new Dictionary<string, List<ObjectId>>(StringComparer.Ordinal);
 
             var rowIds = PartEntityIndex.CollectRowIds(db, dlm, Trace);

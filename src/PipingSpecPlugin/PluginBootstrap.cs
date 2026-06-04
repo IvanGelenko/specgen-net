@@ -139,18 +139,20 @@ namespace PipingSpecPlugin
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = selectSource });
 
-            var toolsSource = new RibbonPanelSource { Title = "Связи" };
-            toolsSource.Items.Add(MakeButton("Соединить смежные", "CONNECTALL",
-                "Соединить все смежные детали активного чертежа: для каждого "
-                + "свободного порта, совпадающего с портом соседней детали, "
-                + "создаётся соединение Plant 3D.",
-                "icon32.png"));
-            toolsSource.Items.Add(MakeButton("Диагностика связей", "CONNECTALLDIAG",
-                "Анализ без изменения чертежа: показать в логе все свободные "
-                + "порты и причины, по которым пары не соединяются. Полезно, "
-                + "когда «Соединить смежные» пропускает фланцы.",
-                "icon32.png"));
-            tab.Panels.Add(new RibbonPanel { Source = toolsSource });
+            // Панель «Связи» (CONNECTALL / CONNECTALLDIAG) временно скрыта:
+            // «Соединить смежные» работает некорректно и дорабатывается.
+            // Команды остаются в сборке (зарегистрированы в AssemblyInfo) —
+            // их можно вызвать вручную из командной строки, но с ленты они
+            // убраны, чтобы пользователи их не запускали. Чтобы вернуть —
+            // раскомментировать блок ниже.
+            // var toolsSource = new RibbonPanelSource { Title = "Связи" };
+            // toolsSource.Items.Add(MakeButton("Соединить смежные", "CONNECTALL",
+            //     "Соединить все смежные детали активного чертежа.",
+            //     "icon32.png"));
+            // toolsSource.Items.Add(MakeButton("Диагностика связей", "CONNECTALLDIAG",
+            //     "Анализ без изменения чертежа: свободные порты и причины отказа.",
+            //     "icon32.png"));
+            // tab.Panels.Add(new RibbonPanel { Source = toolsSource });
 
             var helpSource = new RibbonPanelSource { Title = "Справка" };
             helpSource.Items.Add(MakeButton("О программе", "SPECABOUT",

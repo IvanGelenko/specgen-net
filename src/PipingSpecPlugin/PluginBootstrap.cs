@@ -132,6 +132,13 @@ namespace PipingSpecPlugin
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = layersSource });
 
+            var selectSource = new RibbonPanelSource { Title = "Выбор" };
+            selectSource.Items.Add(MakeButton("Выбрать по статусу", "SELECTBYSTATUS",
+                "Выделить на чертеже все детали Plant 3D с заданным статусом "
+                + "строительства (например, «Существующее», «Новое», «Под снос»).",
+                "icon32.png"));
+            tab.Panels.Add(new RibbonPanel { Source = selectSource });
+
             var toolsSource = new RibbonPanelSource { Title = "Связи" };
             toolsSource.Items.Add(MakeButton("Соединить смежные", "CONNECTALL",
                 "Соединить все смежные детали активного чертежа: для каждого "

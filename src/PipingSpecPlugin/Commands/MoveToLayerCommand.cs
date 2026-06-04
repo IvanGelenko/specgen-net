@@ -1,12 +1,13 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
-using Autodesk.ProcessPower.DataObjects;
 using PipingSpecPlugin.Layers;
 using PipingSpecPlugin.Settings;
+using PipingSpecPlugin.Spec;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using WinForms = System.Windows.Forms;
 
@@ -76,9 +77,45 @@ namespace PipingSpecPlugin.Commands
             int skippedError = 0;
             var layersTouched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // Lock the document — writing entities from a CommandMethod
-            // requires it, otherwise eLockViolation. One transaction for the
-            // whole pass keeps the move atomic under a single Undo.
+            // PHASE 1 — read the DataLinks layer (no DWG write). Enumerate
+            // every Plant 3D part by rowId (includes valves/fittings nested in
+            // line-group blocks that a plain Model-Space walk misses), read its
+            // Tag, and resolve the AutoCAD entities to move. This phase
+            // re-syncs and queries the DLM link map; doing it OUTSIDE the write
+            // transaction is deliberate — re-syncing the link map (AuditDrawing
+            // / ReloadLinkMap) while a write transaction is open corrupts the
+            // map on repeated runs, which surfaced as growing "не найдено
+            // сущностей" errors that a drawing reopen cleared. Build a plan of
+            // (layerName → entityIds) here, then mutate the DWG in phase 2.
+            var plan = new List<(string layerName, List<ObjectId> ents)>();
+            var rowIds = PartEntityIndex.CollectRowIds(db, dlm, Trace);
+            Say($"[Разнести по слоям] Найдено деталей Plant 3D: {rowIds.Count}.");
+
+            foreach (int rowId in rowIds)
+            {
+                var tag = PartEntityIndex.ReadProperty(dlm, rowId, "Tag");
+                var layerName = TagLayerMover.SanitizeLayerName(tag);
+                if (layerName == null)
+                {
+                    // No usable identifier → leave the part where it is.
+                    skippedNoTag++;
+                    continue;
+                }
+
+                var ents = PartEntityIndex.EntityIdsForRow(dlm, rowId, db)
+                    .Where(id => !id.IsNull && !id.IsErased)
+                    .ToList();
+                if (ents.Count == 0)
+                {
+                    skippedError++;
+                    Trace($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в чертеже.");
+                    continue;
+                }
+                plan.Add((layerName, ents));
+            }
+
+            // PHASE 2 — apply the plan in one locked write transaction so a
+            // single Undo reverts everything. No DLM calls here.
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -86,72 +123,40 @@ namespace PipingSpecPlugin.Commands
                 {
                     var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
 
-                    // Enumerate EVERY Plant 3D part by its DataLinks rowId —
-                    // the same query PartReader uses. Walking Model Space
-                    // alone (the old approach) only saw top-level entities and
-                    // silently missed valves/fittings nested inside line-group
-                    // blocks, so tagged armature never moved. SelectAcPpRowIds
-                    // returns rows for nested parts too; we then map each row
-                    // back to its AutoCAD entity to change its layer.
-                    var rowIds = CollectRowIds(db, dlm, Trace);
-                    Say($"[Разнести по слоям] Найдено деталей Plant 3D: {rowIds.Count}.");
-
-                    foreach (int rowId in rowIds)
+                    foreach (var (layerName, ents) in plan)
                     {
-                        var tag = ReadTag(dlm, rowId);
-                        var layerName = TagLayerMover.SanitizeLayerName(tag);
-                        if (layerName == null)
-                        {
-                            // No usable identifier → leave the part where it
-                            // is. (Log kept terse — these dominate the file.)
-                            skippedNoTag++;
-                            continue;
-                        }
-
+                        ObjectId layerId;
                         try
                         {
-                            var layerId = EnsureUsableLayer(tr, lt, db, layerName, Trace);
-                            if (layerId.IsNull)
-                            {
-                                skippedError++;
-                                continue;
-                            }
-
-                            // A row maps to one or more AutoCAD entities (a
-                            // part plus, e.g., its annotation). Move them all.
-                            bool movedAny = false;
-                            foreach (var entId in EntityIdsForRow(dlm, rowId, db))
-                            {
-                                if (entId.IsNull || entId.IsErased) continue;
-                                try
-                                {
-                                    var ent = (Entity)tr.GetObject(entId, OpenMode.ForWrite);
-                                    ent.LayerId = layerId;
-                                    movedAny = true;
-                                }
-                                catch (System.Exception ex)
-                                {
-                                    Trace($"Сущность строки {rowId} не перенесена: "
-                                        + $"{ex.GetType().Name}: {ex.Message}");
-                                }
-                            }
-
-                            if (movedAny)
-                            {
-                                moved++;
-                                layersTouched.Add(layerName);
-                            }
-                            else
-                            {
-                                skippedError++;
-                                Trace($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в чертеже.");
-                            }
+                            layerId = EnsureUsableLayer(tr, lt, db, layerName, Trace);
+                            if (layerId.IsNull) { skippedError++; continue; }
                         }
                         catch (System.Exception ex)
                         {
                             skippedError++;
-                            Trace($"Деталь не перенесена (строка {rowId}): {ex.GetType().Name}: {ex.Message}");
+                            Trace($"Слой '{layerName}' не создан: {ex.GetType().Name}: {ex.Message}");
+                            continue;
                         }
+
+                        bool movedAny = false;
+                        foreach (var entId in ents)
+                        {
+                            if (entId.IsErased) continue;
+                            try
+                            {
+                                var ent = (Entity)tr.GetObject(entId, OpenMode.ForWrite);
+                                ent.LayerId = layerId;
+                                movedAny = true;
+                            }
+                            catch (System.Exception ex)
+                            {
+                                Trace($"Сущность не перенесена ({layerName}): "
+                                    + $"{ex.GetType().Name}: {ex.Message}");
+                            }
+                        }
+
+                        if (movedAny) { moved++; layersTouched.Add(layerName); }
+                        else skippedError++;
                     }
 
                     tr.Commit();
@@ -174,112 +179,6 @@ namespace PipingSpecPlugin.Commands
             Say("[Разнести по слоям] " + summary);
             WinForms.MessageBox.Show(summary, "Разнести по слоям",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
-        }
-
-        /// <summary>
-        /// Collects the rowId of EVERY Plant 3D part in the drawing — valves,
-        /// equipment, fittings, instruments (КИП), supports (опоры) and the
-        /// like — including parts nested inside line-group blocks that a plain
-        /// Model-Space walk never reaches. Mirrors PartReader: SelectAcPpRowIds
-        /// is the primary query; a Model-Space scan supplements it with any
-        /// freshly-placed in-memory parts not yet in the row map.
-        /// </summary>
-        static HashSet<int> CollectRowIds(Database db, DataLinksManager dlm, Action<string> trace)
-        {
-            var rowIdSet = new HashSet<int>();
-
-            try
-            {
-                PnPRowIdArray rowIds = dlm.SelectAcPpRowIds(db);
-                if (rowIds != null)
-                    foreach (int id in rowIds)
-                        if (id != 0) rowIdSet.Add(id);
-            }
-            catch (System.Exception ex)
-            {
-                trace?.Invoke($"SelectAcPpRowIds не удался — {ex.GetType().Name}: {ex.Message}");
-            }
-
-            // Supplement with model-space scan for unsaved/new parts.
-            try
-            {
-                using var tr = db.TransactionManager.StartTransaction();
-                var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
-                if (!msId.IsNull)
-                {
-                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
-                    foreach (ObjectId entId in ms)
-                    {
-                        var className = entId.ObjectClass?.Name;
-                        if (className == null
-                            || !className.StartsWith("AcPp", StringComparison.OrdinalIgnoreCase))
-                            continue;
-                        int rowId = 0;
-                        try { rowId = dlm.FindAcPpRowId(entId); } catch { }
-                        if (rowId != 0) rowIdSet.Add(rowId);
-                    }
-                }
-                tr.Commit();
-            }
-            catch (System.Exception ex)
-            {
-                trace?.Invoke($"Сканирование пространства модели не удалось — {ex.GetType().Name}: {ex.Message}");
-            }
-
-            return rowIdSet;
-        }
-
-        /// <summary>
-        /// Reads a row's raw Tag (identifier), or null. Whether that value is a
-        /// *usable* identifier (vs. empty/placeholder/separators) is decided by
-        /// <see cref="TagLayerMover.SanitizeLayerName"/> — not here — so the
-        /// "no identifier → don't move" rule lives in one tested place.
-        /// </summary>
-        static string ReadTag(DataLinksManager dlm, int rowId)
-        {
-            try
-            {
-                var props = dlm.GetAllProperties(rowId, true);
-                if (props != null)
-                    foreach (var kv in props)
-                        if (string.Equals(kv.Key, "Tag", StringComparison.OrdinalIgnoreCase))
-                            return kv.Value;
-            }
-            catch { }
-            return null;
-        }
-
-        /// <summary>
-        /// Resolves a DataLinks rowId to the AutoCAD entity ObjectId(s) that
-        /// represent it in this drawing, so we can change their layer. A row
-        /// can map to several AcDb objects (the part plus annotation); the
-        /// caller moves each one it can open.
-        /// </summary>
-        static IEnumerable<ObjectId> EntityIdsForRow(DataLinksManager dlm, int rowId, Database db)
-        {
-            var result = new List<ObjectId>();
-            PpObjectIdArray ppIds;
-            try
-            {
-                var rowArr = new PnPRowIdArray();
-                rowArr.AddLast(rowId);
-                ppIds = dlm.SelectAcPpObjectIds(rowArr);
-            }
-            catch { return result; }
-
-            if (ppIds == null) return result;
-            foreach (var ppId in ppIds)
-            {
-                try
-                {
-                    var ids = dlm.MakeAcDbObjectIds(ppId);
-                    if (ids != null)
-                        foreach (ObjectId id in ids)
-                            result.Add(id);
-                }
-                catch { }
-            }
-            return result;
         }
 
         /// <summary>

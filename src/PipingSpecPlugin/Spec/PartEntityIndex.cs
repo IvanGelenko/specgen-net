@@ -19,17 +19,23 @@ namespace PipingSpecPlugin.Spec
     public static class PartEntityIndex
     {
         /// <summary>
-        /// Forces the DataLinksManager's link map to re-sync with the live
-        /// drawing before we query it. Without this, repeated runs in one
-        /// session go stale: after a pass mutates entities, the cached link
-        /// map still points at the pre-edit state, so SelectAcPpObjectIds /
-        /// MakeAcDbObjectIds resolve nothing for some rows ("не найдено
-        /// сущностей в чертеже") — which is exactly why closing and reopening
-        /// the drawing made the errors shrink or vanish (a reopen rebuilds the
-        /// map from scratch). AuditDrawing(db) is the canonical "give me live
-        /// state" trigger; the rest are belt-and-braces because different
-        /// Plant 3D builds surface the freshness flag through different APIs.
-        /// Mirrors the sequence PartReader already relies on.
+        /// Forces the DataLinksManager to re-sync with the live drawing before
+        /// we query it — BOTH the link map (rowId ↔ entity) AND the cached
+        /// property store (the values GetAllProperties returns, e.g. Status,
+        /// Tag). Two distinct caches:
+        ///   • Link map — AuditDrawing / ReloadLinkMap / RefreshLinkMap. Stale
+        ///     here means SelectAcPpObjectIds / MakeAcDbObjectIds resolve
+        ///     nothing for some rows ("не найдено сущностей в чертеже").
+        ///   • Property store — flushed via GetPnPDatabase().Disconnect /
+        ///     Connect / SynchronizeMetadata + each table's RefreshCachedRows.
+        ///     Stale here means an edited property (e.g. a part's Status
+        ///     changed in the drawing) is read at its OLD value, so
+        ///     SELECTBYSTATUS / MOVEBYTAG don't see the change until reopen.
+        /// This mirrors the full sequence PartReader uses so these commands
+        /// pick up live edits the same way the spec generator does.
+        /// AuditDrawing(db) is the canonical "give me live state" trigger; the
+        /// rest are belt-and-braces because different Plant 3D builds surface
+        /// freshness through different APIs.
         /// </summary>
         public static void RefreshLinkMap(Database db, DataLinksManager dlm, Action<string> trace)
         {
@@ -45,7 +51,28 @@ namespace PipingSpecPlugin.Spec
             }
             catch (System.Exception ex)
             {
-                trace?.Invoke($"RefreshLinkMap: {ex.GetType().Name}: {ex.Message}");
+                trace?.Invoke($"RefreshLinkMap (link map): {ex.GetType().Name}: {ex.Message}");
+            }
+
+            // Flush the property-value cache so edited properties (Status, Tag,
+            // …) read fresh, not at their pre-edit values.
+            try
+            {
+                var pnpDb = dlm.GetPnPDatabase();
+                if (pnpDb != null)
+                {
+                    try { pnpDb.CacheAlways = false; } catch { }
+                    try { pnpDb.Disconnect(); } catch { }
+                    try { pnpDb.Connect(); } catch { }
+                    try { pnpDb.AcceptChanges(); } catch { }
+                    try { pnpDb.SynchronizeMetadata(); } catch { }
+                    foreach (PnPTable table in pnpDb.Tables)
+                        try { table.RefreshCachedRows(); } catch { }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"RefreshLinkMap (property cache): {ex.GetType().Name}: {ex.Message}");
             }
         }
 

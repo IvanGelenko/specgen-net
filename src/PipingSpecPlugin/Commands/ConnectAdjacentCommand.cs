@@ -7,36 +7,35 @@ using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.PnP3dObjects;
 using PipingSpecPlugin.Settings;
+using PipingSpecPlugin.Spec;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using WinForms = System.Windows.Forms;
 
 namespace PipingSpecPlugin.Commands
 {
     /// <summary>
-    /// CONNECTALL — bulk version of Plant 3D's native "connect to adjacent"
-    /// (PLANTCONNECTTOADJACENT). Walks every Plant 3D part in the active
-    /// drawing, and for every free port that physically coincides with a
-    /// free port of another part, creates a P3dPartConnection between them.
+    /// CONNECTALL — bulk "connect to adjacent": selects every Plant 3D part in
+    /// the active drawing and runs Plant 3D's own native command
+    /// PLANTCONNECTJOINT on that selection, which inserts the proper connector
+    /// (weld / gap component) between adjacent parts. Earlier versions used the
+    /// managed ConnectionManager.Connect, which only created a logical link
+    /// with no visible connector; driving the native command gives the same
+    /// result as the user picking parts and clicking "Соединить со смежным".
     ///
-    /// Why this exists: the spec generator builds its topology from
-    /// P3dPartConnection edges (see PartReader.BuildTopology). Parts that
-    /// the modeller dropped next to each other but never explicitly
+    /// Why this exists: the spec generator builds its topology from connector
+    /// edges. Parts the modeller dropped next to each other but never
     /// connected have no edge — so bend-fold and valve-companion discovery
-    /// miss them. Running CONNECTALL once wires the whole sheet up so the
-    /// spec sees the real network.
+    /// miss them. Running CONNECTALL once wires the whole sheet up.
     ///
-    /// Mutating command: single document lock + one transaction so the
-    /// entire pass reverts under a single Undo, with per-port try/catch so
-    /// one bad joint never aborts the run. Mirrors MOVEBYTAG's structure.
+    /// CONNECTALLDIAG remains a read-only analysis of free ports (it still
+    /// uses the ConnectionManager port-matching scan below) — handy for
+    /// understanding why some joints don't mate. Hence the port-scan helpers
+    /// are retained even though CONNECTALL itself no longer connects manually.
     ///
-    /// IMPORTANT lifetime rule: Port / PortCollection are DisposableWrapper
-    /// objects over native memory tied to the GetPorts call that produced
-    /// them. We must NOT cache a live Port across the scan and reuse it
-    /// later — by then its backing collection is gone and Connect() would
-    /// touch freed memory (AutoCAD hard-crash, not a catchable exception).
-    /// So pass 1 records only value data (position, port name, entity id),
-    /// and pass 2 re-fetches the live Port by name immediately before
-    /// Connect, inside the same transaction.
+    /// IMPORTANT lifetime rule (diagnostic path): Port / PortCollection are
+    /// DisposableWrapper objects over native memory tied to the GetPorts call
+    /// that produced them. We must NOT cache a live Port across the scan — by
+    /// then its backing collection is gone and touching it crashes AutoCAD.
     /// </summary>
     public class ConnectAdjacentCommand
     {
@@ -138,6 +137,20 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
+            // Non-diagnostic mode now drives Plant 3D's own native command
+            // PLANTCONNECTJOINT ("Соединить со смежным"), which inserts the
+            // proper connector (weld / gap) between adjacent components — the
+            // managed ConnectionManager.Connect only made a logical link with
+            // no visible connector. We select every Plant 3D part, then queue
+            // the native command so it runs on that selection. The old
+            // ConnectionManager port-matching pass is kept ONLY for the
+            // read-only CONNECTALLDIAG analysis below.
+            if (!Diagnostic)
+            {
+                RunNativeConnectJoint(doc, db, dlm, Say, Trace, logger);
+                return;
+            }
+
             ConnectionManager cm;
             try { cm = new ConnectionManager(); }
             catch (System.Exception ex)
@@ -217,6 +230,108 @@ namespace PipingSpecPlugin.Commands
             Say("[Соединить смежные] " + summary);
             WinForms.MessageBox.Show(summary, "Соединить смежные",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
+        }
+
+        // The native Plant 3D "connect to adjacent" command. Confirmed name
+        // for AutoCAD Plant 3D 2026: PLANTCONNECTJOINT. It connects the
+        // selected component(s) to their neighbours and inserts the connector.
+        const string NativeConnectCommand = "PLANTCONNECTJOINT";
+
+        /// <summary>
+        /// Bulk wrapper over the native PLANTCONNECTJOINT: select every Plant
+        /// 3D part in the drawing, then queue the native command so it runs on
+        /// that selection and inserts the proper connectors. Selecting parts
+        /// via <see cref="PartEntityIndex"/> covers components nested inside
+        /// line-group blocks (valves, fittings), which a flat Model-Space scan
+        /// would miss.
+        ///
+        /// The native command is queued with SendStringToExecute (runs after
+        /// THIS command returns) so it executes in a clean command context
+        /// with our pickfirst selection active — calling it inline from within
+        /// our own CommandMethod would nest commands and fail.
+        /// </summary>
+        static void RunNativeConnectJoint(Document doc, Database db, DataLinksManager dlm,
+            Action<string> say, Action<string> trace, RunLogger logger)
+        {
+            // Gather entity ids of all Plant 3D parts. Primary: rowId → entity
+            // (includes nested parts). Fallback/supplement: a Model-Space scan
+            // for AcPp entities, so we still select something even if the row
+            // map is unavailable.
+            var ids = new List<ObjectId>();
+            var seen = new HashSet<ObjectId>();
+
+            void Add(ObjectId id)
+            {
+                if (id.IsNull || id.IsErased) return;
+                if (id.Database != db) return;
+                if (seen.Add(id)) ids.Add(id);
+            }
+
+            try
+            {
+                var rowIds = PartEntityIndex.CollectRowIds(db, dlm, trace);
+                foreach (int rowId in rowIds)
+                    foreach (var entId in PartEntityIndex.EntityIdsForRow(dlm, rowId, db))
+                        Add(entId);
+            }
+            catch (System.Exception ex)
+            {
+                trace($"Сбор деталей через rowId не удался: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            // Model-space supplement (and fallback for plain top-level parts).
+            try
+            {
+                using var tr = db.TransactionManager.StartTransaction();
+                var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                if (!msId.IsNull)
+                {
+                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
+                    foreach (ObjectId entId in ms)
+                    {
+                        var className = entId.ObjectClass?.Name;
+                        if (className != null
+                            && className.StartsWith("AcPp", StringComparison.OrdinalIgnoreCase))
+                            Add(entId);
+                    }
+                }
+                tr.Commit();
+            }
+            catch (System.Exception ex)
+            {
+                trace($"Сканирование пространства модели не удалось: {ex.GetType().Name}: {ex.Message}");
+            }
+
+            if (ids.Count == 0)
+            {
+                const string msg = "Не найдено деталей Plant 3D для соединения.";
+                say("[Соединить смежные] " + msg);
+                WinForms.MessageBox.Show(msg, "Соединить смежные",
+                    WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                var ed = doc.Editor;
+                ed.SetImpliedSelection(ids.ToArray());
+                say($"[Соединить смежные] Выбрано деталей: {ids.Count}. "
+                  + $"Запускаю «{NativeConnectCommand}» (создание коннекторов)…");
+
+                // Queue the native command. The trailing space submits it.
+                // It runs after we return, with our selection active.
+                doc.SendStringToExecute(NativeConnectCommand + " ", true, false, true);
+            }
+            catch (System.Exception ex)
+            {
+                logger.Error("[Соединить смежные] Не удалось запустить команду: " + ex.Message);
+                say("[Соединить смежные] Ошибка запуска: " + ex.Message);
+                WinForms.MessageBox.Show(
+                    "Не удалось запустить команду соединения:\n\n" + ex.Message +
+                    "\n\nПодробности в логе:\n" + logger.Path,
+                    "Соединить смежные",
+                    WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+            }
         }
 
         // ---- pass 1: index every free port by position --------------------

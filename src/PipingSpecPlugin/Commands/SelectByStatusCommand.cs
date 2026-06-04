@@ -19,9 +19,15 @@ namespace PipingSpecPlugin.Commands
     /// количеством деталей; после выбора формирует штатное выделение AutoCAD
     /// (pickfirst), как будто пользователь выделил детали рамкой.
     ///
-    /// Команда НИЧЕГО не меняет в модели — только выделяет. Перебор идёт по
-    /// rowId через <see cref="PartEntityIndex"/>, поэтому детали, вложенные в
-    /// блоки линий (арматура, фитинги), тоже попадают в выборку.
+    /// Статусы читаются тем же путём, что и генерация спецификации: чертёж
+    /// сохраняется, затем читается заново С ДИСКА (PartReader.Read) — кэш DLM
+    /// в памяти остаётся устаревшим даже после сохранения, поэтому чтение из
+    /// активной БД не отражает правки. Это и есть причина «не подхватывает
+    /// изменения»; теперь команда видит правки динамически, как спецификация.
+    ///
+    /// Команда НИЧЕГО не меняет в модели (кроме автосохранения чертежа) —
+    /// только выделяет. Детали, вложенные в блоки линий (арматура, фитинги),
+    /// тоже попадают в выборку.
     /// </summary>
     public class SelectByStatusCommand
     {
@@ -68,42 +74,77 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            // Save the drawing if it has unsaved edits, then re-sync DataLinks
-            // — the same thing the spec generator does. Plant 3D only writes an
-            // edited property (e.g. a part's Status) into the DataLinks store on
-            // SAVE, so without this the status list reflects the pre-edit state.
-            // Needs the document locked (SaveAs writes the DWG).
+            // ---- Read statuses the SAME way the spec generator does --------
+            // The spec picks up live edits because WriteSpecCommand (1) saves
+            // the active drawing, then (2) reads it FRESH FROM DISK as a side
+            // database — the in-memory DLM cache stays stale even after a save,
+            // so reading activeDoc.Database directly never reflects edits. We
+            // reuse exactly that path: save → PartReader.Read(diskDb). The
+            // returned PartRecord carries Status and PnPID (the drawing-local
+            // row id), which is identical between the saved disk copy and the
+            // in-memory active drawing — so we group statuses from the fresh
+            // records, then resolve PnPID → entity in the ACTIVE db to select.
+
+            if (string.IsNullOrEmpty(doc.Name))
+            {
+                Say($"[{Title}] Чертёж не сохранён на диск — сохраните его и повторите.");
+                WinForms.MessageBox.Show(
+                    "Чертёж ещё не сохранён на диск. Сохраните его и запустите команду снова.",
+                    Title, WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
+                return;
+            }
+            var dwgPath = doc.Name;
+
+            // 1. Save the active drawing if it has unsaved edits, so disk holds
+            //    the current state. Needs the document locked (writes the DWG).
             using (doc.LockDocument())
                 PartEntityIndex.SaveAndRefresh(doc, db, dlm, Trace);
 
-            // Group every part's entities by its Status. The empty/missing
-            // status collapses into one "Без статуса" bucket so the user can
-            // still grab those parts.
-            var byStatus = new Dictionary<string, List<ObjectId>>(StringComparer.Ordinal);
-
-            var rowIds = PartEntityIndex.CollectRowIds(db, dlm, Trace);
-            Say($"[{Title}] Найдено деталей Plant 3D: {rowIds.Count}.");
-
-            foreach (int rowId in rowIds)
+            // 2. Read the saved DWG fresh from disk as a side database — the
+            //    proven, edit-aware path (mirrors WriteSpecCommand.ReadOneDrawing).
+            //    Scope is strictly the ACTIVE drawing: we load only its own file
+            //    and pass projectDlm = null, so PartReader enumerates only this
+            //    drawing's rows (SelectAcPpRowIds(diskDb)) — never project-wide.
+            PartReadResult read;
+            try
             {
-                var status = PartEntityIndex.ReadProperty(dlm, rowId, "Status");
-                var key = string.IsNullOrWhiteSpace(status)
-                    ? SpecConstants.NullStatus
-                    : status.Trim();
-
-                if (!byStatus.TryGetValue(key, out var list))
-                {
-                    list = new List<ObjectId>();
-                    byStatus[key] = list;
-                }
-                foreach (var entId in PartEntityIndex.EntityIdsForRow(dlm, rowId, db))
-                {
-                    if (!entId.IsNull && !entId.IsErased)
-                        list.Add(entId);
-                }
+                using var diskDb = new Database(false, true);
+                diskDb.ReadDwgFile(dwgPath, System.IO.FileShare.ReadWrite, true, "");
+                diskDb.CloseInput(true);
+                read = PartReader.Read(diskDb, null, Trace);
+            }
+            catch (System.Exception ex)
+            {
+                Say($"[{Title}] Не удалось прочитать чертёж с диска: {ex.GetType().Name}: {ex.Message}");
+                WinForms.MessageBox.Show(
+                    "Не удалось прочитать данные чертежа. Подробности в логе:\n" + logger.Path,
+                    Title, WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Error);
+                return;
             }
 
-            if (byStatus.Count == 0)
+            var records = read?.Records ?? new List<PartRecord>();
+            Say($"[{Title}] Прочитано деталей: {records.Count}.");
+
+            // Group PnPIDs (row ids) by Status. Empty/missing status →
+            // "Без статуса" bucket.
+            var idsByStatus = new Dictionary<string, List<int>>(StringComparer.Ordinal);
+            var countByStatus = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var rec in records)
+            {
+                if (rec == null) continue;
+                var key = string.IsNullOrWhiteSpace(rec.Status)
+                    ? SpecConstants.NullStatus
+                    : rec.Status.Trim();
+                if (!idsByStatus.TryGetValue(key, out var list))
+                {
+                    list = new List<int>();
+                    idsByStatus[key] = list;
+                }
+                list.Add(rec.PnPID);
+                countByStatus[key] = (countByStatus.TryGetValue(key, out var c) ? c : 0) + 1;
+            }
+
+            if (idsByStatus.Count == 0)
             {
                 Say($"[{Title}] В чертеже не найдено деталей Plant 3D.");
                 WinForms.MessageBox.Show(
@@ -114,13 +155,13 @@ namespace PipingSpecPlugin.Commands
 
             // Build the picker list: real statuses first (alpha), "Без
             // статуса" last. The display label carries the part count.
-            var options = byStatus
+            var options = idsByStatus
                 .OrderBy(kv => kv.Key == SpecConstants.NullStatus ? 1 : 0)
                 .ThenBy(kv => kv.Key, StringComparer.CurrentCulture)
                 .Select(kv => new StatusOption(
                     kv.Key,
                     kv.Key == SpecConstants.NullStatus ? SpecConstants.NullStatusLabel : kv.Key,
-                    kv.Value.Count))
+                    countByStatus[kv.Key]))
                 .ToList();
 
             var chosen = ShowPicker(options);
@@ -130,12 +171,24 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            var ids = byStatus[chosen.Key]
-                .Where(id => !id.IsNull && !id.IsErased)
-                .Distinct()
-                .ToArray();
+            // Resolve the chosen status's row ids → entities in the ACTIVE
+            // drawing (PnPID is drawing-local and identical to the disk copy we
+            // just read, since we saved first). Re-sync the active db's link
+            // map so the row→entity resolution is current.
+            PartEntityIndex.RefreshLinkMap(db, dlm, Trace);
 
-            if (ids.Length == 0)
+            var ids = new List<ObjectId>();
+            var seen = new HashSet<ObjectId>();
+            foreach (int rowId in idsByStatus[chosen.Key])
+            {
+                foreach (var entId in PartEntityIndex.EntityIdsForRow(dlm, rowId, db))
+                {
+                    if (entId.IsNull || entId.IsErased) continue;
+                    if (seen.Add(entId)) ids.Add(entId);
+                }
+            }
+
+            if (ids.Count == 0)
             {
                 Say($"[{Title}] Для статуса «{chosen.Label}» нет видимых деталей в чертеже.");
                 WinForms.MessageBox.Show(
@@ -149,8 +202,8 @@ namespace PipingSpecPlugin.Commands
                 // SetImpliedSelection is the "pickfirst" grip selection — the
                 // same state as if the user had window-selected the parts. The
                 // user can then move/erase/edit them with any AutoCAD command.
-                ed.SetImpliedSelection(ids);
-                Say($"[{Title}] Выбрано деталей: {ids.Length} (статус «{chosen.Label}»).");
+                ed.SetImpliedSelection(ids.ToArray());
+                Say($"[{Title}] Выбрано деталей: {ids.Count} (статус «{chosen.Label}»).");
             }
             catch (System.Exception ex)
             {

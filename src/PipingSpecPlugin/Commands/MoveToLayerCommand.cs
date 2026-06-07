@@ -118,6 +118,22 @@ namespace PipingSpecPlugin.Commands
                     Trace($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в чертеже.");
                     continue;
                 }
+
+                // Equipment guard. A vessel is ONE AcDb block, but Plant 3D
+                // emits separate rows for the vessel and each of its nozzles
+                // ("N-1", "N-2"), and every one of those rows resolves to the
+                // SAME equipment block. Moving the block on a nozzle row would
+                // drag the whole vessel onto a nozzle layer (e.g. "N-1"). Skip
+                // any row that is a nozzle/sub-part of an equipment block — the
+                // equipment's own row still moves the block onto its own tag.
+                if (ents.Any(id => PartEntityIndex.IsNozzleRowForEquipmentEntity(dlm, rowId, id)))
+                {
+                    skippedNoTag++;
+                    Trace($"Строка {rowId} (Tag='{tag}'): штуцер/подэлемент оборудования — "
+                        + "перенос по строке оборудования, не по тегу штуцера.");
+                    continue;
+                }
+
                 plan.Add((layerName, ents));
             }
 

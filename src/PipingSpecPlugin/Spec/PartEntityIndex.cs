@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.ProcessPower.AcPp3dObjectsUtils;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.DataObjects;
 
@@ -268,6 +269,46 @@ namespace PipingSpecPlugin.Spec
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// True when <paramref name="entId"/> is an Equipment block whose own
+        /// DataLinks row is NOT <paramref name="rowId"/> — i.e. the current row
+        /// is a nozzle / sub-part of that equipment (a separate EngineeringItems
+        /// row, with its own Tag like "N-1") that merely resolves back to the
+        /// same equipment block entity.
+        ///
+        /// Why MOVEBYTAG needs this: a vessel is a single AcDb block, but Plant
+        /// 3D emits separate rows for the vessel ("E-101") and each nozzle
+        /// ("N-1", "N-2"), and ALL of those rows resolve — via
+        /// SelectAcPpObjectIds / MakeAcDbObjectId — to the SAME equipment block.
+        /// Without this guard MOVEBYTAG queues the block onto the vessel layer
+        /// AND onto every nozzle layer; whichever the write transaction applies
+        /// last wins, so the vessel "moves" onto a nozzle layer (N-1). We move
+        /// the equipment block only on its OWN row (where FindAcPpRowId == rowId)
+        /// and skip the nozzle rows pointing at it.
+        ///
+        /// Conservative on failure: if FindAcPpRowId throws or returns 0 we
+        /// return false (keep the part) rather than risk dropping a real one.
+        /// Integer rowId comparison is used deliberately instead of comparing
+        /// sanitized Tags — it is exact and avoids locale/case/sanitize drift.
+        /// </summary>
+        public static bool IsNozzleRowForEquipmentEntity(DataLinksManager dlm, int rowId,
+                                                         ObjectId entId)
+        {
+            if (entId.IsNull || entId.IsErased) return false;
+
+            bool isEquipment;
+            try { isEquipment = Runtime.IsPnP3dEquipment(entId); }
+            catch { return false; }
+            if (!isEquipment) return false;
+
+            int ownRowId;
+            try { ownRowId = dlm.FindAcPpRowId(entId); }
+            catch { return false; }
+            if (ownRowId == 0) return false;   // no own row — don't drop the block
+
+            return ownRowId != rowId;
         }
     }
 }

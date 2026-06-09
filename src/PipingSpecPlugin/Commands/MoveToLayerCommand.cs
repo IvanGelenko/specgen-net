@@ -1,11 +1,9 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
-using PipingSpecPlugin.Layers;
 using PipingSpecPlugin.Settings;
 using PipingSpecPlugin.Spec;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
@@ -77,68 +75,36 @@ namespace PipingSpecPlugin.Commands
             int skippedError = 0;
             var layersTouched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            // PHASE 1 — read the DataLinks layer (no DWG write). Enumerate
-            // every Plant 3D part by rowId (includes valves/fittings nested in
-            // line-group blocks that a plain Model-Space walk misses), read its
-            // Tag, and resolve the AutoCAD entities to move. This phase
-            // re-syncs and queries the DLM link map; doing it OUTSIDE the write
-            // transaction is deliberate — re-syncing the link map (AuditDrawing
-            // / ReloadLinkMap) while a write transaction is open corrupts the
-            // map on repeated runs, which surfaced as growing "не найдено
-            // сущностей" errors that a drawing reopen cleared. Build a plan of
-            // (layerName → entityIds) here, then mutate the DWG in phase 2.
-            var plan = new List<(string layerName, List<ObjectId> ents)>();
+            // PHASE 1 — build the plan from a FRESH copy of the drawing read
+            // off disk, NOT from the live in-memory DataLinksManager. The live
+            // DLM keeps a stale property cache: after the user edits a part's
+            // Tag in the Properties palette, GetAllProperties on the live db
+            // keeps returning the OLD tag even after save + every documented
+            // cache-flush — so MOVEBYTAG used to move parts onto the layer of
+            // their FIRST tag and never pick the new one up. The spec generator
+            // never hit this because it reads a just-saved side database
+            // (ReadOneDrawing); we now do the same. The plan carries entity
+            // Handles (stable across save/reopen and across databases), which
+            // phase 2 resolves against the live drawing to actually move them.
 
-            // Save the drawing if it has unsaved edits, then re-sync DataLinks
-            // (same as the spec generator) so an edited Tag is read fresh, not
-            // at its pre-save value. Needs the doc locked (SaveAs writes DWG).
+            // Save the active drawing first so the disk copy has the current
+            // tags. SaveAs preserves the path; needs the doc locked (writes DWG).
+            string dwgPath = doc.Name;
             using (doc.LockDocument())
-                PartEntityIndex.SaveAndRefresh(doc, db, dlm, Trace);
+                SaveActiveDrawing(doc, db, Trace);
 
-            var rowIds = PartEntityIndex.CollectRowIds(db, dlm, Trace);
-            Say($"[Разнести по слоям] Найдено деталей Plant 3D: {rowIds.Count}.");
-
-            foreach (int rowId in rowIds)
-            {
-                var tag = PartEntityIndex.ReadProperty(dlm, rowId, "Tag");
-                var layerName = TagLayerMover.SanitizeLayerName(tag);
-                if (layerName == null)
-                {
-                    // No usable identifier → leave the part where it is.
-                    skippedNoTag++;
-                    continue;
-                }
-
-                var ents = PartEntityIndex.EntityIdsForRow(dlm, rowId, db)
-                    .Where(id => !id.IsNull && !id.IsErased)
-                    .ToList();
-                if (ents.Count == 0)
-                {
-                    skippedError++;
-                    Trace($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в чертеже.");
-                    continue;
-                }
-
-                // Equipment guard. A vessel is ONE AcDb block, but Plant 3D
-                // emits separate rows for the vessel and each of its nozzles
-                // ("N-1", "N-2"), and every one of those rows resolves to the
-                // SAME equipment block. Moving the block on a nozzle row would
-                // drag the whole vessel onto a nozzle layer (e.g. "N-1"). Skip
-                // any row that is a nozzle/sub-part of an equipment block — the
-                // equipment's own row still moves the block onto its own tag.
-                if (ents.Any(id => PartEntityIndex.IsNozzleRowForEquipmentEntity(dlm, rowId, id)))
-                {
-                    skippedNoTag++;
-                    Trace($"Строка {rowId} (Tag='{tag}'): штуцер/подэлемент оборудования — "
-                        + "перенос по строке оборудования, не по тегу штуцера.");
-                    continue;
-                }
-
-                plan.Add((layerName, ents));
-            }
+            int partCount;
+            var plan = PartEntityIndex.BuildMovePlanFromDisk(
+                dwgPath, Trace,
+                out int planSkippedNoTag, out int planSkippedNoEntity, out partCount);
+            skippedNoTag += planSkippedNoTag;
+            skippedError += planSkippedNoEntity;
+            Say($"[Разнести по слоям] Найдено деталей Plant 3D: {partCount}.");
 
             // PHASE 2 — apply the plan in one locked write transaction so a
-            // single Undo reverts everything. No DLM calls here.
+            // single Undo reverts everything. Resolve each Handle against the
+            // LIVE drawing; the plan came from a side DB, so its ObjectIds are
+            // meaningless here — handles are the bridge.
             using (doc.LockDocument())
             using (var tr = db.TransactionManager.StartTransaction())
             {
@@ -146,8 +112,9 @@ namespace PipingSpecPlugin.Commands
                 {
                     var lt = (LayerTable)tr.GetObject(db.LayerTableId, OpenMode.ForRead);
 
-                    foreach (var (layerName, ents) in plan)
+                    foreach (var entry in plan)
                     {
+                        string layerName = entry.LayerName;
                         ObjectId layerId;
                         try
                         {
@@ -162,9 +129,17 @@ namespace PipingSpecPlugin.Commands
                         }
 
                         bool movedAny = false;
-                        foreach (var entId in ents)
+                        foreach (var handle in entry.Handles)
                         {
-                            if (entId.IsErased) continue;
+                            ObjectId entId;
+                            try { entId = db.GetObjectId(false, handle, 0); }
+                            catch (System.Exception ex)
+                            {
+                                Trace($"Handle {handle} не найден в чертеже ({layerName}): "
+                                    + $"{ex.GetType().Name}: {ex.Message}");
+                                continue;
+                            }
+                            if (entId.IsNull || entId.IsErased) continue;
                             try
                             {
                                 var ent = (Entity)tr.GetObject(entId, OpenMode.ForWrite);
@@ -202,6 +177,43 @@ namespace PipingSpecPlugin.Commands
             Say("[Разнести по слоям] " + summary);
             WinForms.MessageBox.Show(summary, "Разнести по слоям",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
+        }
+
+        /// <summary>
+        /// Saves the active drawing if it has unsaved edits, so the disk copy
+        /// MOVEBYTAG reads back (BuildMovePlanFromDisk) carries the current
+        /// tags. Mirrors the spec generator's pre-read save. Failures are
+        /// traced, not thrown — the worst case is the plan being built from a
+        /// slightly older disk copy, which the caller surfaces. Must be called
+        /// with the document locked (SaveAs writes the DWG).
+        /// </summary>
+        static void SaveActiveDrawing(Document doc, Database db, Action<string> trace)
+        {
+            try
+            {
+                object dbmod = AcadApp.GetSystemVariable("DBMOD");
+                bool modified = Convert.ToInt32(dbmod) != 0;
+                if (!modified || doc == null || string.IsNullOrEmpty(doc.Name)) return;
+
+                try
+                {
+                    db.SaveAs(doc.Name, true, DwgVersion.Current, db.SecurityParameters);
+                }
+                catch (System.Exception ex)
+                {
+                    trace?.Invoke($"SaveAs не удался ({ex.GetType().Name}: {ex.Message}); пробую Save().");
+                    try { db.Save(); }
+                    catch (System.Exception ex2)
+                    {
+                        trace?.Invoke($"Save() тоже не удался: {ex2.GetType().Name}: {ex2.Message}");
+                        trace?.Invoke("ВНИМАНИЕ: не удалось сохранить чертёж — теги могут быть устаревшими.");
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"Проверка изменений чертежа не удалась: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         /// <summary>

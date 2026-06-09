@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.ProcessPower.AcPp3dObjectsUtils;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.DataObjects;
+using PipingSpecPlugin.Layers;
 
 namespace PipingSpecPlugin.Spec
 {
@@ -269,6 +271,165 @@ namespace PipingSpecPlugin.Spec
                 }
             }
             return result;
+        }
+
+        /// <summary>
+        /// One entry of a MOVEBYTAG plan: the layer a part belongs on (named
+        /// after its Tag) and the AutoCAD Handles of the entities that draw it.
+        /// Handles — not ObjectIds — are the bridge, because the plan is built
+        /// from a fresh side-database read off disk (so the Tag is current) but
+        /// applied to the live drawing; a Handle is stable across save/reopen
+        /// and resolves in either database, an ObjectId does not.
+        /// </summary>
+        public readonly struct MovePlanEntry
+        {
+            public readonly string LayerName;
+            public readonly List<Handle> Handles;
+            public MovePlanEntry(string layerName, List<Handle> handles)
+            {
+                LayerName = layerName;
+                Handles = handles;
+            }
+        }
+
+        /// <summary>
+        /// Builds the MOVEBYTAG plan from a FRESH copy of the drawing read off
+        /// disk, exactly as the spec generator does (see ReadOneDrawing). The
+        /// live in-memory DataLinksManager keeps a stale property cache: after a
+        /// user edits a part's Tag in the Properties palette, GetAllProperties
+        /// on the live db keeps returning the OLD tag even after save + every
+        /// documented cache-flush — so MOVEBYTAG moved parts onto the layer of
+        /// their FIRST tag and never picked the new one up. Reading a
+        /// just-saved side database sidesteps the cache entirely: the tag on
+        /// disk is the current tag.
+        ///
+        /// The plan carries entity Handles (stable across databases), resolved
+        /// against the live drawing by the caller. <paramref name="dwgPath"/>
+        /// must be the active document's file, already saved to disk by the
+        /// caller. Returns one entry per movable part; tagless parts and
+        /// equipment nozzle/sub-part rows are filtered out here so the counters
+        /// the caller reports stay correct.
+        /// </summary>
+        public static List<MovePlanEntry> BuildMovePlanFromDisk(
+            string dwgPath, Action<string> trace,
+            out int skippedNoTag, out int skippedNoEntity, out int partCount)
+        {
+            var plan = new List<MovePlanEntry>();
+            skippedNoTag = 0;
+            skippedNoEntity = 0;
+            partCount = 0;
+
+            if (string.IsNullOrEmpty(dwgPath) || !File.Exists(dwgPath))
+            {
+                trace?.Invoke($"BuildMovePlanFromDisk: файл не найден на диске: {dwgPath}");
+                return plan;
+            }
+
+            // Open the saved DWG as a side database — never trust the live
+            // DLM cache (see summary). The side DB is read-only to us; we only
+            // pull tags and handles from it.
+            using var sideDb = new Database(false, true);
+            try
+            {
+                sideDb.ReadDwgFile(dwgPath, FileShare.ReadWrite, true, "");
+                sideDb.CloseInput(true);
+            }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"BuildMovePlanFromDisk: не удалось открыть {Path.GetFileName(dwgPath)} как side-DB — {ex.GetType().Name}: {ex.Message}");
+                return plan;
+            }
+
+            DataLinksManager sideDlm;
+            try { sideDlm = DataLinksManager.GetManager(sideDb); }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"BuildMovePlanFromDisk: GetManager на side-DB не удался — {ex.GetType().Name}: {ex.Message}");
+                return plan;
+            }
+            if (sideDlm == null)
+            {
+                trace?.Invoke("BuildMovePlanFromDisk: у копии чертежа нет DataLinks.");
+                return plan;
+            }
+
+            // GetRelatedRowIds / native AcPp resolution keys off the working
+            // database; point it at the side DB for the read, restore after.
+            var prevWorking = HostApplicationServices.WorkingDatabase;
+            bool swapped = false;
+            try
+            {
+                try { HostApplicationServices.WorkingDatabase = sideDb; swapped = true; }
+                catch (System.Exception ex)
+                {
+                    trace?.Invoke($"BuildMovePlanFromDisk: swap WorkingDatabase не удался — {ex.GetType().Name}: {ex.Message}");
+                }
+
+                var rowIds = CollectRowIds(sideDb, sideDlm, trace);
+                partCount = rowIds.Count;
+
+                foreach (int rowId in rowIds)
+                {
+                    var tag = ReadProperty(sideDlm, rowId, "Tag");
+                    var layerName = TagLayerMover.SanitizeLayerName(tag);
+                    if (layerName == null)
+                    {
+                        skippedNoTag++;
+                        continue;
+                    }
+
+                    var ents = new List<ObjectId>();
+                    foreach (var id in EntityIdsForRow(sideDlm, rowId, sideDb))
+                        if (!id.IsNull && !id.IsErased) ents.Add(id);
+                    if (ents.Count == 0)
+                    {
+                        skippedNoEntity++;
+                        trace?.Invoke($"Строка {rowId} (Tag='{tag}'): не найдено сущностей в копии чертежа.");
+                        continue;
+                    }
+
+                    // Equipment guard — same reasoning as the live path: a
+                    // vessel block is shared by the vessel row and every nozzle
+                    // row, so skip nozzle/sub-part rows or the block lands on a
+                    // nozzle layer. See IsNozzleRowForEquipmentEntity.
+                    bool isNozzleRow = false;
+                    foreach (var id in ents)
+                        if (IsNozzleRowForEquipmentEntity(sideDlm, rowId, id)) { isNozzleRow = true; break; }
+                    if (isNozzleRow)
+                    {
+                        skippedNoTag++;
+                        trace?.Invoke($"Строка {rowId} (Tag='{tag}'): штуцер/подэлемент оборудования — "
+                            + "перенос по строке оборудования, не по тегу штуцера.");
+                        continue;
+                    }
+
+                    var handles = new List<Handle>();
+                    foreach (var id in ents)
+                    {
+                        try
+                        {
+                            var h = id.Handle;
+                            if (h.Value != 0) handles.Add(h);
+                        }
+                        catch { }
+                    }
+                    if (handles.Count == 0)
+                    {
+                        skippedNoEntity++;
+                        trace?.Invoke($"Строка {rowId} (Tag='{tag}'): не удалось получить Handle сущностей.");
+                        continue;
+                    }
+
+                    plan.Add(new MovePlanEntry(layerName, handles));
+                }
+            }
+            finally
+            {
+                if (swapped)
+                    try { HostApplicationServices.WorkingDatabase = prevWorking; } catch { }
+            }
+
+            return plan;
         }
 
         /// <summary>

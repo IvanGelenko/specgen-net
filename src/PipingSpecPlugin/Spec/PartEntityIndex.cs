@@ -274,6 +274,30 @@ namespace PipingSpecPlugin.Spec
         }
 
         /// <summary>
+        /// Resolves a rowId to the AutoCAD Handles of the entities that draw it
+        /// in <paramref name="db"/>. Handles — unlike ObjectIds and unlike the
+        /// drawing-local PnPID — are stable across save/reopen and across
+        /// databases, so they are the reliable bridge from a side-database read
+        /// (where the value/grouping is current) to the live drawing (where the
+        /// selection must point). Used by the SELECTBY* commands: matching by
+        /// PnPID alone dropped parts whenever an edit shifted the in-memory row
+        /// ids out of step with the just-saved disk copy.
+        /// </summary>
+        public static IEnumerable<Handle> EntityHandlesForRow(DataLinksManager dlm, int rowId, Database db)
+        {
+            var handles = new List<Handle>();
+            var seen = new HashSet<long>();
+            foreach (var id in EntityIdsForRow(dlm, rowId, db))
+            {
+                Handle h;
+                try { h = id.Handle; } catch { continue; }
+                if (h.Value == 0) continue;
+                if (seen.Add(h.Value)) handles.Add(h);
+            }
+            return handles;
+        }
+
+        /// <summary>
         /// One entry of a MOVEBYTAG plan: the layer a part belongs on (named
         /// after its Tag) and the AutoCAD Handles of the entities that draw it.
         /// Handles — not ObjectIds — are the bridge, because the plan is built

@@ -95,13 +95,57 @@ namespace PipingSpecPlugin.Commands
 
             // 2. Read the saved DWG fresh from disk as a side database — the
             //    proven, edit-aware path. Active drawing only (projectDlm null).
-            PartReadResult read;
+            //    The live in-memory DLM keeps a stale value cache, so the
+            //    grouping (which line numbers / statuses exist) MUST come from
+            //    disk. While the side DB is still open we also resolve each
+            //    part's entity HANDLES from it: handles are stable across
+            //    databases, so they bridge the disk read to the live drawing.
+            //    Matching by PnPID instead silently dropped parts whenever an
+            //    edit shifted the in-memory row ids out of step with disk —
+            //    that is the "часто не подхватывается если изменено" report.
+            var handlesByKey = new Dictionary<string, List<Handle>>(StringComparer.Ordinal);
+            var countByKey = new Dictionary<string, int>(StringComparer.Ordinal);
             try
             {
                 using var diskDb = new Database(false, true);
                 diskDb.ReadDwgFile(dwgPath, System.IO.FileShare.ReadWrite, true, "");
                 diskDb.CloseInput(true);
-                read = PartReader.Read(diskDb, null, Trace);
+
+                var diskDlm = DataLinksManager.GetManager(diskDb);
+                var read = PartReader.Read(diskDb, null, Trace);
+                var records = read?.Records ?? new List<PartRecord>();
+                Say($"[{title}] Прочитано деталей: {records.Count}.");
+
+                // GetRelatedRowIds / AcPp resolution keys off the working DB —
+                // point it at the side DB while we resolve handles from it.
+                var prevWorking = HostApplicationServices.WorkingDatabase;
+                bool swapped = false;
+                try
+                {
+                    try { HostApplicationServices.WorkingDatabase = diskDb; swapped = true; } catch { }
+
+                    foreach (var rec in records)
+                    {
+                        if (rec == null) continue;
+                        var raw = valueOf(rec);
+                        var key = string.IsNullOrWhiteSpace(raw) ? nullKey : raw.Trim();
+                        if (!handlesByKey.TryGetValue(key, out var list))
+                        {
+                            list = new List<Handle>();
+                            handlesByKey[key] = list;
+                        }
+                        countByKey[key] = (countByKey.TryGetValue(key, out var c) ? c : 0) + 1;
+
+                        if (diskDlm != null)
+                            foreach (var h in PartEntityIndex.EntityHandlesForRow(diskDlm, rec.PnPID, diskDb))
+                                list.Add(h);
+                    }
+                }
+                finally
+                {
+                    if (swapped)
+                        try { HostApplicationServices.WorkingDatabase = prevWorking; } catch { }
+                }
             }
             catch (System.Exception ex)
             {
@@ -112,27 +156,7 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            var records = read?.Records ?? new List<PartRecord>();
-            Say($"[{title}] Прочитано деталей: {records.Count}.");
-
-            // Group PnPIDs by the chosen value. Empty/missing → null bucket.
-            var idsByKey = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-            var countByKey = new Dictionary<string, int>(StringComparer.Ordinal);
-            foreach (var rec in records)
-            {
-                if (rec == null) continue;
-                var raw = valueOf(rec);
-                var key = string.IsNullOrWhiteSpace(raw) ? nullKey : raw.Trim();
-                if (!idsByKey.TryGetValue(key, out var list))
-                {
-                    list = new List<int>();
-                    idsByKey[key] = list;
-                }
-                list.Add(rec.PnPID);
-                countByKey[key] = (countByKey.TryGetValue(key, out var c) ? c : 0) + 1;
-            }
-
-            if (idsByKey.Count == 0)
+            if (handlesByKey.Count == 0)
             {
                 Say($"[{title}] В чертеже не найдено деталей Plant 3D.");
                 WinForms.MessageBox.Show(
@@ -142,7 +166,7 @@ namespace PipingSpecPlugin.Commands
             }
 
             // Real values first (natural-ish order), null bucket last.
-            var options = idsByKey
+            var options = handlesByKey
                 .OrderBy(kv => kv.Key == nullKey ? 1 : 0)
                 .ThenBy(kv => kv.Key, StringComparer.CurrentCulture)
                 .Select(kv => new Option(
@@ -158,20 +182,24 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            // Resolve the chosen value's row ids → entities in the ACTIVE
-            // drawing. Re-sync the active db's link map first so row→entity is
-            // current.
-            PartEntityIndex.RefreshLinkMap(db, dlm, Trace);
-
+            // Resolve the chosen value's entity HANDLES (captured from the disk
+            // read) against the ACTIVE drawing. Handles are stable across
+            // databases, so a part edited since the last reopen still resolves
+            // — unlike the old PnPID round-trip through the live DLM, which
+            // dropped parts whose in-memory row ids had drifted from disk.
             var ids = new List<ObjectId>();
             var seen = new HashSet<ObjectId>();
-            foreach (int rowId in idsByKey[chosen.Key])
+            foreach (var handle in handlesByKey[chosen.Key])
             {
-                foreach (var entId in PartEntityIndex.EntityIdsForRow(dlm, rowId, db))
+                ObjectId entId;
+                try { entId = db.GetObjectId(false, handle, 0); }
+                catch (System.Exception ex)
                 {
-                    if (entId.IsNull || entId.IsErased) continue;
-                    if (seen.Add(entId)) ids.Add(entId);
+                    Trace($"Handle {handle} не найден в активном чертеже: {ex.GetType().Name}: {ex.Message}");
+                    continue;
                 }
+                if (entId.IsNull || entId.IsErased) continue;
+                if (seen.Add(entId)) ids.Add(entId);
             }
 
             if (ids.Count == 0)

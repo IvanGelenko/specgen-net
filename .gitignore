@@ -34,3 +34,4 @@ desktop.ini
 # iterating; these are user data, not source.
 test project/
 *.docx
+.claude/scheduled_tasks.lock

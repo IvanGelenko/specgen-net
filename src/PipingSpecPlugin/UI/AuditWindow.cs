@@ -68,7 +68,12 @@ namespace PipingSpecPlugin.UI
             // Lines and checks fold away after a run, leaving the window to
             // the results (unfolded again from the header).
             var settings = new StackPanel { Margin = new Thickness(0, 4, 0, 0) };
-            _settings.Content = settings;
+            // Nine checks with their descriptions outgrow the window: the
+            // parameters scroll within at most 55 % of its height, the rest
+            // stays for the summary, the results and the buttons.
+            var scroll = new ScrollViewer { Content = settings, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, MaxHeight = 480 };
+            SizeChanged += (_, __) => scroll.MaxHeight = Math.Max(240, ActualHeight * 0.55);
+            _settings.Content = scroll;
             _settings.Header = SettingsHeader(null);
             top.Children.Add(_settings);
             settings.Children.Add(new GroupBox { Header = "Линии для аудита", Content = linePanel, Padding = new Thickness(8), Margin = new Thickness(0, 4, 0, 0) });

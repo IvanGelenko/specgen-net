@@ -9,11 +9,21 @@ using DocumentFormat.OpenXml.Wordprocessing;
 
 namespace PipingSpecPlugin.Audit
 {
+    // Wording of a host other than the Plant 3D drawing audit (Navisworks);
+    // a null field keeps the Plant 3D text.
+    public sealed class AuditReportText
+    {
+        public string Scope { get; set; }
+        public Func<IAuditRule, string> Describe { get; set; }
+        // Whole paragraphs of the template to replace: «Plant 3D», «Чертёж».
+        public IReadOnlyDictionary<string, string> Labels { get; set; }
+    }
+
     public static class AuditDocxReport
     {
         public const string TemplateResource = "PipingSpecPlugin.AuditReportTemplate.docx";
 
-        public static void Save(string path, AuditSnapshot snapshot, AuditOptions options, IReadOnlyList<AuditIssue> issues)
+        public static void Save(string path, AuditSnapshot snapshot, AuditOptions options, IReadOnlyList<AuditIssue> issues, AuditReportText text = null)
         {
             // Finish the document before replacing a previously saved report.
             var fullPath = Path.GetFullPath(path);
@@ -45,10 +55,10 @@ namespace PipingSpecPlugin.Audit
                         ["RESULT"] = result,
                         ["LINES"] = lines.Count == 0 ? "Линии не выбраны." : string.Join("; ", lines.Select(s => s == AuditOptions.NoLine ? AuditOptions.NoLineLabel : s)),
                         ["COUNTS"] = $"Линий: {lines.Count}. Деталей на выбранных линиях: {selectedParts.Count}. Замечаний: {issues.Count}.",
-                        ["CHECKS"] = rules.Count == 0 ? "Проверки не выбраны." : string.Join("\n", rules.Select(r => r.Title + ". " + (r.Id == "wall"
+                        ["CHECKS"] = rules.Count == 0 ? "Проверки не выбраны." : string.Join("\n", rules.Select(r => r.Title + ". " + (text?.Describe?.Invoke(r) ?? (r.Id == "wall"
                             ? $"Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром — замечание на каждую пару соединённых деталей, где стенка меняется; тройники и переходы — стенка конца не тоньше соединённой трубы. Допуск {options.WallToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм."
-                            : r.Description))),
-                        ["SCOPE"] = "Выбранные линии текущего чертежа. " + (options.Enabled.Contains("collisions")
+                            : r.Description)))),
+                        ["SCOPE"] = text?.Scope ?? "Выбранные линии текущего чертежа. " + (options.Enabled.Contains("collisions")
                             ? $"Коллизии проверяются со всеми объектами и загруженными внешними ссылками. Проверено пар: {snapshot.CollisionPairsChecked}. Пересечения деталей, соединённых через объект соединения, не учитываются (не учтено: {snapshot.ConnectedJointsIgnored}). Вставок внешних ссылок: {snapshot.XrefInstancesChecked}; недоступно: {snapshot.XrefInstancesUnavailable}. Используется полная геометрия без учёта XCLIP. "
                               + (options.CollisionToleranceMm > 0 ? $"Допуск коллизий {options.CollisionToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм: пересечения не глубже допуска не учитываются (не учтено: {snapshot.CollisionsWithinTolerance}). " : "")
                               + (options.StructureCollisions ? $"Конструкции проверены и между собой; узлы металлоконструкций (конец элемента в области пересечения) не учитываются (не учтено: {snapshot.StructureJointsIgnored}). " : "") : "")
@@ -57,6 +67,9 @@ namespace PipingSpecPlugin.Audit
                             + "Непроверенные случаи не считаются успешной проверкой. Модель при аудите не изменяется."
                     };
                     Replace(body, fields);
+                    if (text?.Labels != null)
+                        foreach (var paragraph in body.Descendants<Paragraph>().ToList())
+                            if (text.Labels.TryGetValue(paragraph.InnerText.Trim(), out var label)) SetText(paragraph, label);
                     var summary = new List<string[]>();
                     foreach (var rule in rules)
                         summary.Add(new[] { rule.Title, issues.Count(i => i.RuleId == rule.Id && i.Severity != "Не проверено").ToString(),
@@ -74,7 +87,13 @@ namespace PipingSpecPlugin.Audit
                     FillRows(body, "ISSUE", detail.Count > 0 ? detail : new List<string[]> { new[] { "—", "—", "—", "Замечаний не зарегистрировано." } });
                     document.MainDocumentPart.Document.Save();
                 }
+#if NETFRAMEWORK
+                // Navisworks (.NET Framework 4.8) has no overwriting File.Move.
+                if (File.Exists(fullPath)) File.Delete(fullPath);
+                File.Move(temporary, fullPath);
+#else
                 File.Move(temporary, fullPath, true);
+#endif
             }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
         }

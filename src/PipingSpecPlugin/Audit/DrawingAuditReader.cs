@@ -25,7 +25,11 @@ namespace PipingSpecPlugin.Audit
             // connection object are not a clash (ConnectedJointPolicy), and a
             // tee / reducer is compared with the pipes welded to it.
             var bolts = options.Enabled.Contains("bolts");
-            var connections = options.Enabled.Contains("connections") || collision || options.Enabled.Contains("wall") || bolts;
+            // The slope needs the pipes' port positions; a connection object's
+            // line comes from the parts it joins (status, placeholder).
+            var slope = options.Enabled.Contains("slope");
+            var subParts = options.Enabled.Contains("placeholder") || options.Enabled.Contains("status");
+            var connections = options.Enabled.Contains("connections") || collision || options.Enabled.Contains("wall") || bolts || slope || subParts;
             snapshot.DrawingMmPerUnit = DrawingMmPerUnit(database);
             var shapes = new List<Shape>();
             using var docLock = document.LockDocument();
@@ -66,6 +70,10 @@ namespace PipingSpecPlugin.Audit
                                 item.EndsError = saved.EndsError;
                                 item.LineKey = saved.LineKey;
                                 item.LineLabel = saved.LineLabel;
+                                item.Tag = saved.Tag;
+                                item.Status = saved.Status;
+                                item.Spec = saved.Spec;
+                                item.SubParts.AddRange(saved.SubParts);
                             }
                             else
                             {
@@ -80,6 +88,9 @@ namespace PipingSpecPlugin.Audit
                                 item.Diameter = Get("NominalDiameter");
                                 item.Material = Get("Material");
                                 item.MaterialCode = Get("MaterialCode");
+                                item.Tag = Get("Tag");
+                                item.Status = Get("Status");
+                                item.Spec = Get("Spec");
                                 item.WallRaw = Get("WallThickness");
                                 // The wall is in the part's catalogue unit, not in
                                 // drawing units (INSUNITS). Converted before the
@@ -108,8 +119,11 @@ namespace PipingSpecPlugin.Audit
                             || part.GetType().Name.Equals("Connector", StringComparison.OrdinalIgnoreCase);
                         item.IsPipe = AuditRules.IsPipeClass(item.ClassName) || part is Pipe;
                         item.IsTeeOrReducer = AuditRules.IsTeeOrReducerClass(item.ClassName);
-                        if (connections) ReadConnections(item, part, id, manager, bolts);
+                        if (connections) ReadConnections(item, part, id, manager, bolts || slope);
                         if (bolts && part is Connector connector) ReadBoltSets(item, connector, id, dlm, snapshot.DrawingMmPerUnit);
+                        // Gasket / bolts / weld rows of a connection object (their
+                        // spec and status), live when the saved copy gave none.
+                        if (subParts && item.SubParts.Count == 0 && dlm != null && part is Connector joint) ReadSubParts(item, joint, id, dlm);
                     }
                     if (collision) CollectCollisionEntity(entity, item, transaction, Matrix3d.Identity,
                         id.Handle.ToString(), id.Handle.ToString(), "", false, 0, new HashSet<ObjectId>(),
@@ -329,6 +343,30 @@ namespace PipingSpecPlugin.Audit
                 item.BoltSets.Clear();
                 item.BoltsError = ex.Message;
             }
+        }
+
+        // Every sub-part row of a connection object (gasket, bolt set, weld):
+        // its description, spec and status. Sub-part index as is and shifted
+        // by one, as for the bolt sets; the connector's own row is left out.
+        static void ReadSubParts(AuditPart item, Connector connector, ObjectId id, DataLinksManager dlm)
+        {
+            try
+            {
+                int own = 0;
+                try { own = dlm.FindAcPpRowId(id); } catch { }
+                var rows = new HashSet<int>();
+                for (int i = 0; i <= connector.NumSubParts; i++)
+                {
+                    int row;
+                    try { row = dlm.FindAcPpRowId(dlm.MakeAcPpObjectId(id, i)); } catch { continue; }
+                    if (row <= 0 || row == own || !rows.Add(row)) continue;
+                    var values = Properties(dlm, row);
+                    string Get(string name) => values.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v.Trim() : null;
+                    item.SubParts.Add(new AuditSubPart { Description = Get("PartSizeLongDesc") ?? Get("ShortDescription") ?? Get("PnPClassName"),
+                        Spec = Get("Spec"), Status = Get("Status") });
+                }
+            }
+            catch { /* No sub-parts read: their spec and status are not checked. */ }
         }
 
         // The row of a connector's sub-part. The sub-part index of the

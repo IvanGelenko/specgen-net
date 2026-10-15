@@ -13,6 +13,8 @@
 
   <ItemGroup>
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditDocxReport.cs" Link="Audit\AuditDocxReport.cs" />
+    <!-- Navisworks audit: its pure core (no Navisworks types). -->
+    <Compile Include="..\..\src\NavisAudit\Core\*.cs" LinkBase="NavisAudit" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\InsulationJointPolicy.cs" Link="Audit\InsulationJointPolicy.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\SupportContactPolicy.cs" Link="Audit\SupportContactPolicy.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\ConnectedJointPolicy.cs" Link="Audit\ConnectedJointPolicy.cs" />
@@ -23,6 +25,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\BoltLengthRule.cs" Link="Audit\BoltLengthRule.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\MaterialRule.cs" Link="Audit\MaterialRule.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\StructureJointPolicy.cs" Link="Audit\StructureJointPolicy.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\LineDataRules.cs" Link="Audit\LineDataRules.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditReport.cs" Link="Audit\AuditReport.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartPropertyReader.cs" Link="Spec\PartPropertyReader.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecNumber.cs" Link="Spec\SpecNumber.cs" />

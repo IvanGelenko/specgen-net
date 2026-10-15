@@ -208,3 +208,42 @@ the in-plugin updater matches it by name.
 **Manual fallback** (runner unavailable): bump `VERSION`, run `build.cmd`,
 then create the release and attach `dist_installer\PipingSpecPlugin-Setup.exe`
 by hand under the same `vX.Y.Z` tag.
+
+## Navisworks audit (NavisAudit)
+
+`src/NavisAudit` is a separate plug-in for **Navisworks Manage 2024, 2025 and
+2026** (.NET Framework 4.8; one DLL per release, because the Navisworks API is
+versioned per release: 21.0 / 22.0 / 23.0). **Надстройки → Аудит трубопроводов**
+opens the PSAUDIT window for the open model: the same lines, checks, table and
+Word report. Clicking a row selects its elements; a double click zooms to them.
+
+The rules are the Plant 3D plug-in's own (`Audit/*.cs`, linked by source).
+NavisAudit only reads the model into the same `AuditSnapshot`:
+
+- Plant 3D objects: the **AutoCAD** property tab (Plant 3D Object Enabler):
+  class, line, size, wall, material, ports. NWCs written without the enabler
+  hold `ACAD_PROXY_ENTITY` proxies with no data; they are reported once.
+- Connections: geometry snap points are the ports. Ports within 10 mm of each
+  other are joined (the gasket gap). A branch end on a pipe is a stub-in,
+  checked against the TapWeld connector. Connector COG and gasket/bolt boxes
+  locate the connection objects.
+- Insulation is a second object on the `…_Insulation` layer. It is attached to
+  its part, and `InsulationJointPolicy` applies.
+- Copies (a file or xref loaded twice in one place) are reported once per
+  repeated xref and left out of the audit.
+- Clashes: a temporary Clash Detective test (Hard) of the selected lines
+  against the whole model, removed afterwards. The Plant 3D policies apply:
+  supports, joints, tolerance, structure nodes.
+
+Not offered: bolt length. The model has no flange faces or port names per joint.
+
+```
+build-navis.cmd        → dist_navis\NavisAudit-Setup.exe (per-user bundle)
+tools\NavisAuditSmoke  → runs the JSON plug-in in a hidden Navisworks:
+  NavisAuditSmoke <model.nwd|nwc|dwg> <NavisAudit.dll | -> <out.json> [lines=…] [tolerance=2] [structures=1] [parts=1] [docx=…] [show=1]
+tools\NavisAuditPreview → renders the window from such a JSON report
+```
+
+With the bundle installed, Navisworks loads the bundle's DLL (same plug-in id)
+even when the smoke tool is given another one. Copy a fresh build into
+`%APPDATA%\Autodesk\ApplicationPlugins\NavisAudit.bundle\Contents\<year>\`.

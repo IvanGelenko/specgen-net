@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Navisworks AutoLoader manifest. build-navis.cmd stamps __APPVERSION__.
+     The Navisworks API is versioned per release (Nw21 = 2024, Nw22 = 2025,
+     Nw23 = 2026) and a plug-in binds to one, so each release loads its own
+     build. NAVSIM loads it too: there every check works but the clashes —
+     Clash Detective is in Navisworks Manage only. -->
+<ApplicationPackage SchemaVersion="1.0"
+                    AutodeskProduct="Navisworks"
+                    ProductType="Application"
+                    Name="NavisAudit"
+                    AppVersion="__APPVERSION__"
+                    Description="Аудит трубопроводов Plant 3D в модели Navisworks"
+                    Author="In-house"
+                    ProductCode="{84F8F696-0EF9-43FD-81A6-F490F8200716}"
+                    UpgradeCode="{E311E9ED-0BB7-4621-BB61-3ACD23DAAEE7}">
+  <CompanyDetails Name="In-house" Email="" Phone="" Url=""/>
+  <Components Description="Navisworks 2024">
+    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw21" SeriesMax="Nw21" SupportPath="./Contents/2024/"/>
+    <ComponentEntry AppName="NavisAudit" AppType="ManagedPlugin" Version="__APPVERSION__" ModuleName="./Contents/2024/NavisAudit.dll" AppDescription="Аудит трубопроводов"/>
+  </Components>
+  <Components Description="Navisworks 2025">
+    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw22" SeriesMax="Nw22" SupportPath="./Contents/2025/"/>
+    <ComponentEntry AppName="NavisAudit" AppType="ManagedPlugin" Version="__APPVERSION__" ModuleName="./Contents/2025/NavisAudit.dll" AppDescription="Аудит трубопроводов"/>
+  </Components>
+  <Components Description="Navisworks 2026">
+    <RuntimeRequirements OS="Win64" Platform="NAVMAN|NAVSIM" SeriesMin="Nw23" SeriesMax="Nw23" SupportPath="./Contents/2026/"/>
+    <ComponentEntry AppName="NavisAudit" AppType="ManagedPlugin" Version="__APPVERSION__" ModuleName="./Contents/2026/NavisAudit.dll" AppDescription="Аудит трубопроводов"/>
+  </Components>
+</ApplicationPackage>

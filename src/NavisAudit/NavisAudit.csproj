@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- Navisworks 2024-2026 host .NET Framework 4.8 (Roamer.exe.config). -->
+    <TargetFramework>net48</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PlatformTarget>x64</PlatformTarget>
+    <OutputType>Library</OutputType>
+    <RootNamespace>NavisAudit</RootNamespace>
+    <AssemblyName>NavisAudit</AssemblyName>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version Condition=" '$(Version)' == '' ">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)VERSION').Trim())</Version>
+    <Product>Аудит трубопроводов для Navisworks</Product>
+    <!-- The Navisworks API assemblies are versioned per release (2024 =
+         21.0, 2025 = 22.0, 2026 = 23.0) and a plug-in binds to one of them,
+         so one DLL is built per release: -p:NavisYear=2025. -->
+    <NavisYear Condition=" '$(NavisYear)' == '' ">2026</NavisYear>
+    <NavisDir Condition=" '$(NavisDir)' == '' ">C:\Program Files\Autodesk\Navisworks Manage $(NavisYear)</NavisDir>
+    <OutDir Condition=" '$(OutDir)' == '' ">bin\$(Configuration)-$(NavisYear)\</OutDir>
+    <IntermediateOutputPath>obj\$(Configuration)-$(NavisYear)\</IntermediateOutputPath>
+    <DefineConstants>$(DefineConstants);NAVIS$(NavisYear)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Navisworks loads its own copies; Private=False keeps them out of the bundle. -->
+    <Reference Include="Autodesk.Navisworks.Api"><HintPath>$(NavisDir)\Autodesk.Navisworks.Api.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Autodesk.Navisworks.Clash"><HintPath>$(NavisDir)\Autodesk.Navisworks.Clash.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Autodesk.Navisworks.ComApi"><HintPath>$(NavisDir)\Autodesk.Navisworks.ComApi.dll</HintPath><Private>False</Private></Reference>
+    <Reference Include="Autodesk.Navisworks.Interop.ComApi"><HintPath>$(NavisDir)\Autodesk.Navisworks.Interop.ComApi.dll</HintPath><Private>False</Private><EmbedInteropTypes>False</EmbedInteropTypes></Reference>
+    <Reference Include="WindowsFormsIntegration" />
+  </ItemGroup>
+
+  <!-- The audit rules are the Plant 3D plug-in's own (PipingSpecPlugin):
+       this project only reads a Navisworks model into the same
+       AuditSnapshot. Shared by source, so a fix to a rule reaches both. -->
+  <ItemGroup>
+    <Compile Include="..\PipingSpecPlugin\Audit\AuditModels.cs" Link="Shared\AuditModels.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\AuditRules.cs" Link="Shared\AuditRules.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\MaterialRule.cs" Link="Shared\MaterialRule.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\BoltLengthRule.cs" Link="Shared\BoltLengthRule.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\ConnectedJointPolicy.cs" Link="Shared\ConnectedJointPolicy.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\InsulationJointPolicy.cs" Link="Shared\InsulationJointPolicy.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\SupportContactPolicy.cs" Link="Shared\SupportContactPolicy.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\StructureJointPolicy.cs" Link="Shared\StructureJointPolicy.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\LineDataRules.cs" Link="Shared\LineDataRules.cs" />
+    <Compile Include="..\PipingSpecPlugin\Audit\AuditDocxReport.cs" Link="Shared\AuditDocxReport.cs" />
+    <Compile Include="..\PipingSpecPlugin\Spec\LengthUnits.cs" Link="Shared\LengthUnits.cs" />
+    <Compile Include="..\PipingSpecPlugin\Spec\VtValueParsing.cs" Link="Shared\VtValueParsing.cs" />
+    <Compile Include="..\PipingSpecPlugin\Spec\XmlText.cs" Link="Shared\XmlText.cs" />
+    <Compile Include="..\PipingSpecPlugin\UI\CommandIcons.cs" Link="Shared\CommandIcons.cs" />
+    <EmbeddedResource Include="..\PipingSpecPlugin\Resources\AuditReportTemplate.docx" LogicalName="PipingSpecPlugin.AuditReportTemplate.docx" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- AddInPlugin icons, a path relative to the plug-in DLL. -->
+    <None Include="Images\Audit16.png" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Images\Audit32.png" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

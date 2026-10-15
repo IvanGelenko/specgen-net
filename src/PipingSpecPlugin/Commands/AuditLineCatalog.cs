@@ -30,6 +30,7 @@ namespace PipingSpecPlugin.Commands
             var result = new AuditLineCatalog();
             var primaryRows = new Dictionary<string, int>();
             var hasPrimaryProperties = new HashSet<string>();
+            var subParts = new Dictionary<string, List<(int Row, AuditSubPart Part)>>();
             using var disk = new Database(false, true);
             disk.ReadDwgFile(document.Name, FileShare.ReadWrite, true, "");
             disk.CloseInput(true);
@@ -59,6 +60,15 @@ namespace PipingSpecPlugin.Commands
                             // handle. Prefer the entity's own row for its properties.
                             if (!primaryRows.TryGetValue(key, out var primaryRow))
                                 primaryRows[key] = primaryRow = PrimaryRowOf(dlm, disk, handle, trace);
+                            // Another row on the element — a connection object's
+                            // gasket, bolt set or weld: its spec and status.
+                            if (record.PnPID != primaryRow)
+                            {
+                                if (!subParts.TryGetValue(key, out var list)) subParts[key] = list = new List<(int, AuditSubPart)>();
+                                if (!list.Any(s => s.Row == record.PnPID))
+                                    list.Add((record.PnPID, new AuditSubPart { Spec = record.Spec, Status = record.Status,
+                                        Description = string.IsNullOrWhiteSpace(record.PartSizeLongDesc) ? record.ShortDescription ?? record.PnPClassName : record.PartSizeLongDesc }));
+                            }
                             if (hasPrimaryProperties.Contains(key)) continue;
                             if (record.PnPID == primaryRow) hasPrimaryProperties.Add(key);
                             else if (result.Parts.ContainsKey(key)) continue;
@@ -69,7 +79,8 @@ namespace PipingSpecPlugin.Commands
                                 // Blank, not only null, falls back — as in the live read.
                                 Description = string.IsNullOrWhiteSpace(record.PartSizeLongDesc) ? record.PartFamilyLongDesc : record.PartSizeLongDesc,
                                 Diameter = record.NominalDiameter, WallRaw = record.WallThickness, LengthUnit = record.LengthUnit,
-                                Material = record.Material, MaterialCode = record.MaterialCode };
+                                Material = record.Material, MaterialCode = record.MaterialCode,
+                                Tag = record.EquipTag, Status = record.Status, Spec = record.Spec };
                             if (AuditRules.IsTeeOrReducerClass(record.PnPClassName))
                             {
                                 try { part.Ends = DrawingAuditReader.ReadEnds(dlm, record.PnPID, "S1", record.NominalDiameter, record.WallThickness, record.LengthUnit); }
@@ -98,6 +109,8 @@ namespace PipingSpecPlugin.Commands
                 }
             }
             finally { HostApplicationServices.WorkingDatabase = previous; }
+            foreach (var pair in subParts)
+                if (result.Parts.TryGetValue(pair.Key, out var owner)) owner.SubParts.AddRange(pair.Value.Select(s => s.Part));
             if (read.Records.Count > 0 && result.Parts.Count == 0)
                 throw new InvalidOperationException("Не удалось сопоставить линии с элементами текущего чертежа.");
             // The count is of drawing elements, as in the audit summary — not of

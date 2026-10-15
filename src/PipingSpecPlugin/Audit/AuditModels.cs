@@ -23,7 +23,7 @@ namespace PipingSpecPlugin.Audit
             var value = (text ?? "").Trim().Replace(',', '.');
             if (value.Length == 0) return true;
             return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out millimetres)
-                && double.IsFinite(millimetres) && millimetres >= 0;
+                && !double.IsNaN(millimetres) && !double.IsInfinity(millimetres) && millimetres >= 0;
         }
         // null means all lines (scripted audit); an empty set means none.
         public HashSet<string> SelectedLines { get; set; }
@@ -94,6 +94,23 @@ namespace PipingSpecPlugin.Audit
         // why they could not be read.
         public List<AuditBoltSet> BoltSets { get; } = new();
         public string BoltsError { get; set; }
+        // Plant «Tag» (a valve's identifier), «Status» (New / Новое,
+        // Existing / Существующее…) and «Spec» of the part.
+        public string Tag { get; set; }
+        public string Status { get; set; }
+        public string Spec { get; set; }
+        // Gasket, bolt set, weld of a connection object: their own spec.
+        public List<AuditSubPart> SubParts { get; } = new();
+        // A straight pipe's two ends (any units, Z up) for its slope; null
+        // when not known — the rule then takes two ports with a position.
+        public List<double[]> Axis { get; set; }
+    }
+
+    public sealed class AuditSubPart
+    {
+        public string Description { get; set; }
+        public string Spec { get; set; }
+        public string Status { get; set; }
     }
 
     public sealed class AuditLink
@@ -199,7 +216,8 @@ namespace PipingSpecPlugin.Audit
     {
         // Add a rule here: the options dialog and report use this same registry.
         public static IReadOnlyList<IAuditRule> All { get; } = new IAuditRule[]
-        { new WallThicknessRule(), new MaterialRule(), new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
+        { new WallThicknessRule(), new MaterialRule(), new SlopeRule(), new StatusRule(), new ValveTagRule(), new PlaceholderSpecRule(),
+          new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
 
         public static List<AuditIssue> Run(AuditSnapshot snapshot, AuditOptions options)
         {
@@ -220,7 +238,7 @@ namespace PipingSpecPlugin.Audit
 
         // The checks in the order of the results (window, JSON, report):
         // physical clashes first, the data that could not be read last.
-        static readonly string[] GroupOrder = { "collisions", "bolts", "wall", "material", "connections", "read" };
+        static readonly string[] GroupOrder = { "collisions", "bolts", "wall", "slope", "material", "status", "placeholder", "tags", "connections", "read" };
 
         public static string GroupTitle(string ruleId) =>
             ruleId == "read" ? "Чтение данных" : All.FirstOrDefault(r => r.Id == ruleId)?.Title ?? ruleId ?? "Прочее";
@@ -241,7 +259,7 @@ namespace PipingSpecPlugin.Audit
         public static double? ParsePositive(string value)
         {
             if (double.TryParse((value ?? "").Trim().Replace(',', '.'), NumberStyles.Float,
-                CultureInfo.InvariantCulture, out var number) && double.IsFinite(number) && number > 0)
+                CultureInfo.InvariantCulture, out var number) && !double.IsNaN(number) && !double.IsInfinity(number) && number > 0)
                 return number;
             return null;
         }
@@ -275,6 +293,7 @@ namespace PipingSpecPlugin.Audit
             if (name.Contains("Reducer", StringComparison.OrdinalIgnoreCase)) return "Переход";
             if (name.Contains("Tee", StringComparison.OrdinalIgnoreCase)) return "Тройник";
             if (part.IsPipe || name.Equals("Pipe", StringComparison.OrdinalIgnoreCase)) return "Труба";
+            if (part.IsConnector) return "Соединение";
             return name;
         }
 
@@ -284,6 +303,10 @@ namespace PipingSpecPlugin.Audit
         {
             var kind = KindOf(part);
             var description = (part.Description ?? "").Trim();
+            // A connection object's own description is its class name
+            // («P3dConnector», «AcPpDb3dConnector»): its weld / gasket says more.
+            if (part.IsConnector && (description.Length == 0 || description.IndexOf("Connector", StringComparison.OrdinalIgnoreCase) >= 0))
+                description = part.SubParts.Select(s => s.Description).FirstOrDefault(d => !string.IsNullOrWhiteSpace(d))?.Trim() ?? "";
             var text = description.Length == 0 ? kind
                 : description.StartsWith(kind, StringComparison.OrdinalIgnoreCase) ? description : $"{kind} {description}";
             return $"{text} [{part.Key}]";

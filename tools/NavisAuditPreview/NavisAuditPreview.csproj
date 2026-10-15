@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- NavisAuditPreview <report.json> <out.png> [run]: the Navisworks audit
+       window rendered outside Navisworks, filled with a NavisAuditJson report. -->
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWPF>true</UseWPF><LangVersion>latest</LangVersion></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
+    <Compile Include="../../src/NavisAudit/UI/NavisAuditWindow.cs" Link="NavisAuditWindow.cs" />
+    <Compile Include="../../src/NavisAudit/UI/NavisSettings.cs" Link="NavisSettings.cs" />
+    <Compile Include="../../src/NavisAudit/Core/*.cs" LinkBase="Core" />
+    <Compile Include="../../src/PipingSpecPlugin/UI/CommandIcons.cs" Link="CommandIcons.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/AuditModels.cs" Link="AuditModels.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/AuditRules.cs" Link="AuditRules.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/BoltLengthRule.cs" Link="BoltLengthRule.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/MaterialRule.cs" Link="MaterialRule.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/AuditDocxReport.cs" Link="AuditDocxReport.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/ConnectedJointPolicy.cs" Link="ConnectedJointPolicy.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/InsulationJointPolicy.cs" Link="InsulationJointPolicy.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/SupportContactPolicy.cs" Link="SupportContactPolicy.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/StructureJointPolicy.cs" Link="StructureJointPolicy.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Spec/XmlText.cs" Link="XmlText.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Spec/VtValueParsing.cs" Link="VtValueParsing.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Spec/LengthUnits.cs" Link="LengthUnits.cs" />
+  </ItemGroup>
+</Project>

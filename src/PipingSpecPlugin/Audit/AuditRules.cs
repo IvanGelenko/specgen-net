@@ -8,7 +8,7 @@ namespace PipingSpecPlugin.Audit
     {
         public string Id => "wall";
         public string Title => "Толщины стенок";
-        public string Description => "Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром — одинаковая толщина стенки. У тройников и переходов стенка конца не тоньше соединённой с ним трубы. Допуск 0,01 мм.";
+        public string Description => "Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром — одинаковая толщина стенки; замечание — на каждую пару соединённых деталей, где стенка меняется. У тройников и переходов стенка конца не тоньше соединённой с ним трубы. Допуск 0,01 мм.";
         public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
         {
             // A part whose properties were not read has its own read issue; here
@@ -31,19 +31,61 @@ namespace PipingSpecPlugin.Audit
                 if (!AuditRules.ParsePositive(p.Diameter).HasValue)
                     yield return AuditRules.Issue(Id, Title, "Не проверено", $"Не удалось определить номинальный диаметр: «{p.Diameter}».", new[] { p });
             }
+            var all = new Dictionary<string, AuditPart>(StringComparer.Ordinal);
+            foreach (var p in snapshot.Parts) all.TryAdd(p.Key, p);
             foreach (var line in parts.Where(p => !string.IsNullOrWhiteSpace(p.LineKey) && p.WallMm.HasValue && AuditRules.ParsePositive(p.Diameter).HasValue)
                 .GroupBy(p => p.LineKey, StringComparer.OrdinalIgnoreCase))
             foreach (var group in line.GroupBy(p => AuditRules.ParsePositive(p.Diameter).Value))
             {
                 var list = group.ToList();
                 if (list.Max(p => p.WallMm.Value) - list.Min(p => p.WallMm.Value) <= options.WallToleranceMm + 1e-9) continue;
-                string details = string.Join("; ", list.GroupBy(p => p.WallMm.Value).OrderBy(g => g.Key)
-                    .Select(g => $"{g.Key:0.###} мм: " + string.Join(", ", g.Select(p => $"{AuditRules.KindOf(p)} Ду {p.Diameter} [{p.Key}]"))));
-                var spread = AuditRules.Issue(Id, Title, "Несоответствие", $"Разные толщины стенок при одинаковом номинальном диаметре {group.Key:0.###}. " + details, list);
-                spread.Magnitude = list.Max(p => p.WallMm.Value) - list.Min(p => p.WallMm.Value);
-                yield return spread;
+                foreach (var issue in WallChanges(list, group.Key, all, options.WallToleranceMm)) yield return issue;
             }
             foreach (var issue in FittingsAgainstPipes(snapshot, options)) yield return issue;
+        }
+
+        // One remark per place where the wall changes: a pair of parts of the
+        // line and DN joined directly or through a connection object. A run of
+        // another wall that touches no part of a different wall (a separate
+        // piece of the line) is one remark against the line's main wall. A
+        // single list of every part used to hide where the change was.
+        IEnumerable<AuditIssue> WallChanges(List<AuditPart> list, double diameter, IReadOnlyDictionary<string, AuditPart> all, double tolerance)
+        {
+            bool Same(AuditPart a, AuditPart b) => Math.Abs(a.WallMm.Value - b.WallMm.Value) <= tolerance + 1e-9;
+            string Name(AuditPart p) => $"{AuditRules.KindOf(p)} Ду {p.Diameter} [{p.Key}] — {p.WallMm.Value:0.###} мм";
+            var members = list.ToDictionary(p => p.Key, StringComparer.Ordinal);
+            var near = list.ToDictionary(p => p.Key, p => Joined(p, all).Where(q => q.Key != p.Key && members.ContainsKey(q.Key))
+                .Select(q => members[q.Key]).GroupBy(q => q.Key).Select(g => g.First()).ToList(), StringComparer.Ordinal);
+            var covered = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var p in list)
+                foreach (var q in near[p.Key])
+                {
+                    if (string.CompareOrdinal(p.Key, q.Key) >= 0 || Same(p, q)) continue;
+                    var (thin, thick) = p.WallMm.Value <= q.WallMm.Value ? (p, q) : (q, p);
+                    covered.Add(p.Key); covered.Add(q.Key);
+                    var pair = AuditRules.Issue(Id, Title, "Несоответствие",
+                        $"Смена толщины стенки при Ду {diameter:0.###}: {Name(thin)} ↔ {Name(thick)} (разница {thick.WallMm.Value - thin.WallMm.Value:0.###} мм).", new[] { thin, thick });
+                    pair.Magnitude = thick.WallMm.Value - thin.WallMm.Value;
+                    yield return pair;
+                }
+            // The line's main wall: the most parts; a tie — the thicker one,
+            // so the thinner run is the one named.
+            var main = list.GroupBy(p => Math.Round(p.WallMm.Value, 6)).OrderByDescending(g => g.Count()).ThenByDescending(g => g.Key).First();
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var start in list.Where(p => Math.Abs(p.WallMm.Value - main.Key) > tolerance + 1e-9))
+            {
+                if (!seen.Add(start.Key)) continue;
+                // The run of this wall the part belongs to.
+                var run = new List<AuditPart> { start };
+                for (int i = 0; i < run.Count; i++)
+                    foreach (var q in near[run[i].Key].Where(q => Same(q, start) && seen.Add(q.Key))) run.Add(q);
+                if (run.Any(p => covered.Contains(p.Key))) continue;
+                var odd = AuditRules.Issue(Id, Title, "Несоответствие",
+                    $"Стенка {start.WallMm.Value:0.###} мм при Ду {diameter:0.###}: " + string.Join(", ", run.Select(p => $"{AuditRules.KindOf(p)} Ду {p.Diameter} [{p.Key}]")) +
+                    $". Основная стенка линии — {main.Key:0.###} мм ({main.Count()} дет.); с трубами и отводами другой стенки участок напрямую не соединён (граничит с арматурой, фланцами, тройниками или стоит отдельно).", run);
+                odd.Magnitude = Math.Abs(main.Key - start.WallMm.Value);
+                yield return odd;
+            }
         }
 
         // A tee or reducer end must not be thinner than the pipe welded to it

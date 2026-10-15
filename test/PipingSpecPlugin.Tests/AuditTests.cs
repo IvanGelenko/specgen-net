@@ -29,9 +29,13 @@ namespace PipingSpecPlugin.Tests
             snapshot.Parts.Add(Part("B", 5));
             snapshot.Parts[1].ClassName = "Elbow";
             snapshot.Parts[1].Diameter = "100";
+            snapshot.Parts[0].Neighbours.Add("B"); snapshot.Parts[1].Neighbours.Add("A");
             var issue = Assert.Single(AuditRules.Run(snapshot, Enabled("wall")));
             Assert.Equal("Несоответствие", issue.Severity);
             Assert.Equal(new[] { "A", "B" }, issue.Keys);
+            // Not joined: the thinner one is named against the line's wall.
+            snapshot.Parts[0].Neighbours.Clear(); snapshot.Parts[1].Neighbours.Clear();
+            Assert.Equal(new[] { "A" }, Assert.Single(AuditRules.Run(snapshot, Enabled("wall"))).Keys);
         }
         [Fact]
         public void DifferentDiametersAreComparedInSeparateGroups()
@@ -41,6 +45,7 @@ namespace PipingSpecPlugin.Tests
             snapshot.Parts.AddRange(new[] { a, b });
             Assert.Empty(AuditRules.Run(snapshot, Enabled("wall")));
             var c = Part("C", 5); c.ClassName = "Elbow"; c.Diameter = " 100,0 ";
+            a.Neighbours.Add("C"); c.Neighbours.Add("A");
             snapshot.Parts.Add(c);
             Assert.Equal(new[] { "A", "C" }, Assert.Single(AuditRules.Run(snapshot, Enabled("wall"))).Keys);
         }
@@ -109,6 +114,7 @@ namespace PipingSpecPlugin.Tests
         {
             var snapshot = new AuditSnapshot();
             snapshot.Parts.AddRange(new[] { Part("A", 4, "L1"), Part("B", 5, "L1"), Part("C", 4, "L2"), Part("D", 8, "L2") });
+            snapshot.Parts[2].Neighbours.Add("D"); snapshot.Parts[3].Neighbours.Add("C");
             var options = Enabled("wall");
             options.SelectedLines = new System.Collections.Generic.HashSet<string> { "L2" };
             var issue = Assert.Single(AuditRules.Run(snapshot, options));

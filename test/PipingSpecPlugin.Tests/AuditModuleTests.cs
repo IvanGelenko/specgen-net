@@ -84,11 +84,44 @@ public class AuditModuleTests
         // temp.dwg: elbows 4 mm, pipes 5 mm, a pipe bend made of 108x6 — 6 mm.
         var snapshot = new AuditSnapshot();
         var pipe = PipeOf("4B27", "100", 5); var bend = PipeOf("4BA4", "100", 6); bend.ClassName = "PipeBend";
+        Link(pipe, bend);
         snapshot.Parts.AddRange(new[] { pipe, bend });
         var issue = Assert.Single(AuditRules.Run(snapshot, Enabled("wall")));
         Assert.Equal("Несоответствие", issue.Severity);
-        Assert.Contains("6 мм: Изгиб Ду 100 [4BA4]", issue.Message);
-        Assert.Contains("Труба Ду 100 [4B27]", issue.Message);
+        Assert.Contains("Труба Ду 100 [4B27] — 5 мм ↔ Изгиб Ду 100 [4BA4] — 6 мм", issue.Message);
+    }
+
+    // ---- walls: one remark per place where the wall changes ------------------
+
+    [Fact]
+    public void EachJointWhereTheWallChangesIsItsOwnRemark()
+    {
+        // 4 — 4 — [3.5 — 3.5] — 4, the second change through a weld connector.
+        var snapshot = new AuditSnapshot();
+        var a = PipeOf("A", "50", 4); var b = PipeOf("B", "50", 4); var c = PipeOf("C", "50", 3.5); var d = PipeOf("D", "50", 3.5);
+        var e = PipeOf("E", "50", 4); e.ClassName = "Elbow";
+        var weld = Connector("W");
+        Link(a, b); Link(b, c); Link(c, d); Link(d, weld); Link(weld, e);
+        snapshot.Parts.AddRange(new[] { a, b, c, d, e, weld });
+        var issues = AuditRules.Run(snapshot, Enabled("wall"));
+        Assert.Equal(2, issues.Count);
+        // Thinner first: «Труба Ду 50 [C] — 3,5 мм ↔ Труба Ду 50 [B] — 4 мм».
+        Assert.Contains(issues, i => i.Keys.SequenceEqual(new[] { "C", "B" }) && i.Message.IndexOf("[C]") < i.Message.IndexOf("[B]"));
+        Assert.Contains(issues, i => i.Keys.SequenceEqual(new[] { "D", "E" }));
+        Assert.All(issues, i => Assert.Equal(0.5, i.Magnitude));
+    }
+
+    [Fact]
+    public void ASeparatePieceOfAnotherWallIsOneRemarkAgainstTheLinesWall()
+    {
+        var snapshot = new AuditSnapshot();
+        var a = PipeOf("A", "50", 4); var b = PipeOf("B", "50", 4); var c = PipeOf("C", "50", 4);
+        var x = PipeOf("X", "50", 3.5); var y = PipeOf("Y", "50", 3.5);
+        Link(a, b); Link(b, c); Link(x, y);
+        snapshot.Parts.AddRange(new[] { a, b, c, x, y });
+        var issue = Assert.Single(AuditRules.Run(snapshot, Enabled("wall")));
+        Assert.Equal(new[] { "X", "Y" }, issue.Keys);
+        Assert.Contains("Основная стенка линии — 4 мм (3 дет.)", issue.Message);
     }
 
     [Fact]

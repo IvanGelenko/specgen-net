@@ -36,8 +36,13 @@ namespace PipingSpecPlugin.Commands
                 System.Windows.MessageBox.Show(ex.Message + "\n\nЖурнал: " + logger.Path, Title);
                 return;
             }
-            var window = new AuditWindow(doc.Name, catalog.Lines, options => ReadSnapshot(doc, options, catalog, logger),
-                (owner, issues) => AuditModelView.Show(doc, owner, issues, logger));
+            var settings = PluginSettings.Load();
+            var window = new AuditWindow(doc.Name, catalog.Lines, options =>
+                {
+                    SaveTolerance(settings, options.CollisionToleranceMm, logger);
+                    return ReadSnapshot(doc, options, catalog, logger);
+                },
+                (owner, issues) => AuditModelView.Show(doc, owner, issues, logger), settings.AuditCollisionToleranceMm);
             new WindowInteropHelper(window).Owner = AcadApp.MainWindow.Handle;
             if (window.ShowDialog() != true || window.SelectedKeys.Count == 0) return;
             var ids = new List<ObjectId>();
@@ -91,7 +96,7 @@ namespace PipingSpecPlugin.Commands
             try
             {
                 var catalog = AuditLineCatalog.Read(doc, logger.Log);
-                var options = new AuditOptions();
+                var options = new AuditOptions { CollisionToleranceMm = Math.Max(0, PluginSettings.Load().AuditCollisionToleranceMm) };
                 foreach (var rule in AuditRules.All) options.Enabled.Add(rule.Id);
                 var snapshot = ReadSnapshot(doc, options, catalog, logger);
                 var issues = AuditRules.Run(snapshot, options);
@@ -107,6 +112,19 @@ namespace PipingSpecPlugin.Commands
                 logger.Error(ex.ToString());
                 ed.WriteMessage($"\nАудит не завершён: {ex.Message}\nПодробности: {logger.Path}\n");
             }
+        }
+
+        // The tolerance entered in the window is kept for the next run (and
+        // for PSAUDITJSON). Settings that failed to load are not overwritten.
+        static void SaveTolerance(PluginSettings settings, double toleranceMm, RunLogger logger)
+        {
+            if (settings.LoadFailed || settings.AuditCollisionToleranceMm == toleranceMm) return;
+            try
+            {
+                settings.AuditCollisionToleranceMm = toleranceMm;
+                settings.Save();
+            }
+            catch (System.Exception ex) { logger.Log("Допуск коллизий не сохранён: " + ex.Message); }
         }
 
         static AuditSnapshot ReadSnapshot(Document doc, AuditOptions options, AuditLineCatalog catalog, RunLogger logger)

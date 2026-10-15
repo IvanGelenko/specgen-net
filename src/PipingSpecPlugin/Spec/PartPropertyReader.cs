@@ -49,6 +49,7 @@ namespace PipingSpecPlugin.Spec
                 NominalDiameter = Get("NominalDiameter"),
                 NominalUnit = Get("NominalUnit"),
                 Material = Get("Material"),
+                MaterialCode = Get("MaterialCode"),
                 Spec = Get("Spec"),
                 ItemCode = Get("ItemCode"),
                 Manufacturer = Get("Manufacturer"),

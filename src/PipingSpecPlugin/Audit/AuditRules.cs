@@ -39,7 +39,9 @@ namespace PipingSpecPlugin.Audit
                 if (list.Max(p => p.WallMm.Value) - list.Min(p => p.WallMm.Value) <= options.WallToleranceMm + 1e-9) continue;
                 string details = string.Join("; ", list.GroupBy(p => p.WallMm.Value).OrderBy(g => g.Key)
                     .Select(g => $"{g.Key:0.###} мм: " + string.Join(", ", g.Select(p => $"{AuditRules.KindOf(p)} Ду {p.Diameter} [{p.Key}]"))));
-                yield return AuditRules.Issue(Id, Title, "Несоответствие", $"Разные толщины стенок при одинаковом номинальном диаметре {group.Key:0.###}. " + details, list);
+                var spread = AuditRules.Issue(Id, Title, "Несоответствие", $"Разные толщины стенок при одинаковом номинальном диаметре {group.Key:0.###}. " + details, list);
+                spread.Magnitude = list.Max(p => p.WallMm.Value) - list.Min(p => p.WallMm.Value);
+                yield return spread;
             }
             foreach (var issue in FittingsAgainstPipes(snapshot, options)) yield return issue;
         }
@@ -84,8 +86,12 @@ namespace PipingSpecPlugin.Audit
                     }
                     var wall = ends.Min(e => e.WallMm.Value);
                     if (wall < pipe.WallMm.Value - options.WallToleranceMm - 1e-9)
-                        yield return AuditRules.Issue(Id, Title, "Несоответствие",
+                    {
+                        var thin = AuditRules.Issue(Id, Title, "Несоответствие",
                             $"{name}: стенка {wall:0.###} мм на конце Ду {diameter.Value:0.###} тоньше соединённой трубы — {pipe.WallMm.Value:0.###} мм ({pipeName}).", new[] { fitting, pipe });
+                        thin.Magnitude = pipe.WallMm.Value - wall;
+                        yield return thin;
+                    }
                 }
             }
         }
@@ -179,8 +185,10 @@ namespace PipingSpecPlugin.Audit
                 var joined = groups.GroupBy(g => Find(g[0]), StringComparer.Ordinal).Where(g => g.Count() > 1).Select(g => g.Key).ToHashSet(StringComparer.Ordinal);
                 if (joined.Count == 0)
                 {
-                    yield return AuditRules.Issue(Id, Title, "Проверить", $"В текущем чертеже линия состоит из {listing}. " +
+                    var split = AuditRules.Issue(Id, Title, "Проверить", $"В текущем чертеже линия состоит из {listing}. " +
                         "Соединения через другие DWG здесь не проверяются.", members);
+                    split.Magnitude = groups.Count;
+                    yield return split;
                     continue;
                 }
                 var doubtful = nodes.Where(k => (!byKey[k].ConnectionsRead || byKey[k].LineUnknown) && joined.Contains(Find(k)))
@@ -195,7 +203,7 @@ namespace PipingSpecPlugin.Audit
     {
         public string Id => "collisions";
         public string Title => "Коллизии с другими элементами";
-        public string Description => "Пересечения выбранных линий со всеми объектами, включая загруженные внешние ссылки и вложенные вставки. Контакт опоры с деталью, к которой она присоединена, исключается. Детали, соединённые через объект соединения (сварной шов, фланцевое соединение, врезку), пересечением не считаются. Пересечения только изоляции при одинаковом заполненном номере линии игнорируются. Проверяется полная геометрия, независимо от XCLIP.";
+        public string Description => "Пересечения выбранных линий со всеми объектами, включая загруженные внешние ссылки и вложенные вставки. Контакт опоры с деталью, к которой она присоединена, исключается. Детали, соединённые через объект соединения (сварной шов, фланцевое соединение, врезку), пересечением не считаются. Пересечения только изоляции при одинаковом заполненном номере линии игнорируются. Проверяется полная геометрия, независимо от XCLIP. Пересечения не глубже заданного допуска не учитываются.";
         public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
         {
             if (options.SelectedLines == null) return snapshot.GeometryIssues;

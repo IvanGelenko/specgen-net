@@ -9,6 +9,18 @@ namespace PipingSpecPlugin.Audit
     {
         public HashSet<string> Enabled { get; } = new(StringComparer.Ordinal);
         public double WallToleranceMm { get; set; } = 0.01;
+        // Overlaps no deeper than this are not clashes (set by the user).
+        public double CollisionToleranceMm { get; set; }
+
+        // «2», «0,5», «0.5», blank = 0; negative or not a number is refused.
+        public static bool TryParseTolerance(string text, out double millimetres)
+        {
+            millimetres = 0;
+            var value = (text ?? "").Trim().Replace(',', '.');
+            if (value.Length == 0) return true;
+            return double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out millimetres)
+                && double.IsFinite(millimetres) && millimetres >= 0;
+        }
         // null means all lines (scripted audit); an empty set means none.
         public HashSet<string> SelectedLines { get; set; }
         public bool Includes(AuditPart part) => SelectedLines == null || SelectedLines.Contains(part.LineKey ?? NoLine);
@@ -47,6 +59,9 @@ namespace PipingSpecPlugin.Audit
         // The properties could not be read, so LineKey is unknown, not empty.
         public bool LineUnknown { get; set; }
         public string Diameter { get; set; }
+        // Plant «Material» / «MaterialCode» of the part.
+        public string Material { get; set; }
+        public string MaterialCode { get; set; }
         public string WallRaw { get; set; }
         // Plant «LengthUnit» of the part: the catalogue unit of WallRaw (blank = mm).
         public string LengthUnit { get; set; }
@@ -68,6 +83,32 @@ namespace PipingSpecPlugin.Audit
         public string ConnectionsError { get; set; }
         public List<AuditPort> Ports { get; } = new();
         public HashSet<string> Neighbours { get; } = new(StringComparer.Ordinal);
+        // Which port of this part meets which port of the neighbour. Native
+        // connections may be exposed from one side only (see BoltLengthRule).
+        public List<AuditLink> Links { get; } = new();
+        // Bolt sets of a connection object (flanged joint); BoltsError says
+        // why they could not be read.
+        public List<AuditBoltSet> BoltSets { get; } = new();
+        public string BoltsError { get; set; }
+    }
+
+    public sealed class AuditLink
+    {
+        public string Port { get; set; }
+        public string OtherKey { get; set; }
+        public string OtherPort { get; set; }
+    }
+
+    public sealed class AuditBoltSet
+    {
+        public string LengthRaw { get; set; }
+        // Catalogue unit of LengthRaw (blank = mm).
+        public string LengthUnit { get; set; }
+        // «M16», «5/8"».
+        public string Size { get; set; }
+        public string Count { get; set; }
+        // Family / size descriptions and BoltCompatibleStd: stud or bolt.
+        public string Description { get; set; }
     }
 
     public sealed class AuditEnd
@@ -83,6 +124,13 @@ namespace PipingSpecPlugin.Audit
     {
         public string Name { get; set; }
         public bool? Connected { get; set; }
+        // Read for the bolt check only: catalogue end type (FL, WF, LUG…),
+        // flange thickness in the port's LengthUnit, WCS position in drawing
+        // units (AuditSnapshot.DrawingMmPerUnit).
+        public string EndType { get; set; }
+        public string FlangeThicknessRaw { get; set; }
+        public string LengthUnit { get; set; }
+        public double[] Position { get; set; }
     }
 
     public sealed class AuditIssue
@@ -99,8 +147,15 @@ namespace PipingSpecPlugin.Audit
         // collision the overlap of the two parts' boxes («Показать в модели»
         // zooms there); null when the place is just the elements themselves.
         public double[] Bounds { get; set; }
+        // How bad it is, for the order within a check (bigger first): clash
+        // depth or bolt shortfall in mm, wall difference in mm, number of odd
+        // parts. null = no measure.
+        public double? Magnitude { get => _magnitude; set => _magnitude = value.HasValue ? Math.Round(value.Value, 3) : null; }
+        double? _magnitude;
         public IEnumerable<string> SelectableKeys => SelectionKeys.Count > 0 ? SelectionKeys : Keys;
         public string Elements => string.Join(", ", Keys);
+        // The check the grid groups the issue under.
+        [System.Text.Json.Serialization.JsonIgnore] public string Group => AuditRules.GroupTitle(RuleId);
     }
 
     public sealed class AuditSnapshot
@@ -114,9 +169,13 @@ namespace PipingSpecPlugin.Audit
         // Overlaps found between parts joined through a connection object
         // and therefore not reported (ConnectedJointPolicy).
         public int ConnectedJointsIgnored { get; set; }
+        // Overlaps within AuditOptions.CollisionToleranceMm, not reported.
+        public int CollisionsWithinTolerance { get; set; }
         public int NonVolumetricCount { get; set; }
         public int XrefInstancesChecked { get; set; }
         public int XrefInstancesUnavailable { get; set; }
+        // Millimetres per drawing unit (port positions); null = unknown.
+        public double? DrawingMmPerUnit { get; set; }
     }
 
     public interface IAuditRule
@@ -131,7 +190,7 @@ namespace PipingSpecPlugin.Audit
     {
         // Add a rule here: the options dialog and report use this same registry.
         public static IReadOnlyList<IAuditRule> All { get; } = new IAuditRule[]
-        { new WallThicknessRule(), new ConnectivityRule(), new CollisionRule() };
+        { new WallThicknessRule(), new MaterialRule(), new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
 
         public static List<AuditIssue> Run(AuditSnapshot snapshot, AuditOptions options)
         {
@@ -147,7 +206,27 @@ namespace PipingSpecPlugin.Audit
             var issues = snapshot.ReadIssues.Where(i => (i.RuleId == "read" || options.Enabled.Contains(i.RuleId)) && Relevant(i)).ToList();
             foreach (var rule in All.Where(r => options.Enabled.Contains(r.Id)))
                 issues.AddRange(rule.Evaluate(snapshot, options));
-            return issues;
+            return Order(issues);
+        }
+
+        // The checks in the order of the results (window, JSON, report):
+        // physical clashes first, the data that could not be read last.
+        static readonly string[] GroupOrder = { "collisions", "bolts", "wall", "material", "connections", "read" };
+
+        public static string GroupTitle(string ruleId) =>
+            ruleId == "read" ? "Чтение данных" : All.FirstOrDefault(r => r.Id == ruleId)?.Title ?? ruleId ?? "Прочее";
+
+        // Grouped by check; within a check violations first, then «Проверить»,
+        // then «Не проверено»; then the worst (Magnitude) first, then line and
+        // text so the order is stable.
+        public static List<AuditIssue> Order(IEnumerable<AuditIssue> issues)
+        {
+            int Group(AuditIssue i) { var n = Array.IndexOf(GroupOrder, i.RuleId); return n < 0 ? GroupOrder.Length : n; }
+            int Rank(AuditIssue i) => i.Severity == "Не проверено" ? 2 : i.Severity == "Проверить" ? 1 : 0;
+            return issues.OrderBy(Group).ThenBy(i => i.RuleId, StringComparer.Ordinal).ThenBy(Rank)
+                .ThenByDescending(i => i.Magnitude ?? double.NegativeInfinity)
+                .ThenBy(i => i.Line ?? "", Comparer<string>.Create(Spec.VtValueParsing.NaturalCompare))
+                .ThenBy(i => i.Message ?? "", StringComparer.Ordinal).ToList();
         }
 
         public static double? ParsePositive(string value)

@@ -24,7 +24,9 @@ namespace PipingSpecPlugin.Audit
             // The other checks need the connections too: parts joined through a
             // connection object are not a clash (ConnectedJointPolicy), and a
             // tee / reducer is compared with the pipes welded to it.
-            var connections = options.Enabled.Contains("connections") || collision || options.Enabled.Contains("wall");
+            var bolts = options.Enabled.Contains("bolts");
+            var connections = options.Enabled.Contains("connections") || collision || options.Enabled.Contains("wall") || bolts;
+            snapshot.DrawingMmPerUnit = DrawingMmPerUnit(database);
             var shapes = new List<Shape>();
             using var docLock = document.LockDocument();
             using var transaction = database.TransactionManager.StartTransaction();
@@ -40,7 +42,9 @@ namespace PipingSpecPlugin.Audit
                     Entity entity;
                     try { entity = transaction.GetObject(id, OpenMode.ForRead) as Entity; }
                     catch (Exception ex) { AddReadIssue(snapshot, id.Handle.ToString(), ex.Message); continue; }
-                    if (entity == null) continue;
+                    // Isometric annotations are Plant parts without a body of
+                    // their own: no clash, line or connection to audit.
+                    if (entity == null || IsIsoSymbol(entity)) continue;
                     AuditPart item = null;
                     if (entity is Part part)
                     {
@@ -53,6 +57,8 @@ namespace PipingSpecPlugin.Audit
                                 item.ClassName = string.IsNullOrWhiteSpace(saved.ClassName) ? part.GetType().Name : saved.ClassName;
                                 item.Description = saved.Description;
                                 item.Diameter = saved.Diameter;
+                                item.Material = saved.Material;
+                                item.MaterialCode = saved.MaterialCode;
                                 item.WallRaw = saved.WallRaw;
                                 item.LengthUnit = saved.LengthUnit;
                                 item.WallMm = AuditRules.WallMillimetres(item.WallRaw, item.LengthUnit);
@@ -72,6 +78,8 @@ namespace PipingSpecPlugin.Audit
                                 item.Description = Get("PartSizeLongDesc");
                                 if (string.IsNullOrWhiteSpace(item.Description)) item.Description = Get("PartFamilyLongDesc");
                                 item.Diameter = Get("NominalDiameter");
+                                item.Material = Get("Material");
+                                item.MaterialCode = Get("MaterialCode");
                                 item.WallRaw = Get("WallThickness");
                                 // The wall is in the part's catalogue unit, not in
                                 // drawing units (INSUNITS). Converted before the
@@ -100,7 +108,8 @@ namespace PipingSpecPlugin.Audit
                             || part.GetType().Name.Equals("Connector", StringComparison.OrdinalIgnoreCase);
                         item.IsPipe = AuditRules.IsPipeClass(item.ClassName) || part is Pipe;
                         item.IsTeeOrReducer = AuditRules.IsTeeOrReducerClass(item.ClassName);
-                        if (connections) ReadConnections(item, part, id, manager);
+                        if (connections) ReadConnections(item, part, id, manager, bolts);
+                        if (bolts && part is Connector connector) ReadBoltSets(item, connector, id, dlm, snapshot.DrawingMmPerUnit);
                     }
                     if (collision) CollectCollisionEntity(entity, item, transaction, Matrix3d.Identity,
                         id.Handle.ToString(), id.Handle.ToString(), "", false, 0, new HashSet<ObjectId>(),
@@ -111,7 +120,8 @@ namespace PipingSpecPlugin.Audit
                 foreach (var p in snapshot.Parts)
                     foreach (var key in p.Neighbours.ToArray())
                         if (indexed.TryGetValue(key, out var other)) other.Neighbours.Add(p.Key);
-                if (collision) CheckCollisions(shapes, snapshot, indexed, progress);
+                if (bolts && dlm != null) ReadFlangeFaces(snapshot, database, dlm);
+                if (collision) CheckCollisions(shapes, snapshot, indexed, progress, options.CollisionToleranceMm);
                 return snapshot;
             }
             finally
@@ -160,7 +170,7 @@ namespace PipingSpecPlugin.Audit
             }
         }
 
-        static void ReadConnections(AuditPart item, Part part, ObjectId id, ConnectionManager manager)
+        static void ReadConnections(AuditPart item, Part part, ObjectId id, ConnectionManager manager, bool faces)
         {
             try
             {
@@ -174,6 +184,7 @@ namespace PipingSpecPlugin.Audit
                     item.Ports.Add(result);
                     using var pair = new Pair { ObjectId = id, Port = port };
                     result.Connected = manager.IsConnected(pair);
+                    if (faces) ReadFace(result, part, port);
                 }
                 var links = manager.GetConnections(id);
                 if (links != null)
@@ -184,8 +195,13 @@ namespace PipingSpecPlugin.Audit
                         try { link = links[i]; } catch (IndexOutOfRangeException) { break; }
                         catch (ArgumentOutOfRangeException) { break; }
                         if (link == null) break;
-                        var other = link.ObjectId1 == id ? link.ObjectId2 : link.ObjectId1;
-                        if (!other.IsNull) item.Neighbours.Add(other.Handle.ToString());
+                        bool first = link.ObjectId1 == id;
+                        var other = first ? link.ObjectId2 : link.ObjectId1;
+                        if (other.IsNull) continue;
+                        item.Neighbours.Add(other.Handle.ToString());
+                        if (faces) item.Links.Add(new AuditLink { OtherKey = other.Handle.ToString(),
+                            Port = PortName(() => first ? link.Port1 : link.Port2),
+                            OtherPort = PortName(() => first ? link.Port2 : link.Port1) });
                     }
                 item.ConnectionsRead = true;
             }
@@ -195,6 +211,176 @@ namespace PipingSpecPlugin.Audit
                 // read issue as well made every such part count twice.
                 item.ConnectionsError = ex.Message;
             }
+        }
+
+        static string PortName(Func<Port> port)
+        {
+            try { var p = port(); return p == null || p.IsNull ? null : p.Name; }
+            catch { return null; }
+        }
+
+        // Position and end type from the model. The catalogue data (flange
+        // thickness) comes from the Data Manager in ReadFlangeFaces: the
+        // object's SpecPort properties are empty without a loaded project.
+        static void ReadFace(AuditPort result, Part part, Port port)
+        {
+            try { result.Position = new[] { port.Position.X, port.Position.Y, port.Position.Z }; } catch { }
+            try { result.EndType = port.EndType; } catch { }
+        }
+
+        // End type, flange thickness and length unit per port from the Data
+        // Manager: the part's own row is its first port (S1), the other ports
+        // are PartPort rows — as for the tee / reducer walls (ReadEnds).
+        static void ReadFlangeFaces(AuditSnapshot snapshot, Database database, DataLinksManager dlm)
+        {
+            foreach (var part in snapshot.Parts.Where(p => p.Ports.Count > 0))
+            {
+                try
+                {
+                    if (!long.TryParse(part.Key, System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture, out var handle)) continue;
+                    var id = database.GetObjectId(false, new Handle(handle), 0);
+                    var rowId = dlm.FindAcPpRowId(id);
+                    if (rowId <= 0) continue;
+                    var rows = new List<int> { rowId };
+                    var related = dlm.GetRelatedRowIds("PartPort", "Part", rowId, "Port");
+                    if (related != null) foreach (int row in related) rows.Add(row);
+                    foreach (var row in rows)
+                    {
+                        var values = Properties(dlm, row);
+                        string Get(string name) => values.TryGetValue(name, out var v) ? v : null;
+                        var name = Get("PortName");
+                        if (string.IsNullOrWhiteSpace(name)) name = row == rowId ? "S1" : null;
+                        var port = part.Ports.FirstOrDefault(p => string.Equals(p.Name, name, StringComparison.OrdinalIgnoreCase));
+                        if (port == null) continue;
+                        if (string.IsNullOrWhiteSpace(port.EndType)) port.EndType = Get("EndType");
+                        if (string.IsNullOrWhiteSpace(port.FlangeThicknessRaw)) port.FlangeThicknessRaw = Get("FlangeThickness");
+                        if (string.IsNullOrWhiteSpace(port.LengthUnit)) port.LengthUnit = Get("LengthUnit");
+                    }
+                }
+                catch { /* Blank thickness: the bolt check says «не проверено». */ }
+            }
+        }
+
+        static Dictionary<string, string> Properties(DataLinksManager dlm, int rowId)
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var all = dlm.GetAllProperties(rowId, true);
+            if (all != null) foreach (var kv in all) values.TryAdd(kv.Key, kv.Value);
+            return values;
+        }
+
+        // Bolt sets are sub-parts of the connection object. Their Data Manager
+        // row (sub-part i of the connector) carries the length Plant 3D
+        // calculated, the thread size and the standard; without it the
+        // object's own length (drawing units) is used.
+        static void ReadBoltSets(AuditPart item, Connector connector, ObjectId id, DataLinksManager dlm, double? mmPerUnit)
+        {
+            try
+            {
+                int own = 0;
+                try { own = dlm?.FindAcPpRowId(id) ?? 0; } catch { }
+                var used = new HashSet<int>();
+                for (int i = 0; i < connector.NumSubParts; i++)
+                {
+                    if (connector.GetSubPart(i) is not BoltSetSubPart set) continue;
+                    var values = dlm == null ? null : SubPartRow(dlm, id, i, own, used);
+                    string Get(string name) => values != null && values.TryGetValue(name, out var v) ? v : null;
+                    var bolt = new AuditBoltSet
+                    {
+                        LengthRaw = Get("Length"),
+                        LengthUnit = Get("LengthUnit") ?? "",
+                        Size = Get("BoltSize"),
+                        Count = Get("NumberInSet"),
+                        Description = string.Join(" ", new[] { Get("PartFamilyLongDesc"), Get("PartSizeLongDesc"), Get("BoltCompatibleStd") }
+                            .Where(s => !string.IsNullOrWhiteSpace(s))),
+                    };
+                    if (string.IsNullOrWhiteSpace(bolt.LengthRaw) && mmPerUnit.HasValue)
+                    {
+                        try
+                        {
+                            if (set.Length > 0)
+                            {
+                                bolt.LengthRaw = (set.Length * mmPerUnit.Value).ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
+                                bolt.LengthUnit = "mm";
+                            }
+                        }
+                        catch { }
+                    }
+                    item.BoltSets.Add(bolt);
+                }
+            }
+            catch (Exception ex)
+            {
+                item.BoltSets.Clear();
+                item.BoltsError = ex.Message;
+            }
+        }
+
+        // The row of a connector's sub-part. The sub-part index of the
+        // PpObjectId is tried as is and shifted by one (the base may differ);
+        // the row must be a bolt set and not the connector's own.
+        static Dictionary<string, string> SubPartRow(DataLinksManager dlm, ObjectId id, int index, int own, HashSet<int> used)
+        {
+            foreach (var sub in new[] { index, index + 1 })
+            {
+                try
+                {
+                    var row = dlm.FindAcPpRowId(dlm.MakeAcPpObjectId(id, sub));
+                    if (row <= 0 || row == own || used.Contains(row)) continue;
+                    var values = Properties(dlm, row);
+                    var cls = values.TryGetValue("PnPClassName", out var c) ? c ?? "" : "";
+                    if (!cls.Contains("Bolt", StringComparison.OrdinalIgnoreCase)) continue;
+                    used.Add(row);
+                    return values;
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        // Not SpecPort / PartSizeProperties.PropValue: a name the port does not
+        // have is an access violation in native code (accoreconsole 2026,
+        // audit-model.dwg) — it kills AutoCAD and cannot be caught.
+
+        // INSUNITS, else the Plant 3D project's linear unit (piping drawings
+        // are drawn in it); null when neither is known.
+        static double? DrawingMmPerUnit(Database database)
+        {
+            try
+            {
+                switch (database.Insunits)
+                {
+                    case UnitsValue.Millimeters: return 1;
+                    case UnitsValue.Centimeters: return 10;
+                    case UnitsValue.Meters: return 1000;
+                    case UnitsValue.Inches: return 25.4;
+                    case UnitsValue.Feet: return 304.8;
+                }
+            }
+            catch { }
+            try
+            {
+                switch (Autodesk.ProcessPower.AcPp3dObjectsUtils.ProjectUnits.CurrentLinearUnit)
+                {
+                    case 1: return 1;     // mm
+                    case 2: return 25.4;  // in
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // AcPpDb3dIsoSymbol and its kin (IsoSphereSymbol, IsoArrowSymbol,
+        // IsoStartPointSymbol, IsoRefDim): isometric annotation markers.
+        static bool IsIsoSymbol(Entity entity)
+        {
+            try
+            {
+                for (var rx = entity.GetRXClass(); rx != null; rx = rx.MyParent)
+                    if (rx.Name.StartsWith("AcPpDb3dIso", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch { }
+            return false;
         }
 
         sealed class Shape : IDisposable
@@ -238,7 +424,8 @@ namespace PipingSpecPlugin.Audit
         static bool IsFlat(Entity entity) =>
             IsPlainCurve(entity) || entity is DBPoint || entity is DBText || entity is MText || entity is Dimension || entity is Hatch
             || entity is Solid || entity is Trace || entity is Autodesk.AutoCAD.DatabaseServices.Shape || entity is Image
-            || entity is Ole2Frame || entity is MLeader || entity is FeatureControlFrame || entity is UnderlayReference || entity is Viewport;
+            || entity is Ole2Frame || entity is MLeader || entity is FeatureControlFrame || entity is UnderlayReference || entity is Viewport
+            || IsIsoSymbol(entity);
 
         // AutoCAD's own curves only. A custom object derived from a curve — a
         // Plant 3D structure beam or column (ImpCurve, ACPPSTRUCTUREBEAM) —
@@ -337,8 +524,13 @@ namespace PipingSpecPlugin.Audit
             a.MaxPoint.Y > b.MinPoint.Y && b.MaxPoint.Y > a.MinPoint.Y &&
             a.MaxPoint.Z > b.MinPoint.Z && b.MaxPoint.Z > a.MinPoint.Z;
 
-        static void CheckCollisions(List<Shape> shapes, AuditSnapshot snapshot, IReadOnlyDictionary<string, AuditPart> parts, Action<string> progress)
+        static void CheckCollisions(List<Shape> shapes, AuditSnapshot snapshot, IReadOnlyDictionary<string, AuditPart> parts, Action<string> progress,
+            double toleranceMm)
         {
+            // Unknown drawing units: the tolerance is taken in drawing units
+            // (Plant 3D piping drawings are in mm).
+            var mmPerUnit = snapshot.DrawingMmPerUnit ?? 1;
+            var tolerance = Math.Max(0, toleranceMm) / mmPerUnit;
             // Sweep on X before expensive solid intersections; each unordered pair once.
             var sorted = shapes.OrderBy(s => s.Bounds.MinPoint.X).ToList();
             for (int i = 0; i < sorted.Count; i++)
@@ -363,18 +555,26 @@ namespace PipingSpecPlugin.Audit
                     var joint = ConnectedJointPolicy.IgnoreOverlap(a.Part, b.Part, parts);
                     try
                     {
-                        bool collision = SolidOverlap(a.BareSolids ?? a.Solids, b.BareSolids ?? b.Solids);
+                        var depth = OverlapDepth(a.BareSolids ?? a.Solids, b.BareSolids ?? b.Solids, tolerance);
                         bool insulation = false;
-                        if (!collision && (a.BareSolids != null || b.BareSolids != null)
+                        // The insulation envelope can reach deeper than the
+                        // bodies: checked when the bodies stay within tolerance.
+                        if ((depth == null || depth <= tolerance) && (a.BareSolids != null || b.BareSolids != null)
                             && !InsulationJointPolicy.IgnoreInsulationOverlap(a.Part, b.Part))
-                            collision = insulation = SolidOverlap(a.Solids, b.Solids);
-                        if (!collision) continue;
+                        {
+                            var wrapped = OverlapDepth(a.Solids, b.Solids, tolerance);
+                            if (wrapped != null && (depth == null || wrapped > depth)) { depth = wrapped; insulation = true; }
+                        }
+                        if (depth == null) continue;
                         // Counted only when they really overlap: the number of
                         // joints merely touching would mean nothing to the user.
                         if (joint) { snapshot.ConnectedJointsIgnored++; continue; }
+                        if (depth <= tolerance) { snapshot.CollisionsWithinTolerance++; continue; }
                         var clash = AuditRules.Issue("collisions", "Коллизии", "Пересечение",
-                            $"Обнаружено пересечение {(insulation ? "с участием изоляции" : "объёмов")}: {a.Part.Description} ↔ {b.Part.Description}. Проверьте, не является ли оно предусмотренным сопряжением.", new[] { a.Part, b.Part });
+                            $"Обнаружено пересечение {(insulation ? "с участием изоляции" : "объёмов")}: {a.Part.Description} ↔ {b.Part.Description}. " +
+                            $"Глубина ≈ {depth.Value * mmPerUnit:0.#} мм. Проверьте, не является ли оно предусмотренным сопряжением.", new[] { a.Part, b.Part });
                         clash.Bounds = Overlap(a.Bounds, b.Bounds);
+                        clash.Magnitude = depth.Value * mmPerUnit;
                         snapshot.GeometryIssues.Add(clash);
                     }
                     catch (Exception ex)
@@ -397,8 +597,14 @@ namespace PipingSpecPlugin.Audit
             Math.Min(a.MaxPoint.X, b.MaxPoint.X), Math.Min(a.MaxPoint.Y, b.MaxPoint.Y), Math.Min(a.MaxPoint.Z, b.MaxPoint.Z),
         };
 
-        static bool SolidOverlap(List<Solid3d> a, List<Solid3d> b)
+        // Depth of the overlap in drawing units, null when the solids do not
+        // overlap. Depth = the smallest side of the overlap region's box: never
+        // less than the true penetration, so the tolerance cannot hide a
+        // deeper clash (for an oblique crossing it reads somewhat more).
+        // Stops at the first overlap deeper than the tolerance.
+        static double? OverlapDepth(List<Solid3d> a, List<Solid3d> b, double tolerance)
         {
+            double? deepest = null;
             foreach (var left in a)
                 foreach (var right in b)
                 {
@@ -407,9 +613,13 @@ namespace PipingSpecPlugin.Audit
                     using var second = (Solid3d)right.Clone();
                     if (!first.CheckInterference(second)) continue;
                     first.BooleanOperation(BooleanOperationType.BoolIntersect, second);
-                    if (first.MassProperties.Volume > 1e-9) return true;
+                    if (first.MassProperties.Volume <= 1e-9) continue;
+                    var box = first.GeometricExtents;
+                    var depth = Math.Min(box.MaxPoint.X - box.MinPoint.X, Math.Min(box.MaxPoint.Y - box.MinPoint.Y, box.MaxPoint.Z - box.MinPoint.Z));
+                    deepest = Math.Max(deepest ?? 0, depth);
+                    if (deepest > tolerance) return deepest;
                 }
-            return false;
+            return deepest;
         }
 
         static void AddReadIssue(AuditSnapshot snapshot, string key, string message) => snapshot.ReadIssues.Add(new AuditIssue

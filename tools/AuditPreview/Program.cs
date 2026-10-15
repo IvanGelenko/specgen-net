@@ -29,21 +29,44 @@ class Program
             lines = JsonSerializer.Deserialize<List<AuditLineChoice>>(catalog.RootElement.GetProperty("Lines").GetRawText());
         }
         var snapshot = new AuditSnapshot(); snapshot.Parts.AddRange(parts);
+        // Optional: the collisions of a PSAUDITJSON / AUDITSMOKE report, so
+        // the preview shows that group too (the parts file has no geometry).
+        var report = Environment.GetEnvironmentVariable("AUDIT_PREVIEW_REPORT");
+        if (!string.IsNullOrEmpty(report) && File.Exists(report))
+        {
+            using var json = JsonDocument.Parse(File.ReadAllText(report));
+            snapshot.GeometryIssues.AddRange(JsonSerializer.Deserialize<List<AuditIssue>>(json.RootElement.GetProperty("Issues").GetRawText())
+                .Where(i => i.RuleId == "collisions"));
+        }
         var window = new AuditWindow("0873-003-ТХМ.dwg", lines, _ => snapshot, (_, __) => { });
         var content = (FrameworkElement)window.Content;
-        content.Measure(new Size(1120, 850)); content.Arrange(new Rect(0, 0, 1120, 850)); content.UpdateLayout();
+        // A real (off-screen) window and an idle dispatcher: the grid sizes
+        // its star column and regroups asynchronously, a bare Measure/Arrange
+        // rendered every column at its minimum width.
+        window.WindowStartupLocation = WindowStartupLocation.Manual;
+        window.Left = -20000; window.Top = 0; window.Width = 1152; window.Height = 900; window.ShowInTaskbar = false;
+        window.Show();
+        Idle();
         if (args.Contains("run"))
         {
             Find<Button>(content, b => System.Windows.Automation.AutomationProperties.GetName(b) == "Проверить")
                 .RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Idle();
             var grid = Find<DataGrid>(content, _ => true);
             if (grid.Items.Count > 0) grid.SelectedIndex = 0;
-            content.Measure(new Size(1120, 850)); content.Arrange(new Rect(0, 0, 1120, 850)); content.UpdateLayout();
+            Idle();
         }
-        var bitmap = new RenderTargetBitmap(1120, 850, 96, 96, PixelFormats.Pbgra32); bitmap.Render(content);
+        int w = (int)content.ActualWidth, h = (int)content.ActualHeight;
+        var bitmap = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32); bitmap.Render(content);
         var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bitmap));
         using var output = File.Create(args[1]); encoder.Save(output);
         window.Close();
+    }
+
+    static void Idle()
+    {
+        for (int i = 0; i < 3; i++)
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() => { }));
     }
 
     static T Find<T>(DependencyObject root, Func<T, bool> match) where T : DependencyObject

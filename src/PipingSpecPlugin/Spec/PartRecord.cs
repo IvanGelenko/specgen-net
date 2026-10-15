@@ -17,6 +17,7 @@ namespace PipingSpecPlugin.Spec
         public string NominalDiameter;
         public string NominalUnit;
         public string Material;
+        public string MaterialCode;
         public string Spec;
         public string ItemCode;
         public string Manufacturer;

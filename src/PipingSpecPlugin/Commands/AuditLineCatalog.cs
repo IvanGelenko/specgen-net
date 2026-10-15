@@ -65,7 +65,8 @@ namespace PipingSpecPlugin.Commands
                                 ClassName = record.PnPClassName,
                                 // Blank, not only null, falls back — as in the live read.
                                 Description = string.IsNullOrWhiteSpace(record.PartSizeLongDesc) ? record.PartFamilyLongDesc : record.PartSizeLongDesc,
-                                Diameter = record.NominalDiameter, WallRaw = record.WallThickness, LengthUnit = record.LengthUnit };
+                                Diameter = record.NominalDiameter, WallRaw = record.WallThickness, LengthUnit = record.LengthUnit,
+                                Material = record.Material, MaterialCode = record.MaterialCode };
                             if (AuditRules.IsTeeOrReducerClass(record.PnPClassName))
                             {
                                 try { part.Ends = DrawingAuditReader.ReadEnds(dlm, record.PnPID, "S1", record.NominalDiameter, record.WallThickness, record.LengthUnit); }

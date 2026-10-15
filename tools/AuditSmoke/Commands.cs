@@ -73,6 +73,8 @@ namespace AuditSmoke
             {
                 var options = new AuditOptions();
                 foreach (var rule in AuditRules.All) options.Enabled.Add(rule.Id);
+                if (AuditOptions.TryParseTolerance(Environment.GetEnvironmentVariable("AUDIT_SMOKE_TOLERANCE"), out var tolerance))
+                    options.CollisionToleranceMm = tolerance;
                 var line = Environment.GetEnvironmentVariable("AUDIT_SMOKE_LINE");
                 if (!string.IsNullOrEmpty(line)) options.SelectedLines = new System.Collections.Generic.HashSet<string> { line };
                 var snapshot = DrawingAuditReader.Read(Application.DocumentManager.MdiActiveDocument, options);

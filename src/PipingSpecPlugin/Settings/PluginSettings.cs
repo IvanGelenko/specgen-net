@@ -91,6 +91,10 @@ namespace PipingSpecPlugin.Settings
         // ---- INSULSPEC (данные для расчёта изоляции) -------------------------
         // Scope and the line / status memory, same known/selected scheme as
         // the spec picker (PickerSelectionMemory).
+        // PSAUDIT: overlaps no deeper than this (mm) are not clashes; last
+        // value entered in the audit window, also used by PSAUDITJSON.
+        public double AuditCollisionToleranceMm { get; set; } = 0;
+
         public string InsulationScope { get; set; } = "proj";
         public string[] InsulationLines { get; set; } = null;
         public string[] KnownInsulationLines { get; set; } = null;

@@ -49,8 +49,10 @@ namespace PipingSpecPlugin.Audit
                             ? $"Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром; тройники и переходы — стенка конца не тоньше соединённой трубы. Допуск {options.WallToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм."
                             : r.Description))),
                         ["SCOPE"] = "Выбранные линии текущего чертежа. " + (options.Enabled.Contains("collisions")
-                            ? $"Коллизии проверяются со всеми объектами и загруженными внешними ссылками. Проверено пар: {snapshot.CollisionPairsChecked}. Пересечения деталей, соединённых через объект соединения, не учитываются (не учтено: {snapshot.ConnectedJointsIgnored}). Вставок внешних ссылок: {snapshot.XrefInstancesChecked}; недоступно: {snapshot.XrefInstancesUnavailable}. Используется полная геометрия без учёта XCLIP. " : "")
+                            ? $"Коллизии проверяются со всеми объектами и загруженными внешними ссылками. Проверено пар: {snapshot.CollisionPairsChecked}. Пересечения деталей, соединённых через объект соединения, не учитываются (не учтено: {snapshot.ConnectedJointsIgnored}). Вставок внешних ссылок: {snapshot.XrefInstancesChecked}; недоступно: {snapshot.XrefInstancesUnavailable}. Используется полная геометрия без учёта XCLIP. "
+                              + (options.CollisionToleranceMm > 0 ? $"Допуск коллизий {options.CollisionToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм: пересечения не глубже допуска не учитываются (не учтено: {snapshot.CollisionsWithinTolerance}). " : "") : "")
                             + (options.Enabled.Contains("connections") ? "Соединения через другие DWG не проверяются. Свободные концы могут быть предусмотрены проектом. " : "")
+                            + (options.Enabled.Contains("bolts") ? $"Соединений с комплектами болтов в чертеже: {snapshot.Parts.Count(p => p.IsConnector && p.BoltSets.Count > 0)}. " : "")
                             + "Непроверенные случаи не считаются успешной проверкой. Модель при аудите не изменяется."
                     };
                     Replace(body, fields);

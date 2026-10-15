@@ -22,57 +22,9 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public static class PartEntityIndex
     {
-        /// <summary>
-        /// Saves the active drawing if it has unsaved edits, then re-syncs the
-        /// DataLinks caches. This is the missing piece that made SELECTBYSTATUS
-        /// / MOVEBYTAG ignore live edits: Plant 3D keeps an edited part property
-        /// (Status, Tag, …) in the document's in-memory blob, and the DataLinks
-        /// store is only updated on SAVE. The spec generator works because it
-        /// saves the drawing before reading (WriteSpecCommand); cache-flushing
-        /// alone can't surface a value that was never written to the store. So
-        /// we do the same: save-if-dirty, then RefreshLinkMap.
-        ///
-        /// DBMOD != 0 means the active document has unsaved changes. We try
-        /// SaveAs (preserves the path) then fall back to Save(). Failures are
-        /// traced, not thrown — a read-only command must still run, just on
-        /// possibly-stale data, and the caller can warn.
-        /// </summary>
-        public static void SaveAndRefresh(Document doc, Database db, DataLinksManager dlm,
-                                          Action<string> trace)
-        {
-            try
-            {
-                object dbmod = Autodesk.AutoCAD.ApplicationServices.Application
-                    .GetSystemVariable("DBMOD");
-                bool modified = System.Convert.ToInt32(dbmod) != 0;
-                if (modified && doc != null && !string.IsNullOrEmpty(doc.Name))
-                {
-                    bool saved = false;
-                    try
-                    {
-                        db.SaveAs(doc.Name, true, DwgVersion.Current, db.SecurityParameters);
-                        saved = true;
-                    }
-                    catch (System.Exception ex)
-                    {
-                        trace?.Invoke($"SaveAs не удался ({ex.GetType().Name}: {ex.Message}); пробую Save().");
-                        try { db.Save(); saved = true; }
-                        catch (System.Exception ex2)
-                        {
-                            trace?.Invoke($"Save() тоже не удался: {ex2.GetType().Name}: {ex2.Message}");
-                        }
-                    }
-                    if (!saved)
-                        trace?.Invoke("ВНИМАНИЕ: не удалось сохранить чертёж — данные могут быть устаревшими.");
-                }
-            }
-            catch (System.Exception ex)
-            {
-                trace?.Invoke($"Проверка изменений чертежа не удалась: {ex.GetType().Name}: {ex.Message}");
-            }
-
-            RefreshLinkMap(db, dlm, trace);
-        }
+        // Saving the active drawing before a disk read is no longer done here:
+        // see Commands/DrawingSaveGuard (one user-visible save policy for
+        // MOVEBYTAG / SELECTBY*, original DWG version, stop on failure).
 
         /// <summary>
         /// Forces the DataLinksManager to re-sync with the live drawing before
@@ -114,17 +66,10 @@ namespace PipingSpecPlugin.Spec
             // …) read fresh, not at their pre-edit values.
             try
             {
-                var pnpDb = dlm.GetPnPDatabase();
-                if (pnpDb != null)
-                {
-                    try { pnpDb.CacheAlways = false; } catch { }
-                    try { pnpDb.Disconnect(); } catch { }
-                    try { pnpDb.Connect(); } catch { }
-                    try { pnpDb.AcceptChanges(); } catch { }
-                    try { pnpDb.SynchronizeMetadata(); } catch { }
-                    foreach (PnPTable table in pnpDb.Tables)
-                        try { table.RefreshCachedRows(); } catch { }
-                }
+                // Shared guarded sequence: Connect() is guaranteed to run
+                // after Disconnect() and a failure is logged loudly instead
+                // of leaving the store silently disconnected.
+                PnpDbFreshness.Flush(dlm.GetPnPDatabase(), "RefreshLinkMap (property cache)", trace);
             }
             catch (System.Exception ex)
             {

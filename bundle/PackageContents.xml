@@ -12,6 +12,11 @@
   <CompanyDetails Name="In-house" Email="" Phone="" Url=""/>
 
   <Components>
+    <!-- SeriesMin R25.0 = AutoCAD / Plant 3D 2025. The DLL is compiled against
+         the 2025 managed wrappers (25.0.0.0, PnP 16.0), which 2026 (R25.1)
+         also satisfies with its newer assemblies. Never compile against 2026
+         while this says R25.0: .NET cannot bind a 25.1 reference to 2025's
+         25.0 and the plug-in would fail at every 2025 start. -->
     <RuntimeRequirements OS="Win64"
                          Platform="AutoCAD*"
                          SeriesMin="R25.0"

@@ -365,6 +365,11 @@ namespace PipingSpecPlugin.Tests
         {
             var pipe = Pipe(1, 5000);  // 5 m
             var bend = Bend(2, 1500);  // 1.5 m
+            bend.NominalDiameter = pipe.NominalDiameter;
+            bend.NominalUnit = pipe.NominalUnit;
+            bend.Material = pipe.Material;
+            bend.Spec = pipe.Spec;
+            bend.LineNumberTag = pipe.LineNumberTag;
             var topology = new Dictionary<int, List<int>>
             {
                 { 1, new List<int> { 2 } },

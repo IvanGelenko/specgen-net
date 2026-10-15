@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PipingSpecPlugin.Settings
 {
@@ -19,7 +20,7 @@ namespace PipingSpecPlugin.Settings
         // pattern as a database migrations table. Bumping the constant
         // and adding an Upgrade case is the only way to change the
         // file shape safely; never silently rename a property.
-        public const int CurrentSchemaVersion = 4;
+        public const int CurrentSchemaVersion = 8;
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
         // Path to the user's preferred .docx Word template. Empty means
@@ -53,7 +54,9 @@ namespace PipingSpecPlugin.Settings
         public bool ExcludeConnectors { get; set; } = true;
         // Fold PipeBend rows into the adjacent straight pipe — defaults
         // to true so the spec matches the procurement convention of
-        // listing only one Pipe entry per run.
+        // listing only one Pipe entry per run. When false, every PipeBend
+        // goes to «Детали трубопроводов» in pieces, regardless of its
+        // catalogue PartCategory (CategoryClassifier.SpecSection).
         public bool IncludePipeBendsAsPipe { get; set; } = true;
 
         // Open the resulting .docx in Word automatically. Default on.
@@ -68,15 +71,54 @@ namespace PipingSpecPlugin.Settings
         // offline machines can turn it off to avoid the (silent) network call.
         public bool CheckForUpdates { get; set; } = true;
 
+        // Last "Ведомость трубопроводов" (ВТ) workbook the user picked for
+        // СИНХРОНИЗАЦИЯ ВТ, to pre-populate the open-file dialog.
+        public string LastVtFilePath { get; set; } = "";
+
+        // Reserved: text -> code mapping for a P3dLineGroup picklist
+        // column whose stored values don't match ВТ's free text. Not
+        // currently consulted by LineSyncService — every picklist field
+        // it writes today (Material_pipe, Код_трубопровода, Ysl_pressure,
+        // flanges, InsulationType, Heat_type) is decoded straight from
+        // the "Обозначение" segment code via LineDesignationParser, whose
+        // letter codes already match Plant 3D's picklist codes. Kept for
+        // a future ВТ column that needs a genuine lossy text->code guess
+        // (schema field, not dead: removing it would break settings.json
+        // for anyone who already saved one on this schema version).
+        public System.Collections.Generic.Dictionary<string, string> VtPicklistTextToCode { get; set; }
+            = new System.Collections.Generic.Dictionary<string, string>();
+
+        // ---- INSULSPEC (данные для расчёта изоляции) -------------------------
+        // Scope and the line / status memory, same known/selected scheme as
+        // the spec picker (PickerSelectionMemory).
+        public string InsulationScope { get; set; } = "proj";
+        public string[] InsulationLines { get; set; } = null;
+        public string[] KnownInsulationLines { get; set; } = null;
+        public string[] InsulationStatuses { get; set; } = null;
+        public string[] KnownInsulationStatuses { get; set; } = null;
+
         public static string FilePath => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "PipingSpecPlugin", "settings.json");
 
-        public static PluginSettings Load()
+        /// <summary>
+        /// True when settings.json exists but could not be read or parsed
+        /// (corrupt JSON, file locked by antivirus / another AutoCAD, …) and
+        /// this instance therefore holds DEFAULTS, not the user's settings.
+        /// A missing file is not a failure. Callers that would merely persist
+        /// a side value (SYNCVT's last ВТ path) must not Save() such an
+        /// instance — that silently replaced every saved choice with
+        /// defaults. Not serialised.
+        /// </summary>
+        [JsonIgnore] public bool LoadFailed { get; private set; }
+        [JsonIgnore] public string LoadError { get; private set; }
+
+        public static PluginSettings Load() => Load(FilePath);
+
+        internal static PluginSettings Load(string path)
         {
             try
             {
-                var path = FilePath;
                 if (!File.Exists(path)) return new PluginSettings();
                 var json = File.ReadAllText(path);
                 // Read SchemaVersion first so we can patch the JSON
@@ -99,12 +141,13 @@ namespace PipingSpecPlugin.Settings
                     loaded.Upgrade(oldVersion);
                 return loaded;
             }
-            catch
+            catch (Exception ex)
             {
                 // Corrupted settings file should never block the plug-in;
                 // a fresh default is a better user experience than a hard
-                // failure on every command invocation.
-                return new PluginSettings();
+                // failure on every command invocation. But flag it, so the
+                // defaults are not written back over the user's file.
+                return new PluginSettings { LoadFailed = true, LoadError = ex.Message };
             }
         }
 
@@ -138,18 +181,69 @@ namespace PipingSpecPlugin.Settings
                     // v3 → v4: introduced CheckForUpdates. Default on so
                     // existing users start getting update notifications.
                     CheckForUpdates = true;
+                    goto case 4;
+                case 4:
+                    // v4 → v5: introduced ВТ sync (LastVtFilePath,
+                    // VtPicklistTextToCode). Empty defaults are fine —
+                    // there's no historical value to backfill.
+                    LastVtFilePath = "";
+                    VtPicklistTextToCode = new System.Collections.Generic.Dictionary<string, string>();
+                    goto case 5;
+                case 5:
+                case 6:
+                case 7:
+                    // v5 → v8: INSULSPEC scope and line / status memory; null
+                    // defaults. (v6–v8 builds also stored a materials table,
+                    // template path, breakdown mode or insulation types for
+                    // earlier variants — dropped keys are ignored on load.)
                     break;
             }
             SchemaVersion = CurrentSchemaVersion;
         }
 
-        public void Save()
+        public void Save() => Save(FilePath);
+
+        /// <summary>
+        /// Atomic write: serialise to a sibling temp file, then replace the
+        /// real file in one rename (MoveFileEx REPLACE_EXISTING on the same
+        /// volume). File.WriteAllText truncated settings.json first, so a
+        /// crash / full disk mid-write left an empty or half-written file
+        /// that the next Load() silently replaced with defaults.
+        ///
+        /// If this instance came from a failed Load() (LoadFailed), the
+        /// unreadable original is first copied aside to
+        /// settings.json.unreadable — WRITESPEC still saves the user's fresh
+        /// picks over it, but the old content is not lost.
+        /// </summary>
+        internal void Save(string path)
         {
-            var path = FilePath;
             Directory.CreateDirectory(Path.GetDirectoryName(path));
             var json = JsonSerializer.Serialize(this,
                 new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, json);
+
+            if (LoadFailed && File.Exists(path))
+            {
+                try { File.Copy(path, path + ".unreadable", overwrite: true); }
+                catch { /* best effort — never block the save itself */ }
+            }
+
+            // Unique temp name: two AutoCAD sessions saving at the same moment
+            // shared "settings.json.tmp" and could move each other's half-
+            // written file into place. A failed write/move must not leave
+            // the temp behind either.
+            var tmp = $"{path}.{Guid.NewGuid():N}.tmp";
+            try
+            {
+                File.WriteAllText(tmp, json);
+                File.Move(tmp, path, overwrite: true);
+            }
+            catch
+            {
+                try { if (File.Exists(tmp)) File.Delete(tmp); } catch { }
+                throw;
+            }
+            LoadFailed = false;
+            LoadError = null;
         }
     }
 }

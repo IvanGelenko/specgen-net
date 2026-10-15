@@ -72,9 +72,13 @@ if exist src\PipingSpecPlugin\Resources\icon32.png (
 
 echo.
 echo === [3/3] Inno Setup ===
-set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+rem Try version 7 first (current jrsoftware.org release), then fall back
+rem to 6 for machines that haven't upgraded yet. Both ship ISCC.exe with
+rem the same CLI, and installer.iss compiles unchanged under either.
+set ISCC="C:\Program Files\Inno Setup 7\ISCC.exe"
+if not exist %ISCC% set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if not exist %ISCC% (
-    echo Inno Setup 6 not found at %ISCC%
+    echo Inno Setup not found ^(checked Inno Setup 7 and 6^).
     echo Install it from https://jrsoftware.org/isinfo.php
     exit /b 1
 )

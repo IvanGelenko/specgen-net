@@ -21,15 +21,10 @@ namespace PipingSpecPlugin.Spec
             if (records == null || records.Count == 0) return rawDrop;
             if (topology == null) topology = new Dictionary<int, List<int>>();
 
-            // Threshold: 4 inches if the project uses imperial length
-            // units, 100 mm otherwise — decided by the first non-null
-            // LengthUnit found across the EngineeringItems.
-            var firstUnit = records
-                .Select(r => (r.LengthUnit ?? "").ToLowerInvariant())
-                .FirstOrDefault(u => !string.IsNullOrEmpty(u));
-            var isImperial = !string.IsNullOrEmpty(firstUnit)
-                          && (firstUnit.Contains("in") || firstUnit.Contains("ft"));
-            var threshold = isImperial ? 4.0 : 100.0;
+            // Proximity radius in millimetres. Coordinates stay in DRAWING
+            // units (see GetCoords); the radius is converted to the flange's
+            // drawing units per lookup (ThresholdInDrawingUnits).
+            const double thresholdMm = 100.0;
 
             // Index records by PnPID for cheap lookup during the walk.
             // CollectFromProject sweeps every drawing, so the same part
@@ -49,10 +44,10 @@ namespace PipingSpecPlugin.Spec
                 || string.Equals(r.PartCategory, "P3dConnector",
                                  System.StringComparison.OrdinalIgnoreCase);
             bool IsFlange(PartRecord r)
-                => string.Equals(r.PartCategory, "Flanges",
+                => string.Equals(CategoryClassifier.Normalize(r), "Flanges",
                                  System.StringComparison.OrdinalIgnoreCase);
             bool IsValve(PartRecord r)
-                => string.Equals(r.PartCategory, "Valves",
+                => string.Equals(CategoryClassifier.Normalize(r), "Valves",
                                  System.StringComparison.OrdinalIgnoreCase);
 
             // Step 1: Valve → Connector → Flange. For each valve, look at
@@ -88,7 +83,7 @@ namespace PipingSpecPlugin.Spec
             foreach (var r in deduped)
             {
                 if (companionFlanges.Contains(r.PnPID)) continue;
-                var cat = r.PartCategory ?? "";
+                var cat = CategoryClassifier.Normalize(r);
                 // Restrict candidates to 'Fasteners' only — earlier we
                 // also accepted 'Flanges' here for non-listed gasket
                 // variants, but that let real flange items sneak into
@@ -126,6 +121,7 @@ namespace PipingSpecPlugin.Spec
 
                 if (fCoords != null)
                 {
+                    var threshold = ThresholdInDrawingUnits(f, thresholdMm);
                     gasketPick = NearestSameSize(f, gaskets, fCoords.Value, threshold);
                     if (gasketPick.HasValue)
                     {
@@ -140,7 +136,7 @@ namespace PipingSpecPlugin.Spec
                     }
                 }
 
-                if (!gasketPick.HasValue)
+                if (!gasketPick.HasValue && fCoords == null)
                 {
                     var pick = TakeFromBucket(gasketFallback, FallbackKey(f), rawDrop);
                     if (pick.HasValue)
@@ -149,7 +145,7 @@ namespace PipingSpecPlugin.Spec
                         gaskets.RemoveAll(x => x.PnPID == pick.Value);
                     }
                 }
-                if (!boltPick.HasValue)
+                if (!boltPick.HasValue && fCoords == null)
                 {
                     var pick = TakeFromBucket(boltFallback, FallbackKey(f), rawDrop);
                     if (pick.HasValue)
@@ -171,7 +167,7 @@ namespace PipingSpecPlugin.Spec
             foreach (var id in rawDrop)
             {
                 if (!byId.TryGetValue(id, out var r)) continue;
-                var cat = r.PartCategory ?? "";
+                var cat = CategoryClassifier.Normalize(r);
                 if (cat.Equals("Pipe", System.StringComparison.OrdinalIgnoreCase))
                     continue;
                 if (cat.Equals("Fittings", System.StringComparison.OrdinalIgnoreCase))
@@ -221,14 +217,34 @@ namespace PipingSpecPlugin.Spec
             var y = ParseDouble(r.PositionY) ?? ParseDouble(r.CogY);
             var z = ParseDouble(r.PositionZ) ?? ParseDouble(r.CogZ);
             if (x == null || y == null || z == null) return null;
+            // Raw drawing-unit coordinates. They used to be multiplied by a
+            // factor derived from the part's catalogue LengthUnit, but that
+            // unit describes catalogue dimensions (pipe length, …), not the
+            // model space the Position X/Y/Z values live in: a metric
+            // catalogue in an inch drawing (or the reverse) scaled the
+            // distance by 25.4 and the 100 mm radius became meaningless.
+            // Candidates are always compared within one drawing (FallbackKey
+            // carries SourceDwgPath), so raw coordinates are comparable.
             return (x.Value, y.Value, z.Value);
+        }
+
+        /// <summary>
+        /// The millimetre radius expressed in the drawing units of
+        /// <paramref name="r"/>'s DWG. Unknown/unitless drawings are taken as
+        /// millimetres — the Plant 3D metric default; an imperial project
+        /// always sets INSUNITS (inches/feet), so it is handled exactly.
+        /// </summary>
+        internal static double ThresholdInDrawingUnits(PartRecord r, double thresholdMm)
+        {
+            var mmPerUnit = r.DrawingMmPerUnit;
+            if (mmPerUnit == null || !(mmPerUnit.Value > 0) || !double.IsFinite(mmPerUnit.Value))
+                return thresholdMm;
+            return thresholdMm / mmPerUnit.Value;
         }
 
         static double? ParseDouble(string s)
         {
-            if (string.IsNullOrWhiteSpace(s)) return null;
-            return double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var v)
-                ? v : (double?)null;
+            return SpecNumber.Parse(s);
         }
 
         static int? NearestSameSize(PartRecord flange, List<PartRecord> pool,
@@ -240,6 +256,7 @@ namespace PipingSpecPlugin.Spec
             const double tie = 1e-9;
             foreach (var p in pool)
             {
+                if (FallbackKey(p) != FallbackKey(flange)) continue;
                 var pc = GetCoords(p);
                 if (pc == null) continue;
                 var pNd = ParseDouble(p.NominalDiameter) ?? 0;
@@ -272,7 +289,7 @@ namespace PipingSpecPlugin.Spec
         static string FallbackKey(PartRecord r)
         {
             var nd = ParseDouble(r.NominalDiameter) ?? 0;
-            return $"{nd:F6}|{r.Spec ?? ""}|{r.LineNumberTag ?? ""}";
+            return $"{(r.SourceDwgPath ?? "").ToUpperInvariant()}|{nd:F6}|{r.NominalUnit ?? ""}|{r.Spec ?? ""}|{r.LineNumberTag ?? ""}";
         }
 
         static void AppendToBucket(Dictionary<string, List<PartRecord>> buckets,
@@ -287,6 +304,8 @@ namespace PipingSpecPlugin.Spec
                                    string key, HashSet<int> alreadyDropped)
         {
             if (!buckets.TryGetValue(key, out var list)) return null;
+            // An ambiguous fallback cannot prove ownership. Keep those parts.
+            if (list.Count(r => !alreadyDropped.Contains(r.PnPID)) != 1) return null;
             for (var i = 0; i < list.Count; i++)
             {
                 var pid = list[i].PnPID;

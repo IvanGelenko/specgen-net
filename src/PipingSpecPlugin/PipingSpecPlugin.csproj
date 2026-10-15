@@ -1,9 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- AutoCAD 2026 ships .NET 8 managed wrappers (AcCoreMgd Version=25.1.0.0
-         references System.Runtime 8.0.0.0). Match it exactly: anything older
-         fails at load with CS1705 / FileLoadException at runtime. -->
+    <!-- AutoCAD 2025 and 2026 both host .NET 8 (their managed wrappers
+         reference System.Runtime 8.0.0.0); an older TFM fails with CS1705. -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <UseWPF>true</UseWPF>
@@ -30,7 +29,7 @@
          FileVersion attributes are generated from this below — they are NOT
          hard-coded in AssemblyInfo.cs, so the override actually takes effect
          and the in-plugin update check reads the right version. -->
-    <Version Condition=" '$(Version)' == '' ">1.1.22</Version>
+    <Version Condition=" '$(Version)' == '' ">$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\VERSION').Trim())</Version>
   </PropertyGroup>
 
   <!-- Emit AssemblyVersion / AssemblyFileVersion from $(Version) into a
@@ -58,15 +57,22 @@
     </WriteCodeFragment>
   </Target>
 
-  <!-- Override with: msbuild /p:AcadInstallDir="D:\Autodesk\AutoCAD 2026" -->
+  <!-- Compile against the OLDEST supported release, Plant 3D 2025
+       (AcCoreMgd 25.0.0.0, PnP*Mgd 16.0). One DLL then loads in 2025 and in
+       2026: .NET binds a reference to an equal-or-newer loaded version
+       (2026 = 25.1 / 17.0) but never to an older one, so a build against
+       2026 cannot load in 2025. The Autodesk API surface the plug-in uses
+       is identical in both releases (compared member by member, 1.3.19).
+       Override with: msbuild /p:AcadInstallDir="D:\Autodesk\AutoCAD 2025" -->
   <PropertyGroup>
-    <AcadInstallDir Condition=" '$(AcadInstallDir)' == '' ">C:\Program Files\Autodesk\AutoCAD 2026</AcadInstallDir>
+    <AcadInstallDir Condition=" '$(AcadInstallDir)' == '' ">C:\Program Files\Autodesk\AutoCAD 2025</AcadInstallDir>
     <Plnt3DDir>$(AcadInstallDir)\PLNT3D</Plnt3DDir>
     <!-- PnPDataLinks / PnPDataObjects live directly under the AutoCAD root,
          NOT under PLNT3D. Don't conflate them when adding new references. -->
   </PropertyGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Resources\AuditReportTemplate.docx" LogicalName="PipingSpecPlugin.AuditReportTemplate.docx" />
     <!-- Core AutoCAD managed API. Private=False so the DLLs aren't copied
          into our output: AutoCAD already loads its own copy. -->
     <Reference Include="AcCoreMgd">
@@ -83,6 +89,13 @@
     </Reference>
     <Reference Include="AdWindows">
       <HintPath>$(AcadInstallDir)\AdWindows.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- AcWindows: Autodesk.AutoCAD.Ribbon.RibbonServices / RibbonPaletteSet.
+         WorkspaceLoaded — re-adds the code-built ribbon tab after a
+         workspace switch or CUI reload (PluginBootstrap). -->
+    <Reference Include="AcWindows">
+      <HintPath>$(AcadInstallDir)\AcWindows.dll</HintPath>
       <Private>False</Private>
     </Reference>
 

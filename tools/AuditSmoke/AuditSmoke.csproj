@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework><PlatformTarget>x64</PlatformTarget>
+    <UseWPF>true</UseWPF><UseWindowsForms>true</UseWindowsForms>
+    <AcadInstallDir>C:\Program Files\Autodesk\AutoCAD 2026</AcadInstallDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../src/PipingSpecPlugin/Audit/*.cs" Exclude="../../src/PipingSpecPlugin/Audit/AuditDocxReport.cs" Link="Audit/%(Filename)%(Extension)" />
+    <Compile Include="../../src/PipingSpecPlugin/Spec/LengthUnits.cs" Link="Spec/LengthUnits.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Commands/AuditModelView.cs" Link="Commands/AuditModelView.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Settings/RunLogger.cs" Link="Settings/RunLogger.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Spec/VtValueParsing.cs" Link="Spec/VtValueParsing.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Layers/LayerColor*.cs" Link="Layers/%(Filename)%(Extension)" />
+    <Compile Include="../../src/PipingSpecPlugin/Layers/LayerSelectionService.cs" Link="Layers/LayerSelectionService.cs" />
+    <Reference Include="AcCoreMgd"><HintPath>$(AcadInstallDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AcadInstallDir)\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnP3dObjectsMgd"><HintPath>$(AcadInstallDir)\PLNT3D\PnP3dObjectsMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataLinks"><HintPath>$(AcadInstallDir)\PnPDataLinks.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataObjects"><HintPath>$(AcadInstallDir)\PnPDataObjects.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

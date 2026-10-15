@@ -29,6 +29,9 @@ namespace PipingSpecPlugin
                     + ex.GetType().Name + ": " + ex.Message);
             }
 
+            try { HookWorkspaceReload(); }
+            catch { /* the tab is still there for this workspace */ }
+
             try { TryCheckForUpdates(); }
             catch { /* updates must never block or break load */ }
         }
@@ -68,7 +71,23 @@ namespace PipingSpecPlugin
             });
         }
 
-        public void Terminate() { /* nothing to clean up yet */ }
+        public void Terminate()
+        {
+            // Session end: detach what Initialize attached (AutoCAD is going
+            // away anyway, but a handler outliving the plug-in is never
+            // useful).
+            try
+            {
+                if (_hookedPaletteSet != null) _hookedPaletteSet.WorkspaceLoaded -= OnWorkspaceLoaded;
+                Autodesk.AutoCAD.Ribbon.RibbonServices.RibbonPaletteSetCreated -= OnRibbonPaletteSetCreated;
+                if (_waitingForRibbon) ComponentManager.ItemInitialized -= OnRibbonReady;
+            }
+            catch { }
+        }
+
+        // True while OnRibbonReady is subscribed — one subscription at a
+        // time, however often TryRegisterRibbon is called.
+        static bool _waitingForRibbon;
 
         static void TryRegisterRibbon()
         {
@@ -78,14 +97,70 @@ namespace PipingSpecPlugin
             // We unsubscribe as soon as the tab exists — keeping the handler
             // live for the whole session means it fires on EVERY ribbon item
             // initialisation (hundreds of times) and re-scans Tabs each time.
+            // Re-creating the tab after a workspace switch is
+            // OnWorkspaceLoaded's job, not this handler's.
             if (TryBuildTab()) return;
+            if (_waitingForRibbon) return;
+            _waitingForRibbon = true;
             ComponentManager.ItemInitialized += OnRibbonReady;
         }
 
         static void OnRibbonReady(object sender, RibbonItemEventArgs e)
         {
-            if (TryBuildTab())
-                ComponentManager.ItemInitialized -= OnRibbonReady;
+            try
+            {
+                if (TryBuildTab())
+                {
+                    ComponentManager.ItemInitialized -= OnRibbonReady;
+                    _waitingForRibbon = false;
+                }
+            }
+            catch { /* an exception out of a ribbon event must not reach AutoCAD */ }
+        }
+
+        // AutoCAD rebuilds the ribbon from the CUIx whenever a workspace is
+        // loaded — switching workspace (3D Piping ↔ Isometric / Ortho …),
+        // CUILOAD / MENULOAD — and a tab added from code is not in the CUIx,
+        // so «Спецификация» vanished until the next AutoCAD start. (The
+        // first version kept ItemInitialized subscribed for the whole
+        // session for this; it was removed for firing hundreds of times,
+        // which also removed the re-creation.) RibbonPaletteSet.WorkspaceLoaded
+        // fires once per (re)load — the documented hook for this. The palette
+        // set itself may not exist yet at load (ribbon closed), hence
+        // RibbonPaletteSetCreated.
+        static Autodesk.AutoCAD.Ribbon.RibbonPaletteSet _hookedPaletteSet;
+
+        static void HookWorkspaceReload()
+        {
+            var ps = Autodesk.AutoCAD.Ribbon.RibbonServices.RibbonPaletteSet;
+            if (ps != null) AttachWorkspaceLoaded(ps);
+            else Autodesk.AutoCAD.Ribbon.RibbonServices.RibbonPaletteSetCreated += OnRibbonPaletteSetCreated;
+        }
+
+        static void OnRibbonPaletteSetCreated(object sender, EventArgs e)
+        {
+            try
+            {
+                Autodesk.AutoCAD.Ribbon.RibbonServices.RibbonPaletteSetCreated -= OnRibbonPaletteSetCreated;
+                var ps = Autodesk.AutoCAD.Ribbon.RibbonServices.RibbonPaletteSet;
+                if (ps != null) AttachWorkspaceLoaded(ps);
+            }
+            catch { }
+        }
+
+        static void AttachWorkspaceLoaded(Autodesk.AutoCAD.Ribbon.RibbonPaletteSet ps)
+        {
+            if (ReferenceEquals(_hookedPaletteSet, ps)) return;
+            ps.WorkspaceLoaded += OnWorkspaceLoaded;
+            _hookedPaletteSet = ps;
+        }
+
+        static void OnWorkspaceLoaded(object sender, EventArgs e)
+        {
+            // BuildTab is idempotent (looks the tab up by Id), so a reload
+            // that kept our tab adds nothing.
+            try { TryRegisterRibbon(); }
+            catch { /* never let a ribbon event take AutoCAD down */ }
         }
 
         /// <summary>
@@ -122,15 +197,37 @@ namespace PipingSpecPlugin
             panelSource.Items.Add(MakeButton("Текущий чертёж", "WRITESPECDWG",
                 "Сгенерировать спецификацию только по активному чертежу (.docx).",
                 "icon32.png"));
-
             tab.Panels.Add(new RibbonPanel { Source = panelSource });
 
+            var insulationSource = new RibbonPanelSource { Title = "Изоляция" };
+            insulationSource.Items.Add(MakeButton("Весь проект", "INSULSPECPROJ",
+                "Данные для расчёта изоляции по всему проекту Plant 3D (.docx): по каждой линии — "
+                + "длины труб с изоляцией и отводы, изгибы, тройники."));
+            insulationSource.Items.Add(MakeButton("Текущий чертёж", "INSULSPECDWG",
+                "Данные для расчёта изоляции только по активному чертежу (.docx)."));
+            insulationSource.Items.Add(MakeButton("Методика", "INSULHELP",
+                "Как собираются данные для расчёта изоляции: какие детали попадают, подсчёт как в "
+                + "спецификации, изгибы (Д1 + Д2 к трубе)."));
+            tab.Panels.Add(new RibbonPanel { Source = insulationSource });
+
             var layersSource = new RibbonPanelSource { Title = "Слои" };
+            layersSource.Items.Add(MakeButton("Выбрать по слою", "SELECTBYLAYER",
+                "Выделить все элементы выбранного слоя в текущем пространстве чертежа."));
+            layersSource.Items.Add(MakeButton("Цвет по слою", "PSCOLORBYLAYER",
+                "Назначить объектам цвет их слоя. Клапанам на отдельных слоях — цвет слоя труб соответствующей линии."));
             layersSource.Items.Add(MakeButton("Разнести по слоям", "MOVEBYTAG",
                 "Перенести арматуру и оборудование активного чертежа на слои "
                 + "по их идентификатору (Tag).",
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = layersSource });
+
+            var syncSource = new RibbonPanelSource { Title = "Ведомость трубопроводов" };
+            syncSource.Items.Add(MakeButton("Синхронизация ВТ", "SYNCVT",
+                "Перенести параметры трубопроводов из Excel-файла Ведомости "
+                + "трубопроводов (ВТ) в производственные линии Plant 3D по "
+                + "совпадению ID.",
+                "icon32.png"));
+            tab.Panels.Add(new RibbonPanel { Source = syncSource });
 
             var selectSource = new RibbonPanelSource { Title = "Выбор" };
             selectSource.Items.Add(MakeButton("Выбрать по статусу", "SELECTBYSTATUS",
@@ -159,6 +256,10 @@ namespace PipingSpecPlugin
             // tab.Panels.Add(new RibbonPanel { Source = toolsSource });
 
             var helpSource = new RibbonPanelSource { Title = "Справка" };
+            var auditSource = new RibbonPanelSource { Title = "Проверка модели" };
+            auditSource.Items.Add(MakeButton("Аудит", "PSAUDIT",
+                "Проверить толщины стенок, соединения и коллизии в текущем чертеже. Проверки можно выбрать."));
+            tab.Panels.Add(new RibbonPanel { Source = auditSource });
             helpSource.Items.Add(MakeButton("О программе", "SPECABOUT",
                 "Информация о плагине и его версии.",
                 "icon32.png"));
@@ -179,7 +280,7 @@ namespace PipingSpecPlugin
                 ToolTip = tooltip,
                 CommandHandler = new RelayCommand(() => RunAcadCommand(command)),
             };
-            var icon = iconName != null ? LoadEmbeddedIcon(iconName) : null;
+            var icon = PipingSpecPlugin.UI.CommandIcons.Create(command);
             if (icon != null)
             {
                 btn.LargeImage = icon;

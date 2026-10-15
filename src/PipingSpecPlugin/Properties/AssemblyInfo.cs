@@ -21,14 +21,23 @@ using Autodesk.AutoCAD.Runtime;
 // check that reads AssemblyVersion). The csproj generates these two
 // attributes from $(Version) instead — see the GenerateVersionInfo target.
 
-// Tells AutoCAD which classes carry [CommandMethod] attributes. The
-// ribbon's "Сгенерировать" button invokes WRITESPEC; everything else
-// (early diagnostic commands like PSPING / LISTPARTS / GENSPEC) was
-// removed for the production cut.
+// Tells AutoCAD which classes carry [CommandMethod] attributes. Every
+// class with a command must be listed here (a missing one = "unknown
+// command"). The ribbon («Спецификация» tab, PluginBootstrap) calls
+// WRITESPECPROJ / WRITESPECDWG, INSULSPECPROJ / INSULSPECDWG / INSULHELP, SELECTBYLAYER, PSCOLORBYLAYER, MOVEBYTAG,
+// SYNCVT, SELECTBYSTATUS, SELECTBYLINE, PSAUDIT and SPECABOUT; WRITESPEC,
+// PSAUDITJSON and CONNECTALL / CONNECTALLDIAG (hidden from the ribbon while
+// unfinished) are command-line only. The early diagnostic commands
+// (PSPING / LISTPARTS / GENSPEC …) were removed for the production cut.
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.WriteSpecCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.InsulationCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.MoveToLayerCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByStatusCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByLineCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ConnectAdjacentCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.AboutCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SyncVtCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.AuditCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ColorByLayerCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByLayerCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

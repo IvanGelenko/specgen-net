@@ -1,4 +1,4 @@
-; Inno Setup installer for the PipingSpecPlugin (.NET) — Plant 3D 2026+.
+; Inno Setup installer for the PipingSpecPlugin (.NET) — Plant 3D 2025 and 2026.
 ; Builds a single Setup.exe that drops the plug-in into the per-user
 ; Autodesk\ApplicationPlugins folder. No admin rights required, and the
 ; plug-in auto-loads on every AutoCAD start through the bundle's
@@ -30,8 +30,13 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName={#MyAppDisplayName}
-; Wipe the bundle folder on install so an update can never leave stale
-; resources from a previous version next to the new DLL.
+; Always the fixed per-user bundle folder (the dir page is disabled too),
+; never a directory remembered from an older install. NOTE: this does NOT
+; wipe the folder — an update overwrites the files listed in [Files] (same
+; AppId, so it replaces the previous install). There is deliberately no
+; [InstallDelete] for Contents\: if AutoCAD still holds the DLL, a wipe could
+; delete DocumentFormat.OpenXml.dll and then fail on the locked plug-in DLL,
+; leaving a bundle that loads but cannot write Word files.
 UsePreviousAppDir=no
 
 [Languages]

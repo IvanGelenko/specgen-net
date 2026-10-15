@@ -87,11 +87,15 @@ namespace PipingSpecPlugin.Commands
             // Handles (stable across save/reopen and across databases), which
             // phase 2 resolves against the live drawing to actually move them.
 
-            // Save the active drawing first so the disk copy has the current
-            // tags. SaveAs preserves the path; needs the doc locked (writes DWG).
+            // The disk copy must carry the current tags. Shared policy with
+            // SELECTBY*: ask before saving, keep the original DWG version,
+            // stop (never continue on stale data) if the save fails.
+            if (!DrawingSaveGuard.EnsureSavedForDiskRead(doc, db, "Разнести по слоям", Trace))
+            {
+                Say("[Разнести по слоям] Команда остановлена: чертёж не сохранён (см. лог).");
+                return;
+            }
             string dwgPath = doc.Name;
-            using (doc.LockDocument())
-                SaveActiveDrawing(doc, db, Trace);
 
             int partCount;
             var plan = PartEntityIndex.BuildMovePlanFromDisk(
@@ -177,43 +181,6 @@ namespace PipingSpecPlugin.Commands
             Say("[Разнести по слоям] " + summary);
             WinForms.MessageBox.Show(summary, "Разнести по слоям",
                 WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Information);
-        }
-
-        /// <summary>
-        /// Saves the active drawing if it has unsaved edits, so the disk copy
-        /// MOVEBYTAG reads back (BuildMovePlanFromDisk) carries the current
-        /// tags. Mirrors the spec generator's pre-read save. Failures are
-        /// traced, not thrown — the worst case is the plan being built from a
-        /// slightly older disk copy, which the caller surfaces. Must be called
-        /// with the document locked (SaveAs writes the DWG).
-        /// </summary>
-        static void SaveActiveDrawing(Document doc, Database db, Action<string> trace)
-        {
-            try
-            {
-                object dbmod = AcadApp.GetSystemVariable("DBMOD");
-                bool modified = Convert.ToInt32(dbmod) != 0;
-                if (!modified || doc == null || string.IsNullOrEmpty(doc.Name)) return;
-
-                try
-                {
-                    db.SaveAs(doc.Name, true, DwgVersion.Current, db.SecurityParameters);
-                }
-                catch (System.Exception ex)
-                {
-                    trace?.Invoke($"SaveAs не удался ({ex.GetType().Name}: {ex.Message}); пробую Save().");
-                    try { db.Save(); }
-                    catch (System.Exception ex2)
-                    {
-                        trace?.Invoke($"Save() тоже не удался: {ex2.GetType().Name}: {ex2.Message}");
-                        trace?.Invoke("ВНИМАНИЕ: не удалось сохранить чертёж — теги могут быть устаревшими.");
-                    }
-                }
-            }
-            catch (System.Exception ex)
-            {
-                trace?.Invoke($"Проверка изменений чертежа не удалась: {ex.GetType().Name}: {ex.Message}");
-            }
         }
 
         /// <summary>

@@ -78,20 +78,17 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            if (string.IsNullOrEmpty(doc.Name))
+            // 1. Make sure the disk copy is current (shared policy: ask before
+            //    saving, original DWG version, stop if the save fails), then
+            //    re-sync the live DataLinks caches.
+            if (!DrawingSaveGuard.EnsureSavedForDiskRead(doc, db, title, Trace))
             {
-                Say($"[{title}] Чертёж не сохранён на диск — сохраните его и повторите.");
-                WinForms.MessageBox.Show(
-                    "Чертёж ещё не сохранён на диск. Сохраните его и запустите команду снова.",
-                    title, WinForms.MessageBoxButtons.OK, WinForms.MessageBoxIcon.Warning);
+                Say($"[{title}] Команда остановлена: чертёж не сохранён (см. лог).");
                 return;
             }
             var dwgPath = doc.Name;
-
-            // 1. Save the active drawing if it has unsaved edits (writes the
-            //    DWG, so needs a document lock), then re-sync DataLinks.
             using (doc.LockDocument())
-                PartEntityIndex.SaveAndRefresh(doc, db, dlm, Trace);
+                PartEntityIndex.RefreshLinkMap(db, dlm, Trace);
 
             // 2. Read the saved DWG fresh from disk as a side database — the
             //    proven, edit-aware path. Active drawing only (projectDlm null).
@@ -115,6 +112,8 @@ namespace PipingSpecPlugin.Commands
                 var read = PartReader.Read(diskDb, null, Trace);
                 var records = read?.Records ?? new List<PartRecord>();
                 Say($"[{title}] Прочитано деталей: {records.Count}.");
+                if (read != null && read.PnpReconnectFailed)
+                    Say($"[{title}] ВНИМАНИЕ: база PnP не переподключилась после Disconnect() — данные могут быть недостоверны, перезапустите AutoCAD.");
 
                 // GetRelatedRowIds / AcPp resolution keys off the working DB —
                 // point it at the side DB while we resolve handles from it.

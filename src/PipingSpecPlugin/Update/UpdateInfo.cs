@@ -15,6 +15,12 @@ namespace PipingSpecPlugin.Update
         public string ReleaseUrl;       // html_url of the release page
         public string InstallerUrl;     // browser_download_url of the Setup.exe asset
         public string ReleaseNotes;     // release body (markdown), may be empty
+        // SHA-256 of the installer asset as published by GitHub ("digest":
+        // "sha256:<hex>" on the release asset, lower-case hex here). null for
+        // releases/APIs that don't report it — the download is then not
+        // hash-checked (only its size, when known).
+        public string InstallerSha256;
+        public long? InstallerSize;     // asset "size" in bytes, when reported
 
         /// <summary>A check that found nothing newer (or failed quietly).</summary>
         public static UpdateInfo None(string current) => new UpdateInfo

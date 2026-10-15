@@ -1,0 +1,83 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="PipingSpecPlugin.UI.InsulationPickerWindow"
+        Title="Данные для расчёта изоляции трубопроводов"
+        Height="720" Width="1050"
+        MinHeight="560" MinWidth="860"
+        WindowStartupLocation="CenterScreen"
+        ShowInTaskbar="False"
+        FontFamily="Segoe UI" FontSize="13">
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />  <!-- context + scope -->
+            <RowDefinition Height="*" />     <!-- statuses + types | lines -->
+            <RowDefinition Height="Auto" />  <!-- bottom bar -->
+        </Grid.RowDefinitions>
+
+        <Grid Grid.Row="0" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <GroupBox Grid.Column="0" Header="Контекст" Padding="10" Margin="0,0,5,0">
+                <StackPanel>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Проект: " FontWeight="Bold"/>
+                        <TextBlock x:Name="ProjectNameText"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                        <TextBlock Text="Чертёж: " FontWeight="Bold"/>
+                        <TextBlock x:Name="DwgNameText"/>
+                    </StackPanel>
+                </StackPanel>
+            </GroupBox>
+            <GroupBox Grid.Column="1" Header="Область выборки" Padding="10" Margin="5,0,0,0">
+                <StackPanel>
+                    <RadioButton x:Name="ScopeProject" GroupName="Scope" Content="Весь проект" IsChecked="True" Checked="Scope_Checked"/>
+                    <RadioButton x:Name="ScopeDrawing" GroupName="Scope" Content="Только текущий чертёж" Margin="0,4,0,0" Checked="Scope_Checked"/>
+                </StackPanel>
+            </GroupBox>
+        </Grid>
+
+        <Grid Grid.Row="1" Margin="0,0,0,10">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <DockPanel Grid.Column="0" Margin="0,0,5,0">
+                <TextBlock DockPanel.Dock="Top" TextWrapping="Wrap" Foreground="Gray" Margin="0,0,0,10"
+                           Text="В данные попадают трубы, отводы, изгибы и тройники, у которых в свойствах самой детали «Толщина изоляции» больше 0 — там, где Plant 3D рисует изоляцию. Свойства линии не учитываются."/>
+                <GroupBox Header="Статусы (из проекта)" Padding="10">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="StatusList"/>
+                    </ScrollViewer>
+                </GroupBox>
+            </DockPanel>
+            <GroupBox Grid.Column="1" Header="Линии с изоляцией" Padding="10" Margin="5,0,0,0">
+                <DockPanel>
+                    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,8,0,0">
+                        <Button Content="Выбрать все" Width="100" Click="SelectAllLines_Click"/>
+                        <Button Content="Снять все" Width="100" Margin="6,0,0,0" Click="DeselectAllLines_Click"/>
+                    </StackPanel>
+                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                        <ItemsControl x:Name="LineList"/>
+                    </ScrollViewer>
+                </DockPanel>
+            </GroupBox>
+        </Grid>
+
+        <DockPanel Grid.Row="2">
+            <Button DockPanel.Dock="Right" x:Name="GenerateButton"
+                    Content="Сформировать" Width="140" Height="32"
+                    Click="GenerateButton_Click" IsDefault="True"/>
+            <Button DockPanel.Dock="Right" Content="Отмена" Width="100" Height="32"
+                    Margin="0,0,8,0" IsCancel="True"/>
+            <Button DockPanel.Dock="Left" x:Name="HelpButton" Content="Методика…" Width="110" Height="32"
+                    Margin="0,0,16,0" Click="HelpButton_Click"/>
+            <CheckBox x:Name="OpenAfterGenerateChk" VerticalAlignment="Center" Margin="0,0,16,0"
+                      Content="Открыть документ после формирования"/>
+            <TextBlock x:Name="StatusText" VerticalAlignment="Center"
+                       Foreground="Gray" FontStyle="Italic" Text="Готов" TextWrapping="Wrap"/>
+        </DockPanel>
+    </Grid>
+</Window>

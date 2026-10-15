@@ -11,6 +11,12 @@ namespace PipingSpecPlugin.Spec
     {
         public const string MaterialsSectionHeader = "Изделия и материалы";
 
+        // Trailing section the writer appends AFTER every regular section
+        // (see ReviewSection). Unlike MaterialsSectionHeader it is NOT
+        // looked up in the template — the writer emits it itself — so it
+        // can be renamed freely.
+        public const string ReviewSectionHeader = "Позиции, требующие проверки";
+
         public const string NullCategory = "__NULL__";
         public const string OtherCategoryLabel = "Прочее";
         public const string NullStatus = "__NULL_STATUS__";
@@ -22,9 +28,13 @@ namespace PipingSpecPlugin.Spec
 
         // Order matches the layout the user signed off on:
         // Оборудование → Трубы → Детали → Арматура → Приборы →
-        // Спецдетали → Опоры → Сварные швы → Фланцы → Крепёж.
-        // Welds/Flanges/Fasteners move to the end so the procurement
-        // sections (the bigger structural items) come first.
+        // Спецдетали → Опоры → Сварные швы → Фланцы → Крепёж
+        // (→ Прочие изделия, where catalogue categories outside this list
+        // used to land anyway). Welds/Flanges/Fasteners move to the end so
+        // the procurement sections (the bigger structural items) come first.
+        // Synonym keys ("Instrument", "Support", …) never reach the output —
+        // CategoryClassifier.CanonicalSection folds them — they stay listed
+        // for callers that sort raw catalogue keys.
         public static readonly string[] CategoryOrder =
         {
             "Equipment",
@@ -41,6 +51,7 @@ namespace PipingSpecPlugin.Spec
             "P3dConnector",
             "Flanges",
             "Fasteners",
+            "Miscellaneous",
         };
 
         public static readonly Dictionary<string, string> CategoryLabelRu =
@@ -60,6 +71,11 @@ namespace PipingSpecPlugin.Spec
                 { "Support",         "Опоры" },
                 { "Fasteners",       "Крепёж" },
                 { "P3dConnector",    "Сварные швы / коннекторы" },
+                // Plant 3D's own catalogue category for blind disks, caps,
+                // strainers… (42 parts in the 0873 project). Without a label
+                // the section header and the picker chip read
+                // "Miscellaneous" in English in a Russian ГОСТ document.
+                { "Miscellaneous",   "Прочие изделия" },
             };
 
         // Connector keywords (case-insensitive substring match). A row

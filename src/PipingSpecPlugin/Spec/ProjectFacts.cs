@@ -31,10 +31,17 @@ namespace PipingSpecPlugin.Spec
 
             // Statuses: empty/null collapses into a single "<no status>"
             // bucket marked with the SpecConstants sentinel.
+            //
+            // Connectors (welds, gaskets/bolts recognised as connectors) are
+            // counted too. They used to be skipped here, but the builder's
+            // status / line filters apply to them like to any other row: a
+            // weld whose status (or "no line") existed ONLY on connectors got
+            // no chip in the picker, so the explicit selection list could
+            // never contain it and the weld silently fell out of the spec
+            // when the user kept connectors in.
             var statusCounts = new Dictionary<string, int>();
             foreach (var r in list)
             {
-                if (IsConnector(r)) continue;
                 var key = string.IsNullOrEmpty(r.Status) ? SpecConstants.NullStatus : r.Status;
                 statusCounts.TryGetValue(key, out var c);
                 statusCounts[key] = c + 1;
@@ -79,23 +86,22 @@ namespace PipingSpecPlugin.Spec
                 var key = string.IsNullOrEmpty(r.LineNumberTag)
                     ? SpecConstants.NullLine
                     : r.LineNumberTag;
-                if (key == SpecConstants.NullLine && IsConnector(r))
-                    continue;
+                // Line-less connectors land in the NullLine bucket (see the
+                // status note above for why they are not skipped).
                 if (!lineToPids.TryGetValue(key, out var set))
                     lineToPids[key] = set = new HashSet<int>();
                 set.Add(r.PnPID);
             }
+            // Natural order (same as the document's line blocks): "Л-2"
+            // before "Л-10" in the picker too.
             facts.Lines = lineToPids
                 .OrderBy(kv => kv.Key == SpecConstants.NullLine ? 1 : 0)
-                .ThenBy(kv => kv.Key, System.StringComparer.Ordinal)
+                .ThenBy(kv => kv.Key, System.Collections.Generic.Comparer<string>.Create(SpecRowBuilder.CompareText))
                 .Select(kv => (kv.Key, kv.Value.Count))
                 .ToList();
 
             return facts;
         }
-
-        static bool IsConnector(PartRecord r)
-            => CategoryClassifier.IsConnector(NormalizeCategoryPublic(r), r);
 
         static string NormalizeCategoryPublic(PartRecord r)
             => CategoryClassifier.Normalize(r);

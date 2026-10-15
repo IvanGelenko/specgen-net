@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   One-shot installer for the GitHub Actions self-hosted runner used to build
-  and release PipingSpecPlugin on a machine that has AutoCAD Plant 3D 2026 +
+  and release PipingSpecPlugin on a machine that has AutoCAD Plant 3D 2025 +
   Inno Setup 6.
 
 .DESCRIPTION
@@ -45,7 +45,7 @@ Write-Host ""
 
 # --- prerequisites (build needs these; fail early with a clear message) ----
 $checks = @(
-    @{ Name = "AutoCAD 2026 DLLs"; Path = "C:\Program Files\Autodesk\AutoCAD 2026\AcCoreMgd.dll" },
+    @{ Name = "AutoCAD 2025 DLLs"; Path = "C:\Program Files\Autodesk\AutoCAD 2025\AcCoreMgd.dll" },
     @{ Name = "Inno Setup 6";      Path = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" }
 )
 foreach ($c in $checks) {

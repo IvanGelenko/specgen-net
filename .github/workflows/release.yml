@@ -5,7 +5,7 @@ name: Release
 #   git tag v1.2.0
 #   git push origin v1.2.0
 #
-# Runs on a SELF-HOSTED Windows runner that has AutoCAD Plant 3D 2026 and
+# Runs on a SELF-HOSTED Windows runner that has AutoCAD Plant 3D 2025 and
 # Inno Setup 6 installed — the plug-in references 9 AutoCAD/Plant 3D DLLs
 # that don't exist on GitHub-hosted runners, so a hosted runner can't build
 # it. A default Windows runner registration already provides the

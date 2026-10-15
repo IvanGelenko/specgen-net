@@ -12,21 +12,58 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditDocxReport.cs" Link="Audit\AuditDocxReport.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\InsulationJointPolicy.cs" Link="Audit\InsulationJointPolicy.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\SupportContactPolicy.cs" Link="Audit\SupportContactPolicy.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\ConnectedJointPolicy.cs" Link="Audit\ConnectedJointPolicy.cs" />
+    <EmbeddedResource Include="..\..\src\PipingSpecPlugin\Resources\AuditReportTemplate.docx" LogicalName="PipingSpecPlugin.AuditReportTemplate.docx" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditModels.cs" Link="Audit\AuditModels.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Layers\LayerColorPlanner.cs" Link="Layers\LayerColorPlanner.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditRules.cs" Link="Audit\AuditRules.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditReport.cs" Link="Audit\AuditReport.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartPropertyReader.cs" Link="Spec\PartPropertyReader.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecNumber.cs" Link="Spec\SpecNumber.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\LengthUnits.cs" Link="Spec\LengthUnits.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\DrawingPartIds.cs" Link="Spec\DrawingPartIds.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\LineSyncPlanner.cs" Link="Spec\LineSyncPlanner.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\LineSyncModels.cs" Link="Spec\LineSyncModels.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SyncTransaction.cs" Link="Spec\SyncTransaction.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecTemplateWriter.cs" Link="Spec\SpecTemplateWriter.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\XmlText.cs" Link="Spec\XmlText.cs" />
+
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartRecord.cs" Link="Spec\PartRecord.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRow.cs" Link="Spec\SpecRow.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecConstants.cs" Link="Spec\SpecConstants.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\CategoryClassifier.cs" Link="Spec\CategoryClassifier.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRowBuilder.cs" Link="Spec\SpecRowBuilder.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\ReviewSection.cs" Link="Spec\ReviewSection.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\ProjectFacts.cs" Link="Spec\ProjectFacts.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\ValveCompanionFinder.cs" Link="Spec\ValveCompanionFinder.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\ScanCache.cs" Link="Spec\ScanCache.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PipeBendFolder.cs" Link="Spec\PipeBendFolder.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\BendNameNormalizer.cs" Link="Spec\BendNameNormalizer.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\InsulationTakeoff.cs" Link="Spec\InsulationTakeoff.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\InsulationListWriter.cs" Link="Spec\InsulationListWriter.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Settings\PluginSettings.cs" Link="Settings\PluginSettings.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Settings\PickerSelectionMemory.cs" Link="Settings\PickerSelectionMemory.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Settings\RunLogger.cs" Link="Settings\RunLogger.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateInfo.cs" Link="Update\UpdateInfo.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateChecker.cs" Link="Update\UpdateChecker.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Layers\TagLayerMover.cs" Link="Layers\TagLayerMover.cs" />
+    <!-- VtReader/VtRowData depend only on DocumentFormat.OpenXml, not on
+         any Autodesk assembly, so they're testable the same way as the
+         rest of Spec/. LineSyncService itself references
+         Autodesk.ProcessPower.DataLinks (DataLinksManager) and can't be
+         loaded outside the AutoCAD process — same constraint as
+         PartReader, which also has no test coverage here. -->
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtRowData.cs" Link="Spec\VtRowData.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtReader.cs" Link="Spec\VtReader.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\LineDesignationParser.cs" Link="Spec\LineDesignationParser.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtValueParsing.cs" Link="Spec\VtValueParsing.cs" />
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="DocumentFormat.OpenXml" Version="2.20.0" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.10.0" />
     <PackageReference Include="xunit" Version="2.9.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />

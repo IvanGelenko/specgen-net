@@ -8,7 +8,9 @@ namespace PipingSpecPlugin.Settings
     /// <summary>
     /// Per-run diagnostic logger. Captures the full trail of one command
     /// (WRITESPEC, CONNECTALL, MOVEBYTAG …) into
-    /// <c>%APPDATA%\PipingSpecPlugin\last-run.log</c> so a support request
+    /// <c>%APPDATA%\PipingSpecPlugin\last-run.log</c> (spec commands) or
+    /// <c>last-run-&lt;command&gt;.log</c> (everything else, see
+    /// <see cref="LogFileNames"/>) so a support request
     /// can always include a self-contained record of what happened.
     ///
     /// Every line is stamped with elapsed-since-start (ms) and a level
@@ -38,7 +40,8 @@ namespace PipingSpecPlugin.Settings
             var dir = System.IO.Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "PipingSpecPlugin");
-            _path = System.IO.Path.Combine(dir, "last-run.log");
+            var (lastName, prevName) = LogFileNames(command);
+            _path = System.IO.Path.Combine(dir, lastName);
             try
             {
                 Directory.CreateDirectory(dir);
@@ -48,7 +51,7 @@ namespace PipingSpecPlugin.Settings
                 try
                 {
                     if (File.Exists(_path))
-                        File.Copy(_path, System.IO.Path.Combine(dir, "prev-run.log"),
+                        File.Copy(_path, System.IO.Path.Combine(dir, prevName),
                                   overwrite: true);
                 }
                 catch { /* rolling is best-effort */ }
@@ -64,6 +67,31 @@ namespace PipingSpecPlugin.Settings
                 // Logging is never allowed to break the run. Leave the
                 // writer null and the Log methods will short-circuit.
             }
+        }
+
+        /// <summary>
+        /// Log file per command family. Every command used to write the one
+        /// <c>last-run.log</c>, so a SELECTBYLINE / MOVEBYTAG click right
+        /// after a spec run destroyed the spec trace the user was about to
+        /// send. The spec commands (WRITESPEC / WRITESPECPROJ / WRITESPECDWG)
+        /// and unnamed runs keep the historical <c>last-run.log</c> — that is
+        /// the file the docs and support instructions point at; the insulation
+        /// commands (INSULSPEC / INSULSPECPROJ / INSULSPECDWG) share
+        /// <c>last-run-insulspec.log</c>; every other command gets
+        /// <c>last-run-&lt;command&gt;.log</c>.
+        /// </summary>
+        internal static (string last, string prev) LogFileNames(string command)
+        {
+            var cmd = (command ?? "").Trim();
+            if (cmd.Length == 0 || cmd.StartsWith("WRITESPEC", StringComparison.OrdinalIgnoreCase))
+                return ("last-run.log", "prev-run.log");
+            if (cmd.StartsWith("INSULSPEC", StringComparison.OrdinalIgnoreCase))
+                return ("last-run-insulspec.log", "prev-run-insulspec.log");
+            var sb = new StringBuilder(cmd.Length);
+            foreach (var ch in cmd.ToLowerInvariant())
+                sb.Append(char.IsLetterOrDigit(ch) && ch < 128 ? ch : '-');
+            var slug = sb.ToString();
+            return ($"last-run-{slug}.log", $"prev-run-{slug}.log");
         }
 
         void WriteHeader(string command)

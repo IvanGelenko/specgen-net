@@ -30,9 +30,22 @@ namespace PipingSpecPlugin.Spec
         // Surfaced in last-run.log so "a part went missing" can be traced
         // to the read stage instead of vanishing silently.
         public int SkippedRows;
+        // One entry per skipped row (drawing-local rowId + reason). These no
+        // longer stop WRITESPEC (the old "strict mode"): the command turns
+        // them into rows of the «Позиции, требующие проверки» section.
+        public List<(int RowId, string Reason)> SkippedRowDetails = new();
         // True if the WorkingDatabase swap for a side-DB read failed — the
         // read may then hit RowNotInThisDatabase on some rows.
         public bool WorkingDbSwapFailed;
+        // Times an equipment-ownership mark was refused because the row is
+        // a procurement category (pipe/fittings/valves/flanges). Diagnostic.
+        public int OwnershipGuardKept;
+        // True if a PnP database was Disconnect()-ed during the freshness
+        // flush and Connect() then failed (even after a retry). Reads after
+        // that point are unreliable for the WHOLE drawing (not one part), so
+        // ReadOneDrawing still stops generation on it, the same as a failed
+        // WorkingDatabase swap.
+        public bool PnpReconnectFailed;
     }
 
     /// <summary>
@@ -57,15 +70,15 @@ namespace PipingSpecPlugin.Spec
             catch (System.Exception ex)
             {
                 Trace($"PartReader: GetManager не удался — {ex.GetType().Name}: {ex.Message}");
-                return result;
+                throw;
             }
             if (dlm == null)
             {
                 Trace("PartReader: DataLinksManager отсутствует для чертежа.");
-                return result;
+                throw new System.InvalidOperationException("DataLinksManager отсутствует для чертежа модели.");
             }
 
-            var lineGroupCache = new Dictionary<int, string>();
+            var lineGroupCache = new Dictionary<(bool project, int id), string>();
 
             // GetRelatedRowIds on a side-database resolves its data through
             // the native AcPp layer which keys off HostApplicationServices.
@@ -92,8 +105,19 @@ namespace PipingSpecPlugin.Spec
                     }
                 }
 
-                try { prevCaching = dlm.EnableCaching; } catch { }
-                try { dlm.EnableCaching = false; } catch { }
+                // Every step below used to be `try { … } catch { }`. The
+                // calls themselves are kept (they are the empirical freshness
+                // sequence — see the comment further down), but failures are
+                // now written to the run log so a stale read can be traced.
+                void Step(string what, System.Action action)
+                {
+                    try { action(); }
+                    catch (System.Exception ex)
+                    { Trace($"PartReader: {what} не удался — {ex.GetType().Name}: {ex.Message}"); }
+                }
+
+                Step("dlm.EnableCaching (чтение)", () => prevCaching = dlm.EnableCaching);
+                Step("dlm.EnableCaching=false", () => dlm.EnableCaching = false);
 
                 // Flush pending in-memory changes to the DataLinks store
                 // *before* querying. The active document holds new / edited
@@ -103,61 +127,47 @@ namespace PipingSpecPlugin.Spec
                 // three calls are belt-and-braces (different Plant 3D
                 // versions surface the freshness flag through different
                 // APIs).
-                try { dlm.AcceptChanges(); } catch { }
-                try { dlm.AuditDrawing(db); } catch { }
-                try { dlm.ReloadLinkMap(); } catch { }
-                try { dlm.AuditLinks(); } catch { }
-                try
+                Step("dlm.AcceptChanges", () => dlm.AcceptChanges());
+                Step("dlm.AuditDrawing", () => dlm.AuditDrawing(db));
+                Step("dlm.ReloadLinkMap", () => dlm.ReloadLinkMap());
+                Step("dlm.AuditLinks", () => dlm.AuditLinks());
+                Step("dlm.RefreshLinkMap", () =>
                 {
                     int dwgId = dlm.GetDrawingId(db);
                     if (dwgId != -1) dlm.RefreshLinkMap(dwgId);
-                }
-                catch { }
-                try
+                });
+                Step("dlm PnP-кэш свойств", () =>
                 {
-                    var pnpDb = dlm.GetPnPDatabase();
-                    if (pnpDb != null)
-                    {
-                        try { pnpDb.CacheAlways = false; } catch { }
-                        try { pnpDb.Disconnect(); } catch { }
-                        try { pnpDb.Connect(); } catch { }
-                        try { pnpDb.AcceptChanges(); } catch { }
-                        try { pnpDb.SynchronizeMetadata(); } catch { }
-                        foreach (Autodesk.ProcessPower.DataObjects.PnPTable table in pnpDb.Tables)
-                            try { table.RefreshCachedRows(); } catch { }
-                    }
-                }
-                catch { }
+                    if (!PnpDbFreshness.Flush(dlm.GetPnPDatabase(), "PartReader[dwg PnPDatabase]", Trace))
+                        result.PnpReconnectFailed = true;
+                });
 
                 if (projectDlm != null)
                 {
-                    try { prevProjCaching = projectDlm.EnableCaching; } catch { }
-                    try { projectDlm.EnableCaching = false; } catch { }
-                    try { projectDlm.AcceptChanges(); } catch { }
-                    try { projectDlm.AuditDrawing(db); } catch { }
-                    try { projectDlm.ReloadLinkMap(); } catch { }
-                    try { projectDlm.AuditLinks(); } catch { }
-                    try
+                    // projectDlm is the LIVE project store Plant 3D keeps open
+                    // for the whole session. AcceptChanges here commits any
+                    // pending DLM changes of the session — a side effect of a
+                    // read command, kept because it is part of the freshness
+                    // sequence that makes edits since the last save visible
+                    // (removing it blindly risks reading stale tags). The
+                    // Disconnect/Connect pair is the dangerous part and is
+                    // guarded in PnpDbFreshness.Flush.
+                    Step("projectDlm.EnableCaching (чтение)", () => prevProjCaching = projectDlm.EnableCaching);
+                    Step("projectDlm.EnableCaching=false", () => projectDlm.EnableCaching = false);
+                    Step("projectDlm.AcceptChanges", () => projectDlm.AcceptChanges());
+                    Step("projectDlm.AuditDrawing", () => projectDlm.AuditDrawing(db));
+                    Step("projectDlm.ReloadLinkMap", () => projectDlm.ReloadLinkMap());
+                    Step("projectDlm.AuditLinks", () => projectDlm.AuditLinks());
+                    Step("projectDlm.RefreshLinkMap", () =>
                     {
                         int projDwgId = projectDlm.GetDrawingId(db);
                         if (projDwgId != -1) projectDlm.RefreshLinkMap(projDwgId);
-                    }
-                    catch { }
-                    try
+                    });
+                    Step("projectDlm PnP-кэш свойств", () =>
                     {
-                        var projPnpDb = projectDlm.GetPnPDatabase();
-                        if (projPnpDb != null)
-                        {
-                            try { projPnpDb.CacheAlways = false; } catch { }
-                            try { projPnpDb.Disconnect(); } catch { }
-                            try { projPnpDb.Connect(); } catch { }
-                            try { projPnpDb.AcceptChanges(); } catch { }
-                            try { projPnpDb.SynchronizeMetadata(); } catch { }
-                            foreach (Autodesk.ProcessPower.DataObjects.PnPTable table in projPnpDb.Tables)
-                                try { table.RefreshCachedRows(); } catch { }
-                        }
-                    }
-                    catch { }
+                        if (!PnpDbFreshness.Flush(projectDlm.GetPnPDatabase(), "PartReader[project PnPDatabase]", Trace))
+                            result.PnpReconnectFailed = true;
+                    });
                 }
 
                 // Suppress the "restore EnableCaching after read" path for
@@ -179,7 +189,7 @@ namespace PipingSpecPlugin.Spec
                 catch (System.Exception ex)
                 {
                     Trace($"PartReader: SelectAcPpRowIds не удался — {ex.GetType().Name}: {ex.Message}");
-                    return result;
+                    throw;
                 }
 
                 var rowIdSet = new HashSet<int>();
@@ -217,6 +227,13 @@ namespace PipingSpecPlugin.Spec
                     catch { }
                 }
 
+                // Units of Position X/Y/Z for ValveCompanionFinder's
+                // proximity radius (see PartRecord.DrawingMmPerUnit).
+                double? drawingMmPerUnit = null;
+                try { drawingMmPerUnit = MillimetresPerUnit(db.Insunits); }
+                catch (System.Exception ex)
+                { Trace($"PartReader: INSUNITS не прочитан — {ex.GetType().Name}: {ex.Message}"); }
+
                 foreach (int rowId in rowIdSet)
                 {
                     PartRecord rec = null;
@@ -226,33 +243,63 @@ namespace PipingSpecPlugin.Spec
                         if (props == null)
                         {
                             result.SkippedRows++;
+                            result.SkippedRowDetails.Add((rowId, "свойства не прочитаны (GetAllProperties вернул null)"));
                             Trace($"PartReader: rowId {rowId} пропущен — GetAllProperties вернул null.");
                             continue;
                         }
-                        rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache);
+                        rec = BuildRecord(rowId, props, dlm, projectDlm, lineGroupCache, Trace);
                     }
                     catch (System.Exception ex)
                     {
                         // One broken part must not kill the whole spec — but
                         // record it so "a part went missing" is traceable.
                         result.SkippedRows++;
+                        result.SkippedRowDetails.Add((rowId, $"{ex.GetType().Name}: {ex.Message}"));
                         Trace($"PartReader: rowId {rowId} пропущен — {ex.GetType().Name}: {ex.Message}");
                     }
                     if (rec == null) continue;
+                    rec.DrawingMmPerUnit = drawingMmPerUnit;
                     result.Records.Add(rec);
+                }
 
-                    // Equipment-owned exclusion (manways, internal supports
-                    // attached to vessels). Plant 3D doesn't always populate
-                    // a separate "Equipment" PartCategory — vessels often go
-                    // through with empty/null category. The companion-flange
-                    // exclusion handled below catches the case the user cares
-                    // about most (nozzle-style flanges attached to valves or
-                    // equipment), so this path stays as a safety net only.
+                // One ownership gate for every path below. Category lookup
+                // prefers the record we just read (normalized, so an empty
+                // PartCategory on a "Pipe"-class row still counts); rows not
+                // in the record set (rare — a neighbour whose properties
+                // failed) fall back to a direct DLM read.
+                var categoryByRow = new Dictionary<int, string>();
+                foreach (var rec in result.Records)
+                    categoryByRow[rec.PnPID] = CategoryClassifier.Normalize(rec);
+                var guardLogged = new HashSet<int>();
+                bool MarkOwned(int id, string via)
+                {
+                    var isProcurement = categoryByRow.TryGetValue(id, out var cat)
+                        ? CategoryClassifier.IsProcurementCategory(cat)
+                        : IsProcurementCategory(dlm, id);
+                    if (isProcurement)
+                    {
+                        result.OwnershipGuardKept++;
+                        if (guardLogged.Add(id))
+                            Trace($"{via}: rowId {id} НЕ помечен owned — закупочная категория (труба/деталь/арматура/фланец), оставляем в спецификации.");
+                        return false;
+                    }
+                    return result.EquipmentOwnedPnPIds.Add(id);
+                }
+
+                // Equipment-owned exclusion (manways, internal supports
+                // attached to vessels). Plant 3D doesn't always populate
+                // a separate "Equipment" PartCategory — vessels often go
+                // through with empty/null category. The companion-flange
+                // exclusion handled below catches the case the user cares
+                // about most (nozzle-style flanges attached to valves or
+                // equipment), so this path stays as a safety net only.
+                // Runs after the record loop (it used to run inside it) so
+                // MarkOwned sees every record's category.
+                foreach (var rec in result.Records)
+                {
                     if (string.Equals(rec.PartCategory, "Equipment",
                                       System.StringComparison.OrdinalIgnoreCase))
-                    {
-                        CollectAssetOwnership(dlm, rowId, result.EquipmentOwnedPnPIds, Trace);
-                    }
+                        CollectAssetOwnership(dlm, rec.PnPID, MarkOwned, Trace);
                 }
 
                 // Build topology by walking ConnectionManager.GetConnections
@@ -260,7 +307,9 @@ namespace PipingSpecPlugin.Spec
                 // connector-mediated part-to-part graph. GetRelatedRowIds was
                 // attempted earlier but came back empty on real projects, so
                 // we go through the connection manager directly.
-                BuildTopology(db, dlm, result);
+                BuildTopology(db, dlm, result, MarkOwned);
+                if (result.OwnershipGuardKept > 0)
+                    Trace($"PartReader: {result.OwnershipGuardKept} привязок к оборудованию не применено к закупочным деталям ({guardLogged.Count} уникальных rowId).");
                 return result;
             }
             finally
@@ -293,7 +342,8 @@ namespace PipingSpecPlugin.Spec
         /// walk stays local to the joint.
         /// </summary>
         static void BuildTopology(Database db, DataLinksManager dlm,
-                                  PartReadResult result)
+                                  PartReadResult result,
+                                  System.Func<int, string, bool> markOwned)
         {
             ConnectionManager cm;
             try { cm = new ConnectionManager(); }
@@ -362,12 +412,19 @@ namespace PipingSpecPlugin.Spec
                             // also picks up connector-bridged children —
                             // IsPnP3dConnector on the neighbour triggers a
                             // follow-on lookup.
+                            // Every mark goes through markOwned: procurement
+                            // categories (pipe/fittings/valves/flanges) are
+                            // never hidden — see CategoryClassifier.
+                            // IsProcurementCategory for the why.
                             if (isEquipment)
                             {
-                                result.EquipmentOwnedPnPIds.Add(toRowId);
-                                result.EquipmentNeighbourCount++;
-                                FollowConnectorChildren(cm, dlm, otherId, toRowId,
-                                                         result.EquipmentOwnedPnPIds);
+                                if (markOwned(toRowId, "Topology(equipment→neighbour)"))
+                                    result.EquipmentNeighbourCount++;
+                                // Follow the connector hop regardless of whether
+                                // the connector itself was marked — connectors
+                                // aren't procurement rows, but the guard must
+                                // still be applied to what lies beyond.
+                                FollowConnectorChildren(cm, dlm, otherId, toRowId, markOwned);
                             }
 
                             // The reverse direction matters too: in some
@@ -386,11 +443,9 @@ namespace PipingSpecPlugin.Spec
                                      || Runtime.IsPnP3dNozzleSubPart(otherId);
                                 }
                                 catch { }
-                                if (neighbourIsEquipmentLike)
-                                {
-                                    result.EquipmentOwnedPnPIds.Add(fromRowId);
+                                if (neighbourIsEquipmentLike
+                                    && markOwned(fromRowId, "Topology(part→equipment/nozzle)"))
                                     result.EquipmentNeighbourCount++;
-                                }
                             }
 
                             if (fromRowId != 0 && toRowId != fromRowId)
@@ -414,7 +469,7 @@ namespace PipingSpecPlugin.Spec
         /// </summary>
         static void FollowConnectorChildren(ConnectionManager cm,
             DataLinksManager dlm, ObjectId connectorId, int connectorRowId,
-            HashSet<int> ownedIds)
+            System.Func<int, string, bool> markOwned)
         {
             bool isConnector = false;
             try { isConnector = Runtime.IsPnP3dConnector(connectorId); }
@@ -441,9 +496,23 @@ namespace PipingSpecPlugin.Spec
                 int toRow = 0;
                 try { toRow = dlm.FindAcPpRowId(otherId); } catch { }
                 if (toRow != 0 && toRow != connectorRowId)
-                    ownedIds.Add(toRow);
+                    markOwned(toRow, "Topology(equipment→connector→part)");
             }
         }
+
+        // Drawing units (INSUNITS) — for coordinates only; part dimensions
+        // such as WallThickness are in the part's catalogue LengthUnit.
+        // Unitless / exotic units → null ("unknown"; ValveCompanionFinder
+        // assumes mm).
+        static double? MillimetresPerUnit(UnitsValue units) => units switch
+        {
+            UnitsValue.Millimeters => 1,
+            UnitsValue.Centimeters => 10,
+            UnitsValue.Meters => 1000,
+            UnitsValue.Inches => 25.4,
+            UnitsValue.Feet => 304.8,
+            _ => null,
+        };
 
         static void AddEdge(Dictionary<int, List<int>> graph, int from, int to)
         {
@@ -459,7 +528,8 @@ namespace PipingSpecPlugin.Spec
         /// query — Plant 3D's wrappers don't expose the schema so we
         /// can't pick a single overload with certainty.
         /// </summary>
-        static void CollectAssetOwnership(DataLinksManager dlm, int rowId, HashSet<int> ownedIds,
+        static void CollectAssetOwnership(DataLinksManager dlm, int rowId,
+                                          System.Func<int, string, bool> markOwned,
                                           System.Action<string> trace = null)
         {
             // Try the explicit relationship overload with several names
@@ -480,8 +550,10 @@ namespace PipingSpecPlugin.Spec
                                                        rowId, rel);
                     if (related != null && related.Count > 0)
                     {
+                        // Guarded like every other ownership path: even an
+                        // explicit relationship must not hide a pipe/valve.
                         foreach (int id in related)
-                            if (id != rowId) ownedIds.Add(id);
+                            if (id != rowId) markOwned(id, $"AssetOwnership({rel})");
                         return;
                     }
                 }
@@ -505,23 +577,21 @@ namespace PipingSpecPlugin.Spec
                 foreach (int id in related)
                 {
                     if (id == rowId) continue;
-                    if (IsProcurementCategory(dlm, id))
-                    {
-                        trace?.Invoke($"AssetOwnership(fallback): rowId {id} НЕ помечен owned — это закупочная категория (труба/деталь/арматура/фланец), оставляем в спецификации.");
-                        continue;
-                    }
-                    if (ownedIds.Add(id))
+                    if (markOwned(id, "AssetOwnership(fallback)"))
                         trace?.Invoke($"AssetOwnership(fallback): rowId {id} помечен owned для оборудования {rowId}.");
                 }
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"AssetOwnership(fallback): GetRelatedRowIds({rowId}) не удался — {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
-        // True when the row's PartCategory is one a procurement spec must
-        // always keep, so the imprecise AssetOwnership fallback never hides
-        // it. Reads the single PartCategory property; any failure is treated
-        // as "not a procurement category" so behaviour stays conservative
-        // (the row can still be excluded as before).
+        // DLM fallback for rows that are not in the record set (their own
+        // property read failed). Reads the single PartCategory property;
+        // any failure is treated as "not a procurement category" so
+        // behaviour stays conservative (the row can still be excluded as
+        // before). Records we did read go through CategoryClassifier.
         static bool IsProcurementCategory(DataLinksManager dlm, int rowId)
         {
             string cat = null;
@@ -533,56 +603,69 @@ namespace PipingSpecPlugin.Spec
                         if (kv.Key == "PartCategory") { cat = kv.Value; break; }
             }
             catch { return false; }
-            if (string.IsNullOrEmpty(cat)) return false;
-            return cat.Equals("Pipe", System.StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("Fittings", System.StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("Valves", System.StringComparison.OrdinalIgnoreCase)
-                || cat.Equals("Flanges", System.StringComparison.OrdinalIgnoreCase);
+            return CategoryClassifier.IsProcurementCategory((cat ?? "").Trim());
         }
 
         /// <summary>
         /// Walk P3dLineGroupPartRelationship to find the LineGroup row
-        /// for this part, then read its current Tag. Prefer projectDlm
-        /// over drawing-local: the project DLM owns the canonical
-        /// P3dLineGroup table that gets updated when a user renames a
-        /// line in the Project Manager. The drawing-local DLM also has
-        /// the table but its copy can lag behind.
+        /// for this part, then read its current Tag. Resolved through the
+        /// drawing-local DLM only: partRowId lives in that id space, and a
+        /// project-DLM lookup with it can hit an unrelated row (see body).
+        /// The drawing reads are always from disk (side-Database), so its
+        /// P3dLineGroup copy reflects the last save.
         /// </summary>
         static string ResolveLiveLineTag(int partRowId,
             DataLinksManager drawingDlm,
             DataLinksManager projectDlm,
-            Dictionary<int, string> lineGroupCache)
+            Dictionary<(bool project, int id), string> lineGroupCache,
+            System.Action<string> trace,
+            System.Action<string> partWarning = null)
         {
             // Query drawing-local DLM first since partRowId is drawing-local.
             // Drawing-local and project-wide PnPIDs belong to different
             // namespaces — querying projectDlm first with
             // a drawing-local partRowId can match an unrelated row (e.g. a connector)
             // and return the wrong line tag.
-            int lgRowId = QueryLineGroupRowId(drawingDlm, partRowId);
-            bool isProjectLg = false;
+            //
+            // There used to be a fallback here that re-ran the same query
+            // against projectDlm when the drawing DLM found nothing ("shares
+            // namespace in SQL Server/vault"). It does not, in general: the
+            // drawing-local rowId fed into the project DLM can name a
+            // completely different part there, and the result was a line tag
+            // borrowed from someone else's row — a wrong line in the spec
+            // that looks perfectly valid. There is no reliable way to verify
+            // that a project rowId is "the same part" from here, so the
+            // fallback is gone. Returning null makes PartPropertyReader fall
+            // back to the part's OWN LineNumberTag property: possibly stale
+            // after a rename, but never foreign.
+            int lgRowId = QueryLineGroupRowId(drawingDlm, partRowId, trace, partWarning);
+            if (lgRowId == 0) return null;
 
-            if (lgRowId == 0)
-            {
-                // Fallback: try project DLM (shares namespace in SQL Server/vault)
-                lgRowId = QueryLineGroupRowId(projectDlm, partRowId);
-                if (lgRowId == 0) return null;
-                isProjectLg = true;
-            }
-
-            if (lineGroupCache.TryGetValue(lgRowId, out var cached))
+            var cacheKey = (false, lgRowId);
+            if (lineGroupCache.TryGetValue(cacheKey, out var cached))
                 return cached;
 
-            // If found via projectDlm, read from projectDlm first. Otherwise,
-            // read from drawingDlm (or projectDlm if they are the same instance).
-            var tag = isProjectLg
-                ? (ReadTag(projectDlm, lgRowId) ?? ReadTag(drawingDlm, lgRowId))
-                : (ReadTag(drawingDlm, lgRowId) ?? (projectDlm == drawingDlm ? ReadTag(projectDlm, lgRowId) : null));
+            // The LineGroup rowId came from the drawing DLM, so read its Tag
+            // there; projectDlm is only consulted when it is literally the
+            // same manager instance (same id space by construction).
+            var tag = ReadTag(drawingDlm, lgRowId)
+                ?? (ReferenceEquals(projectDlm, drawingDlm) ? ReadTag(projectDlm, lgRowId) : null);
 
-            lineGroupCache[lgRowId] = tag;
+            lineGroupCache[cacheKey] = tag;
             return tag;
         }
 
-        static int QueryLineGroupRowId(DataLinksManager dlmToTry, int partRowId)
+        /// <summary>
+        /// LineGroup row of a part. A part normally belongs to exactly one
+        /// line group; if Plant 3D reports several, the first one is still
+        /// used (unchanged behaviour — there is no rule to pick "the right"
+        /// one here), but it is now written to the run log so a part that
+        /// lands on an unexpected line can be traced to the ambiguous link
+        /// instead of the choice being silent.
+        /// </summary>
+        static int QueryLineGroupRowId(DataLinksManager dlmToTry, int partRowId,
+                                       System.Action<string> trace,
+                                       System.Action<string> partWarning = null)
         {
             if (dlmToTry == null) return 0;
             try
@@ -590,9 +673,23 @@ namespace PipingSpecPlugin.Spec
                 var related = dlmToTry.GetRelatedRowIds(
                     "P3dLineGroupPartRelationship", "Part", partRowId, "LineGroup");
                 if (related == null) return 0;
-                foreach (int id in related) return id;
+                var groups = new List<int>();
+                foreach (int id in related)
+                    if (id != 0 && !groups.Contains(id)) groups.Add(id);
+                if (groups.Count == 0) return 0;
+                if (groups.Count > 1)
+                {
+                    trace?.Invoke($"ВНИМАНИЕ: деталь rowId {partRowId} связана с несколькими группами линий "
+                        + $"({string.Join(", ", groups)}); использована первая — {groups[0]}.");
+                    partWarning?.Invoke($"Деталь связана с несколькими группами линий ({groups.Count}) — номер линии взят из первой");
+                }
+                return groups[0];
             }
-            catch { }
+            catch (System.Exception ex)
+            {
+                trace?.Invoke($"PartReader: группа линии для rowId {partRowId} не прочитана — {ex.GetType().Name}: {ex.Message}");
+                partWarning?.Invoke("Группа линии не прочитана — номер линии взят из свойства детали (может быть устаревшим)");
+            }
             return 0;
         }
 
@@ -615,89 +712,18 @@ namespace PipingSpecPlugin.Spec
             List<System.Collections.Generic.KeyValuePair<string, string>> props,
             DataLinksManager dlm,
             DataLinksManager projectDlm,
-            Dictionary<int, string> lineGroupCache)
+            Dictionary<(bool project, int id), string> lineGroupCache,
+            System.Action<string> trace)
         {
-            // O(1) Lookup: convert list to dictionary to avoid 35+ linear scans
-            // of ~90 items per row. Keeps the first occurrence if keys duplicate.
-            var propDict = new Dictionary<string, string>(System.StringComparer.Ordinal);
-            foreach (var kv in props)
-            {
-                if (kv.Key != null && !propDict.ContainsKey(kv.Key))
-                    propDict.Add(kv.Key, kv.Value);
-            }
-
-            string Get(string key)
-            {
-                propDict.TryGetValue(key, out var val);
-                return val;
-            }
-
-            // Resolve LineNumberTag through the live LineGroup row
-            // rather than the property bag — Plant 3D copies the line
-            // tag into the EngineeringItem's "LineNumberTag" property
-            // at link-time, and that copy doesn't update when the user
-            // renames the line in the Project Manager. The relationship
-            // table + projectDlm-backed P3dLineGroup row is always
-            // current.
-            //
-            // We try projectDlm first (it owns the live P3dLineGroup
-            // table). Fall through to drawing-local DLM only when the
-            // project DLM is unavailable or the query throws.
-            string resolvedLineNumberTag = ResolveLiveLineTag(
-                rowId, dlm, projectDlm, lineGroupCache);
-            if (string.IsNullOrEmpty(resolvedLineNumberTag))
-            {
-                resolvedLineNumberTag = Get("LineNumberTag");
-            }
-
-            return new PartRecord
-            {
-                PnPID = rowId,
-                Status = Get("Status"),
-                PartCategory = Get("PartCategory"),
-                PartFamilyLongDesc = Get("PartFamilyLongDesc"),
-                PartSizeLongDesc = Get("PartSizeLongDesc"),
-                ShortDescription = Get("ShortDescription"),
-                NominalDiameter = Get("NominalDiameter"),
-                NominalUnit = Get("NominalUnit"),
-                Material = Get("Material"),
-                Spec = Get("Spec"),
-                ItemCode = Get("ItemCode"),
-                Manufacturer = Get("Manufacturer"),
-                DesignStd = Get("DesignStd"),
-                CompatibleStandard = Get("CompatibleStandard"),
-                Weight = Get("Weight"),
-                LengthUnit = Get("LengthUnit"),
-                WeightUnit = Get("WeightUnit"),
-                // Pipe carries length under "Length" (full segment).
-                // PipeBend doesn't populate that field — its physical
-                // arc length lives in "CutLength" (verified against the
-                // ru-RU DisplayNames.xml entry "$$dn-PipeBend-CutLength").
-                // Try Length first; fall back to CutLength so bends
-                // have a numeric length the folder can read.
-                Length = Get("Length") ?? Get("CutLength"),
-                LinearWeight = Get("LinearWeight"),
-                LineNumberTag = resolvedLineNumberTag,
-                ContentIsoSymbolDefinition = Get("ContentIsoSymbolDefinition"),
-                EquipTag = Get("Tag"),
-                PositionX = Get("Position X"),
-                PositionY = Get("Position Y"),
-                PositionZ = Get("Position Z"),
-                CogX = Get("COG X"),
-                CogY = Get("COG Y"),
-                CogZ = Get("COG Z"),
-                PnPClassName = Get("PnPClassName"),
-                PressureClass = Get("PressureClass"),
-                Facing = Get("Facing"),
-                // Bolt sets carry their piece count under "NumberInSet"
-                // — confirmed against ru-RU/DisplayNames.xml entry
-                // "$$dn-BoltSet-NumberInSet -> Количество в комплекте".
-                // Probe a few alternates too in case other part families
-                // use slightly different names.
-                Quantity = Get("NumberInSet") ?? Get("Quantity")
-                            ?? Get("NumBolts") ?? Get("BoltCount")
-                            ?? Get("Count") ?? Get("NumberOfBolts"),
-            };
+            string lineWarning = null;
+            var tag = ResolveLiveLineTag(rowId, dlm, projectDlm, lineGroupCache,
+                                         trace, w => lineWarning = w);
+            var rec = PartPropertyReader.Build(rowId, props, tag);
+            // Parked on the record, not reported here: only SpecRowBuilder
+            // knows whether the part survives the user's filters.
+            if (rec != null && lineWarning != null)
+                (rec.ReadWarnings ??= new List<string>()).Add(lineWarning);
+            return rec;
         }
     }
 }

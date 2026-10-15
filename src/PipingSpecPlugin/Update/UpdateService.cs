@@ -17,13 +17,19 @@ namespace PipingSpecPlugin.Update
         // GitHub requires a User-Agent on every API request or it returns 403.
         const string UserAgent = "PipingSpecPlugin-Updater";
 
-        static readonly HttpClient Http = CreateClient();
+        // Short timeout for the small API call made at plug-in load…
+        static readonly HttpClient Http = CreateClient(TimeSpan.FromSeconds(15), apiAccept: true);
+        // …and a separate, long one for the installer download. HttpClient.
+        // Timeout covers the WHOLE request including the body, so the shared
+        // 15 s client aborted every installer download on a slow or proxied
+        // connection and the update silently "failed".
+        static readonly HttpClient Download = CreateClient(TimeSpan.FromMinutes(10), apiAccept: false);
 
-        static HttpClient CreateClient()
+        static HttpClient CreateClient(TimeSpan timeout, bool apiAccept)
         {
-            var c = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var c = new HttpClient { Timeout = timeout };
             c.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
-            c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+            if (apiAccept) c.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
             return c;
         }
 
@@ -71,19 +77,38 @@ namespace PipingSpecPlugin.Update
         {
             if (info == null || string.IsNullOrWhiteSpace(info.InstallerUrl))
                 return false;
+            var tempPath = Path.Combine(
+                Path.GetTempPath(),
+                $"PipingSpecPlugin-Setup-{info.LatestVersion}.exe");
+            var partPath = tempPath + ".part";
             try
             {
-                var tempPath = Path.Combine(
-                    Path.GetTempPath(),
-                    $"PipingSpecPlugin-Setup-{info.LatestVersion}.exe");
-
-                using (var resp = await Http.GetAsync(info.InstallerUrl).ConfigureAwait(false))
+                // Stream straight to disk (ResponseHeadersRead) instead of
+                // buffering the whole installer in memory first, into a
+                // ".part" file that only becomes the .exe once complete and
+                // verified — a truncated download is never launched.
+                using (var resp = await Download.GetAsync(info.InstallerUrl,
+                           HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
                 {
                     if (!resp.IsSuccessStatusCode) return false;
                     using var src = await resp.Content.ReadAsStreamAsync().ConfigureAwait(false);
-                    using var dst = File.Create(tempPath);
+                    using var dst = File.Create(partPath);
                     await src.CopyToAsync(dst).ConfigureAwait(false);
                 }
+
+                // Size and SHA-256 as reported by GitHub for the asset (when
+                // the API provides them). There is no code-signing
+                // certificate, so an Authenticode check is not possible; the
+                // digest at least proves the file is the published asset.
+                bool ok;
+                using (var check = File.OpenRead(partPath))
+                    ok = UpdateChecker.VerifyDownload(check, info.InstallerSha256, info.InstallerSize);
+                if (!ok)
+                {
+                    TryDelete(partPath);
+                    return false;
+                }
+                File.Move(partPath, tempPath, overwrite: true);
 
                 // Launch the installer detached. It waits in the background;
                 // the user finishes it after closing AutoCAD.
@@ -97,8 +122,14 @@ namespace PipingSpecPlugin.Update
             }
             catch
             {
+                TryDelete(partPath);
                 return false;
             }
+        }
+
+        static void TryDelete(string path)
+        {
+            try { if (File.Exists(path)) File.Delete(path); } catch { }
         }
     }
 }

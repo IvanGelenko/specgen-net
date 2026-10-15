@@ -53,6 +53,8 @@ namespace PipingSpecPlugin.Update
                 if (latest == null) return none;
 
                 string installerUrl = null;
+                string installerSha256 = null;
+                long? installerSize = null;
                 if (root.TryGetProperty("assets", out var assets)
                     && assets.ValueKind == JsonValueKind.Array)
                 {
@@ -63,6 +65,15 @@ namespace PipingSpecPlugin.Update
                             && a.TryGetProperty("browser_download_url", out var u))
                         {
                             installerUrl = u.GetString();
+                            // GitHub computes and reports the asset digest
+                            // itself ("sha256:<hex>") — nothing to publish by
+                            // hand, so the downloaded installer can be
+                            // verified against it.
+                            if (a.TryGetProperty("digest", out var d) && d.ValueKind == JsonValueKind.String)
+                                installerSha256 = ParseSha256Digest(d.GetString());
+                            if (a.TryGetProperty("size", out var s) && s.ValueKind == JsonValueKind.Number
+                                && s.TryGetInt64(out var size) && size > 0)
+                                installerSize = size;
                             break;
                         }
                     }
@@ -79,6 +90,8 @@ namespace PipingSpecPlugin.Update
                     ReleaseTag = tag,
                     ReleaseUrl = releaseUrl,
                     InstallerUrl = installerUrl,
+                    InstallerSha256 = installerSha256,
+                    InstallerSize = installerSize,
                     ReleaseNotes = notes ?? "",
                 };
             }
@@ -130,5 +143,37 @@ namespace PipingSpecPlugin.Update
         }
 
         static string VersionToString(int[] v) => string.Join(".", v);
+
+        /// <summary>
+        /// "sha256:ABCD…" → lower-case 64-char hex, or null for any other
+        /// algorithm / malformed value (then the download is simply not
+        /// hash-checked — never rejected because of an unknown format).
+        /// </summary>
+        public static string ParseSha256Digest(string digest)
+        {
+            if (string.IsNullOrWhiteSpace(digest)) return null;
+            var s = digest.Trim();
+            const string prefix = "sha256:";
+            if (!s.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return null;
+            var hex = s.Substring(prefix.Length).Trim().ToLowerInvariant();
+            if (hex.Length != 64 || !hex.All(c => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')))
+                return null;
+            return hex;
+        }
+
+        /// <summary>
+        /// Checks a downloaded installer against what the release reported.
+        /// Missing expectations (null) pass; a mismatch fails.
+        /// </summary>
+        public static bool VerifyDownload(System.IO.Stream content, string expectedSha256, long? expectedSize)
+        {
+            if (expectedSize.HasValue && content.CanSeek && content.Length != expectedSize.Value)
+                return false;
+            if (expectedSha256 == null) return true;
+            if (content.CanSeek) content.Position = 0;
+            using var sha = System.Security.Cryptography.SHA256.Create();
+            var actual = Convert.ToHexString(sha.ComputeHash(content)).ToLowerInvariant();
+            return actual == expectedSha256;
+        }
     }
 }

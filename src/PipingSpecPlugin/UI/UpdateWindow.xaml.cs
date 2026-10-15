@@ -54,14 +54,18 @@ namespace PipingSpecPlugin.UI
                 }
                 else
                 {
-                    StatusText.Text = "Не удалось загрузить установщик. Откройте страницу релиза вручную.";
+                    StatusText.Text = "Не удалось загрузить установщик. Повторите или откройте страницу релиза вручную.";
                     LaterButton.IsEnabled = true;
+                    // Allow a retry (a flaky connection is the usual cause);
+                    // the button used to stay disabled for good.
+                    UpdateButton.IsEnabled = true;
                 }
             }
             catch (Exception ex)
             {
                 StatusText.Text = "Ошибка загрузки: " + ex.Message;
                 LaterButton.IsEnabled = true;
+                UpdateButton.IsEnabled = true;
             }
         }
 

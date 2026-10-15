@@ -121,7 +121,7 @@ namespace PipingSpecPlugin.Audit
                     foreach (var key in p.Neighbours.ToArray())
                         if (indexed.TryGetValue(key, out var other)) other.Neighbours.Add(p.Key);
                 if (bolts && dlm != null) ReadFlangeFaces(snapshot, database, dlm);
-                if (collision) CheckCollisions(shapes, snapshot, indexed, progress, options.CollisionToleranceMm);
+                if (collision) CheckCollisions(shapes, snapshot, indexed, progress, options.CollisionToleranceMm, options.StructureCollisions);
                 return snapshot;
             }
             finally
@@ -387,6 +387,10 @@ namespace PipingSpecPlugin.Audit
         {
             public AuditPart Part;
             public bool Selected;
+            // Not a Plant part: structure member, 3D solid, block, xref object.
+            public bool IsStructure;
+            // Axis end points of a Plant structure member (WCS), for nodes.
+            public List<double[]> Ends;
             public Extents3d Bounds;
             public List<Solid3d> Solids = new();
             public List<Solid3d> BareSolids;
@@ -438,7 +442,21 @@ namespace PipingSpecPlugin.Audit
         static void CollectShape(Entity entity, AuditPart item, Transaction transaction, List<Shape> shapes, AuditSnapshot snapshot, bool selected, Matrix3d transform)
         {
             if (IsFlat(entity)) return;
-            var shape = new Shape { Selected = selected, Part = item ?? new AuditPart { Key = entity.Handle.ToString(), Description = entity.GetType().Name } };
+            var shape = new Shape { Selected = selected, Part = item ?? new AuditPart { Key = entity.Handle.ToString(), Description = entity.GetType().Name },
+                IsStructure = entity is not Part };
+            // A Plant structure member (ImpCurve, ACPPSTRUCTURE*) is a curve
+            // along its axis: its ends mark the nodes (StructureJointPolicy).
+            if (entity is Curve member && !entity.ObjectId.IsNull
+                && (entity.ObjectId.ObjectClass?.DxfName ?? "").StartsWith("ACPPSTRUCTURE", StringComparison.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    var start = member.StartPoint.TransformBy(transform);
+                    var end = member.EndPoint.TransformBy(transform);
+                    shape.Ends = new List<double[]> { new[] { start.X, start.Y, start.Z }, new[] { end.X, end.Y, end.Z } };
+                }
+                catch { /* No axis: its overlaps are judged as any other clash. */ }
+            }
             try
             {
                 bool incomplete = false;
@@ -525,7 +543,7 @@ namespace PipingSpecPlugin.Audit
             a.MaxPoint.Z > b.MinPoint.Z && b.MaxPoint.Z > a.MinPoint.Z;
 
         static void CheckCollisions(List<Shape> shapes, AuditSnapshot snapshot, IReadOnlyDictionary<string, AuditPart> parts, Action<string> progress,
-            double toleranceMm)
+            double toleranceMm, bool structures)
         {
             // Unknown drawing units: the tolerance is taken in drawing units
             // (Plant 3D piping drawings are in mm).
@@ -541,7 +559,8 @@ namespace PipingSpecPlugin.Audit
                 for (int j = i + 1; j < sorted.Count && sorted[j].Bounds.MinPoint.X < a.Bounds.MaxPoint.X; j++)
                 {
                     var b = sorted[j];
-                    if (!a.Selected && !b.Selected) continue;
+                    bool betweenStructures = a.IsStructure && b.IsStructure;
+                    if (!a.Selected && !b.Selected && !(structures && betweenStructures)) continue;
                     // Pieces of one block insertion are one object, not a clash
                     // (entities of the host have distinct selection handles).
                     if (a.Part.SelectionKey != null && string.Equals(a.Part.SelectionKey, b.Part.SelectionKey, StringComparison.Ordinal)) continue;
@@ -555,26 +574,32 @@ namespace PipingSpecPlugin.Audit
                     var joint = ConnectedJointPolicy.IgnoreOverlap(a.Part, b.Part, parts);
                     try
                     {
-                        var depth = OverlapDepth(a.BareSolids ?? a.Solids, b.BareSolids ?? b.Solids, tolerance);
+                        var depth = OverlapDepth(a.BareSolids ?? a.Solids, b.BareSolids ?? b.Solids, tolerance, out var region);
                         bool insulation = false;
                         // The insulation envelope can reach deeper than the
                         // bodies: checked when the bodies stay within tolerance.
                         if ((depth == null || depth <= tolerance) && (a.BareSolids != null || b.BareSolids != null)
                             && !InsulationJointPolicy.IgnoreInsulationOverlap(a.Part, b.Part))
                         {
-                            var wrapped = OverlapDepth(a.Solids, b.Solids, tolerance);
-                            if (wrapped != null && (depth == null || wrapped > depth)) { depth = wrapped; insulation = true; }
+                            var wrapped = OverlapDepth(a.Solids, b.Solids, tolerance, out var wrappedRegion);
+                            if (wrapped != null && (depth == null || wrapped > depth)) { depth = wrapped; region = wrappedRegion; insulation = true; }
                         }
                         if (depth == null) continue;
                         // Counted only when they really overlap: the number of
                         // joints merely touching would mean nothing to the user.
                         if (joint) { snapshot.ConnectedJointsIgnored++; continue; }
                         if (depth <= tolerance) { snapshot.CollisionsWithinTolerance++; continue; }
+                        // A beam running into a column at their node (the end
+                        // of a member's axis inside the overlap) is the frame.
+                        if (betweenStructures && StructureJointPolicy.IsNode(region,
+                                (a.Ends ?? new List<double[]>()).Concat(b.Ends ?? new List<double[]>()), 1.0 / mmPerUnit))
+                        { snapshot.StructureJointsIgnored++; continue; }
                         var clash = AuditRules.Issue("collisions", "Коллизии", "Пересечение",
-                            $"Обнаружено пересечение {(insulation ? "с участием изоляции" : "объёмов")}: {a.Part.Description} ↔ {b.Part.Description}. " +
+                            $"Обнаружено пересечение {(betweenStructures ? "конструкций" : insulation ? "с участием изоляции" : "объёмов")}: {a.Part.Description} ↔ {b.Part.Description}. " +
                             $"Глубина ≈ {depth.Value * mmPerUnit:0.#} мм. Проверьте, не является ли оно предусмотренным сопряжением.", new[] { a.Part, b.Part });
                         clash.Bounds = Overlap(a.Bounds, b.Bounds);
                         clash.Magnitude = depth.Value * mmPerUnit;
+                        clash.BetweenStructures = betweenStructures;
                         snapshot.GeometryIssues.Add(clash);
                     }
                     catch (Exception ex)
@@ -584,6 +609,7 @@ namespace PipingSpecPlugin.Audit
                         if (joint) continue;
                         var failed = AuditRules.Issue("collisions", "Коллизии", "Не проверено", "Ошибка проверки пары: " + ex.Message, new[] { a.Part, b.Part });
                         failed.Bounds = Overlap(a.Bounds, b.Bounds);
+                        failed.BetweenStructures = betweenStructures;
                         snapshot.GeometryIssues.Add(failed);
                     }
                 }
@@ -602,9 +628,11 @@ namespace PipingSpecPlugin.Audit
         // less than the true penetration, so the tolerance cannot hide a
         // deeper clash (for an oblique crossing it reads somewhat more).
         // Stops at the first overlap deeper than the tolerance.
-        static double? OverlapDepth(List<Solid3d> a, List<Solid3d> b, double tolerance)
+        // region: box of the deepest overlap (minX…maxZ), for the node test.
+        static double? OverlapDepth(List<Solid3d> a, List<Solid3d> b, double tolerance, out double[] region)
         {
             double? deepest = null;
+            region = null;
             foreach (var left in a)
                 foreach (var right in b)
                 {
@@ -616,7 +644,11 @@ namespace PipingSpecPlugin.Audit
                     if (first.MassProperties.Volume <= 1e-9) continue;
                     var box = first.GeometricExtents;
                     var depth = Math.Min(box.MaxPoint.X - box.MinPoint.X, Math.Min(box.MaxPoint.Y - box.MinPoint.Y, box.MaxPoint.Z - box.MinPoint.Z));
-                    deepest = Math.Max(deepest ?? 0, depth);
+                    if (deepest == null || depth > deepest)
+                    {
+                        deepest = depth;
+                        region = new[] { box.MinPoint.X, box.MinPoint.Y, box.MinPoint.Z, box.MaxPoint.X, box.MaxPoint.Y, box.MaxPoint.Z };
+                    }
                     if (deepest > tolerance) return deepest;
                 }
             return deepest;

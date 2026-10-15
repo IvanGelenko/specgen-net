@@ -22,6 +22,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditRules.cs" Link="Audit\AuditRules.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\BoltLengthRule.cs" Link="Audit\BoltLengthRule.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\MaterialRule.cs" Link="Audit\MaterialRule.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Audit\StructureJointPolicy.cs" Link="Audit\StructureJointPolicy.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Audit\AuditReport.cs" Link="Audit\AuditReport.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartPropertyReader.cs" Link="Spec\PartPropertyReader.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecNumber.cs" Link="Spec\SpecNumber.cs" />

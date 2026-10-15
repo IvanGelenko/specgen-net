@@ -39,10 +39,10 @@ namespace PipingSpecPlugin.Commands
             var settings = PluginSettings.Load();
             var window = new AuditWindow(doc.Name, catalog.Lines, options =>
                 {
-                    SaveTolerance(settings, options.CollisionToleranceMm, logger);
+                    SaveChoices(settings, options, logger);
                     return ReadSnapshot(doc, options, catalog, logger);
                 },
-                (owner, issues) => AuditModelView.Show(doc, owner, issues, logger), settings.AuditCollisionToleranceMm);
+                (owner, issues) => AuditModelView.Show(doc, owner, issues, logger), settings.AuditCollisionToleranceMm, settings.AuditStructureCollisions);
             new WindowInteropHelper(window).Owner = AcadApp.MainWindow.Handle;
             if (window.ShowDialog() != true || window.SelectedKeys.Count == 0) return;
             var ids = new List<ObjectId>();
@@ -96,7 +96,8 @@ namespace PipingSpecPlugin.Commands
             try
             {
                 var catalog = AuditLineCatalog.Read(doc, logger.Log);
-                var options = new AuditOptions { CollisionToleranceMm = Math.Max(0, PluginSettings.Load().AuditCollisionToleranceMm) };
+                var saved = PluginSettings.Load();
+                var options = new AuditOptions { CollisionToleranceMm = Math.Max(0, saved.AuditCollisionToleranceMm), StructureCollisions = saved.AuditStructureCollisions };
                 foreach (var rule in AuditRules.All) options.Enabled.Add(rule.Id);
                 var snapshot = ReadSnapshot(doc, options, catalog, logger);
                 var issues = AuditRules.Run(snapshot, options);
@@ -114,17 +115,20 @@ namespace PipingSpecPlugin.Commands
             }
         }
 
-        // The tolerance entered in the window is kept for the next run (and
-        // for PSAUDITJSON). Settings that failed to load are not overwritten.
-        static void SaveTolerance(PluginSettings settings, double toleranceMm, RunLogger logger)
+        // The collision tolerance and the structure switch chosen in the window
+        // are kept for the next run (and for PSAUDITJSON). Settings that failed
+        // to load are not overwritten.
+        static void SaveChoices(PluginSettings settings, AuditOptions options, RunLogger logger)
         {
-            if (settings.LoadFailed || settings.AuditCollisionToleranceMm == toleranceMm) return;
+            if (settings.LoadFailed || (settings.AuditCollisionToleranceMm == options.CollisionToleranceMm
+                && settings.AuditStructureCollisions == options.StructureCollisions)) return;
             try
             {
-                settings.AuditCollisionToleranceMm = toleranceMm;
+                settings.AuditCollisionToleranceMm = options.CollisionToleranceMm;
+                settings.AuditStructureCollisions = options.StructureCollisions;
                 settings.Save();
             }
-            catch (System.Exception ex) { logger.Log("Допуск коллизий не сохранён: " + ex.Message); }
+            catch (System.Exception ex) { logger.Log("Настройки коллизий не сохранены: " + ex.Message); }
         }
 
         static AuditSnapshot ReadSnapshot(Document doc, AuditOptions options, AuditLineCatalog catalog, RunLogger logger)

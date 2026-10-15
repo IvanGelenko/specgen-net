@@ -50,7 +50,8 @@ namespace PipingSpecPlugin.Audit
                             : r.Description))),
                         ["SCOPE"] = "Выбранные линии текущего чертежа. " + (options.Enabled.Contains("collisions")
                             ? $"Коллизии проверяются со всеми объектами и загруженными внешними ссылками. Проверено пар: {snapshot.CollisionPairsChecked}. Пересечения деталей, соединённых через объект соединения, не учитываются (не учтено: {snapshot.ConnectedJointsIgnored}). Вставок внешних ссылок: {snapshot.XrefInstancesChecked}; недоступно: {snapshot.XrefInstancesUnavailable}. Используется полная геометрия без учёта XCLIP. "
-                              + (options.CollisionToleranceMm > 0 ? $"Допуск коллизий {options.CollisionToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм: пересечения не глубже допуска не учитываются (не учтено: {snapshot.CollisionsWithinTolerance}). " : "") : "")
+                              + (options.CollisionToleranceMm > 0 ? $"Допуск коллизий {options.CollisionToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм: пересечения не глубже допуска не учитываются (не учтено: {snapshot.CollisionsWithinTolerance}). " : "")
+                              + (options.StructureCollisions ? $"Конструкции проверены и между собой; узлы металлоконструкций (конец элемента в области пересечения) не учитываются (не учтено: {snapshot.StructureJointsIgnored}). " : "") : "")
                             + (options.Enabled.Contains("connections") ? "Соединения через другие DWG не проверяются. Свободные концы могут быть предусмотрены проектом. " : "")
                             + (options.Enabled.Contains("bolts") ? $"Соединений с комплектами болтов в чертеже: {snapshot.Parts.Count(p => p.IsConnector && p.BoltSets.Count > 0)}. " : "")
                             + "Непроверенные случаи не считаются успешной проверкой. Модель при аудите не изменяется."

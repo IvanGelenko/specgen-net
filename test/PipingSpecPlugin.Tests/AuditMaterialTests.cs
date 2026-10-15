@@ -134,6 +134,40 @@ public class AuditMaterialTests
         Assert.Equal("material", issues[^1].RuleId);
     }
 
+    // ---- structures with each other ----------------------------------------
+
+    [Fact] public void BeamRunningIntoAColumnAtItsNodeIsTheFrame()
+    {
+        // Column 200×200 around x = 0; beam axis from the column axis to x = 6000.
+        var overlap = new[] { -100.0, -100, 2900, 100, 100, 3100 };
+        var beamEnds = new[] { new[] { 0.0, 0, 3000 }, new[] { 6000.0, 0, 3000 } };
+        Assert.True(StructureJointPolicy.IsNode(overlap, beamEnds, 1));
+        // Trimmed to the column face: the end lies on the region's face.
+        Assert.True(StructureJointPolicy.IsNode(overlap, new[] { new[] { 100.5, 0, 3000 } }, 1));
+    }
+
+    [Fact] public void MemberPassingThroughMidSpanIsAClash()
+    {
+        // Two beams crossing at mid-span: no axis end in the overlap.
+        var overlap = new[] { 2900.0, -100, 2900, 3100, 100, 3100 };
+        var ends = new[] { new[] { 0.0, 0, 3000 }, new[] { 6000.0, 0, 3000 }, new[] { 3000.0, -3000, 3000 }, new[] { 3000.0, 3000, 3000 } };
+        Assert.False(StructureJointPolicy.IsNode(overlap, ends, 1));
+        Assert.False(StructureJointPolicy.IsNode(overlap, System.Array.Empty<double[]>(), 1));
+        Assert.False(StructureJointPolicy.IsNode(null, ends, 1));
+    }
+
+    [Fact] public void StructureClashesAreShownForSelectedLinesOnlyWhenSwitchedOn()
+    {
+        var snapshot = new AuditSnapshot();
+        snapshot.Parts.Add(Part("P", "Pipe", "09Г2С"));
+        snapshot.GeometryIssues.Add(new AuditIssue { RuleId = "collisions", Severity = "Пересечение", Keys = { "B1", "B2" }, BetweenStructures = true });
+        var options = new AuditOptions { SelectedLines = new HashSet<string> { "L1" } };
+        options.Enabled.Add("collisions");
+        Assert.Single(AuditRules.Run(snapshot, options));
+        options.StructureCollisions = false;
+        Assert.Empty(AuditRules.Run(snapshot, options));
+    }
+
     [Fact] public void JsonReportCarriesTheTolerance()
     {
         var options = new AuditOptions { CollisionToleranceMm = 2.5 };

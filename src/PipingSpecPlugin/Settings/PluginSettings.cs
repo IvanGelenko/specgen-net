@@ -94,6 +94,8 @@ namespace PipingSpecPlugin.Settings
         // PSAUDIT: overlaps no deeper than this (mm) are not clashes; last
         // value entered in the audit window, also used by PSAUDITJSON.
         public double AuditCollisionToleranceMm { get; set; } = 0;
+        // PSAUDIT: clash structures (members, solids, blocks) with each other.
+        public bool AuditStructureCollisions { get; set; } = true;
 
         public string InsulationScope { get; set; } = "proj";
         public string[] InsulationLines { get; set; } = null;

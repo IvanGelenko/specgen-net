@@ -245,15 +245,17 @@ namespace PipingSpecPlugin.Audit
     {
         public string Id => "collisions";
         public string Title => "Коллизии с другими элементами";
-        public string Description => "Пересечения выбранных линий со всеми объектами, включая загруженные внешние ссылки и вложенные вставки. Контакт опоры с деталью, к которой она присоединена, исключается. Детали, соединённые через объект соединения (сварной шов, фланцевое соединение, врезку), пересечением не считаются. Пересечения только изоляции при одинаковом заполненном номере линии игнорируются. Проверяется полная геометрия, независимо от XCLIP. Пересечения не глубже заданного допуска не учитываются.";
+        public string Description => "Пересечения выбранных линий со всеми объектами, включая загруженные внешние ссылки и вложенные вставки. Контакт опоры с деталью, к которой она присоединена, исключается. Детали, соединённые через объект соединения (сварной шов, фланцевое соединение, врезку), пересечением не считаются. Пересечения только изоляции при одинаковом заполненном номере линии игнорируются. Проверяется полная геометрия, независимо от XCLIP. Пересечения не глубже заданного допуска не учитываются. Конструкции (металлоконструкции, 3D-тела, блоки) можно проверить и между собой; узлы металлоконструкций — где в пересечении конец элемента — пересечением не считаются.";
         public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
         {
             if (options.SelectedLines == null) return snapshot.GeometryIssues;
             if (options.SelectedLines.Count == 0) return Array.Empty<AuditIssue>();
             var keys = snapshot.Parts.Where(options.Includes).Select(p => p.Key).ToHashSet();
             // Unsupported obstacle geometry is relevant even if the obstacle is
-            // not on a selected line. Positive pairs must involve a selected part.
-            return snapshot.GeometryIssues.Where(i => i.Severity == "Не проверено" || i.Keys.Any(keys.Contains));
+            // not on a selected line. Positive pairs must involve a selected
+            // part — or be two structures when those are checked too.
+            return snapshot.GeometryIssues.Where(i => i.Severity == "Не проверено" || i.Keys.Any(keys.Contains)
+                || (options.StructureCollisions && i.BetweenStructures));
         }
     }
 }

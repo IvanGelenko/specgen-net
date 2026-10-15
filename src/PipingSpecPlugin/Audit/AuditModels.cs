@@ -11,6 +11,10 @@ namespace PipingSpecPlugin.Audit
         public double WallToleranceMm { get; set; } = 0.01;
         // Overlaps no deeper than this are not clashes (set by the user).
         public double CollisionToleranceMm { get; set; }
+        // Also clash structures (objects that are not Plant parts: structure
+        // members, 3D solids, blocks, xref objects) with each other, not only
+        // with the selected lines.
+        public bool StructureCollisions { get; set; } = true;
 
         // «2», «0,5», «0.5», blank = 0; negative or not a number is refused.
         public static bool TryParseTolerance(string text, out double millimetres)
@@ -150,6 +154,9 @@ namespace PipingSpecPlugin.Audit
         // How bad it is, for the order within a check (bigger first): clash
         // depth or bolt shortfall in mm, wall difference in mm, number of odd
         // parts. null = no measure.
+        // A clash of two structures (no line): shown when structure clashes
+        // are on, whatever lines are selected.
+        public bool BetweenStructures { get; set; }
         public double? Magnitude { get => _magnitude; set => _magnitude = value.HasValue ? Math.Round(value.Value, 3) : null; }
         double? _magnitude;
         public IEnumerable<string> SelectableKeys => SelectionKeys.Count > 0 ? SelectionKeys : Keys;
@@ -171,6 +178,8 @@ namespace PipingSpecPlugin.Audit
         public int ConnectedJointsIgnored { get; set; }
         // Overlaps within AuditOptions.CollisionToleranceMm, not reported.
         public int CollisionsWithinTolerance { get; set; }
+        // Structure members overlapping at a node (StructureJointPolicy).
+        public int StructureJointsIgnored { get; set; }
         public int NonVolumetricCount { get; set; }
         public int XrefInstancesChecked { get; set; }
         public int XrefInstancesUnavailable { get; set; }

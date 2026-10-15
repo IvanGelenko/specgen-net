@@ -15,6 +15,8 @@ namespace PipingSpecPlugin.UI
     {
         readonly Dictionary<string, CheckBox> _choices = new();
         readonly Dictionary<string, CheckBox> _lines = new();
+        readonly CheckBox _structures = new() { Margin = new Thickness(20, 6, 0, 0), Content = new TextBlock { TextWrapping = TextWrapping.Wrap,
+            Text = "Пересечения конструкций между собой (металлоконструкции, 3D-тела, блоки, объекты внешних ссылок); узлы металлоконструкций — где в пересечении конец балки или колонны — не учитываются" } };
         readonly Expander _settings = new() { IsExpanded = true, Margin = new Thickness(0, 8, 0, 0) };
         readonly TextBox _tolerance = new() { Width = 70, Margin = new Thickness(6, 0, 6, 0), VerticalContentAlignment = VerticalAlignment.Center };
         readonly DataGrid _grid = new() { AutoGenerateColumns = false, IsReadOnly = true, CanUserAddRows = false,
@@ -34,8 +36,9 @@ namespace PipingSpecPlugin.UI
         // showInModel: highlight the issues' elements in the drawing and come
         // back (AuditModelView); null hides «Показать в модели».
         public AuditWindow(string drawing, IReadOnlyList<AuditLineChoice> lines, Func<AuditOptions, AuditSnapshot> read,
-            Action<Window, IReadOnlyList<AuditIssue>> showInModel = null, double collisionToleranceMm = 0)
+            Action<Window, IReadOnlyList<AuditIssue>> showInModel = null, double collisionToleranceMm = 0, bool structureCollisions = true)
         {
+            _structures.IsChecked = structureCollisions;
             _tolerance.Text = collisionToleranceMm.ToString("0.###", System.Globalization.CultureInfo.CurrentCulture);
             _showInModel = showInModel;
             if (showInModel == null) _show.Visibility = Visibility.Collapsed;
@@ -86,6 +89,8 @@ namespace PipingSpecPlugin.UI
                     row.ToolTip = "Глубина — наименьший размер габарита области пересечения; для косого пересечения она чуть завышается, поэтому более глубокое пересечение допуск не скроет.";
                     row.SetBinding(IsEnabledProperty, new Binding(nameof(CheckBox.IsChecked)) { Source = check });
                     settings.Children.Add(row);
+                    _structures.SetBinding(IsEnabledProperty, new Binding(nameof(CheckBox.IsChecked)) { Source = check });
+                    settings.Children.Add(_structures);
                 }
             }
             top.Children.Add(_summary);
@@ -139,6 +144,7 @@ namespace PipingSpecPlugin.UI
                     return;
                 }
                 options.CollisionToleranceMm = tolerance;
+                options.StructureCollisions = _structures.IsChecked == true;
                 _run.IsEnabled = false; _show.IsEnabled = false; _select.IsEnabled = false; _export.IsEnabled = false;
                 _grid.ItemsSource = null; _issues = null; _snapshot = null;
                 Mouse.OverrideCursor = Cursors.Wait;
@@ -160,6 +166,7 @@ namespace PipingSpecPlugin.UI
                         $"Из них «Не проверено»: {_issues.Count(i => i.Severity == "Не проверено")}. " +
                         (options.Enabled.Contains("collisions") ? $"Проверено пар: {_snapshot.CollisionPairsChecked}; пересечений деталей, соединённых через объект соединения, не учтено: {_snapshot.ConnectedJointsIgnored}. Вставок внешних ссылок: {_snapshot.XrefInstancesChecked}; недоступно: {_snapshot.XrefInstancesUnavailable}. " : "") +
                         (options.Enabled.Contains("collisions") && options.CollisionToleranceMm > 0 ? $"Допуск коллизий {options.CollisionToleranceMm:0.###} мм: пересечений в пределах допуска не учтено — {_snapshot.CollisionsWithinTolerance}. " : "") +
+                        (options.Enabled.Contains("collisions") && options.StructureCollisions ? $"Конструкции проверены и между собой; узлов металлоконструкций не учтено — {_snapshot.StructureJointsIgnored}. " : "") +
                         (options.Enabled.Contains("bolts") ? $"Соединений с комплектами болтов в чертеже: {_snapshot.Parts.Count(p => p.IsConnector && p.BoltSets.Count > 0)}. " : "") +
                         (_snapshot.Parts.Count == 0 ? "Детали Plant 3D не найдены. " : "") +
                         (_showInModel != null ? "«Показать в модели» (или двойной щелчок по строке) подсвечивает элементы замечания в чертеже, Enter возвращает сюда. " : "") +
@@ -185,6 +192,7 @@ namespace PipingSpecPlugin.UI
             Text = options == null ? "Параметры аудита: линии и проверки"
                 : $"Параметры аудита — линий {options.SelectedLines?.Count ?? _lines.Count} из {_lines.Count}, проверок {options.Enabled.Count} из {_choices.Count}"
                   + (options.Enabled.Contains("collisions") && options.CollisionToleranceMm > 0 ? $", допуск коллизий {options.CollisionToleranceMm:0.###} мм" : "")
+                  + (options.Enabled.Contains("collisions") && options.StructureCollisions ? ", конструкции между собой" : "")
                   + " (щёлкните, чтобы изменить)",
         };
 

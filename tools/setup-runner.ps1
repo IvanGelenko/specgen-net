@@ -21,7 +21,7 @@
 
 .EXAMPLE
   # From an ELEVATED PowerShell (service install needs admin):
-  ./tools/setup-runner.ps1 -Token ALUUB3BANKBYNA6PLUERTZLKDQYAS
+  ./tools/setup-runner.ps1 -Token <TOKEN>
 #>
 [CmdletBinding()]
 param(

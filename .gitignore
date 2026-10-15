@@ -25,6 +25,14 @@ specgen-backup-*/
 # Local tool settings of other assistants
 .codex/
 
+# Local secrets (tokens for MCP servers etc.) — never committed
+.env
+.env.*
+!.env.example
+
+# GitHub Actions runner package (tools/setup-runner.ps1 installs it to C:\actions-runner)
+actions-runner/
+
 # Windows
 Thumbs.db
 desktop.ini

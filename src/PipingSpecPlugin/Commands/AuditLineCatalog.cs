@@ -66,7 +66,7 @@ namespace PipingSpecPlugin.Commands
                             {
                                 if (!subParts.TryGetValue(key, out var list)) subParts[key] = list = new List<(int, AuditSubPart)>();
                                 if (!list.Any(s => s.Row == record.PnPID))
-                                    list.Add((record.PnPID, new AuditSubPart { Spec = record.Spec, Status = record.Status,
+                                    list.Add((record.PnPID, new AuditSubPart { ClassName = record.PnPClassName, Spec = record.Spec, Status = record.Status,
                                         Description = string.IsNullOrWhiteSpace(record.PartSizeLongDesc) ? record.ShortDescription ?? record.PnPClassName : record.PartSizeLongDesc }));
                             }
                             if (hasPrimaryProperties.Contains(key)) continue;

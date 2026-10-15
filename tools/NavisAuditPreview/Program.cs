@@ -27,7 +27,7 @@ class Program
         var window = new NavisAuditWindow(new NavisAuditWindow.Host
         {
             Model = snapshot.Drawing, Lines = lines, Settings = new NavisSettings(),
-            Checks = new[] { "collisions", "wall", "material", "connections" }.Select(id => (id, NavisTexts.Title(id), NavisTexts.Describe(id))).ToList(),
+            Checks = new[] { "collisions", "wall", "material", "slope", "pipelength", "welds", "status", "placeholder", "tags", "connections" }.Select(id => (id, NavisTexts.Title(id), NavisTexts.Describe(id))).ToList(),
             Run = _ => snapshot, Show = (_, __) => { }, Summary = _ => "Пар объектов с пересечением геометрии: 145. ",
         });
         var content = (FrameworkElement)window.Content;

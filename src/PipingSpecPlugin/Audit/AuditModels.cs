@@ -104,10 +104,15 @@ namespace PipingSpecPlugin.Audit
         // A straight pipe's two ends (any units, Z up) for its slope; null
         // when not known — the rule then takes two ports with a position.
         public List<double[]> Axis { get; set; }
+        // Where a connection object (weld) is, in the snapshot's units; null —
+        // the middle of its ports with a position.
+        public double[] Position { get; set; }
     }
 
     public sealed class AuditSubPart
     {
+        // Plant class of the sub-part: Buttweld, TapWeld, Gasket, BoltSet…
+        public string ClassName { get; set; }
         public string Description { get; set; }
         public string Spec { get; set; }
         public string Status { get; set; }
@@ -216,8 +221,8 @@ namespace PipingSpecPlugin.Audit
     {
         // Add a rule here: the options dialog and report use this same registry.
         public static IReadOnlyList<IAuditRule> All { get; } = new IAuditRule[]
-        { new WallThicknessRule(), new MaterialRule(), new SlopeRule(), new StatusRule(), new ValveTagRule(), new PlaceholderSpecRule(),
-          new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
+        { new WallThicknessRule(), new MaterialRule(), new SlopeRule(), new PipeLengthRule(), new WeldSpacingRule(), new StatusRule(), new ValveTagRule(),
+          new PlaceholderSpecRule(), new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
 
         public static List<AuditIssue> Run(AuditSnapshot snapshot, AuditOptions options)
         {
@@ -238,7 +243,7 @@ namespace PipingSpecPlugin.Audit
 
         // The checks in the order of the results (window, JSON, report):
         // physical clashes first, the data that could not be read last.
-        static readonly string[] GroupOrder = { "collisions", "bolts", "wall", "slope", "material", "status", "placeholder", "tags", "connections", "read" };
+        static readonly string[] GroupOrder = { "collisions", "bolts", "welds", "pipelength", "wall", "slope", "material", "status", "placeholder", "tags", "connections", "read" };
 
         public static string GroupTitle(string ruleId) =>
             ruleId == "read" ? "Чтение данных" : All.FirstOrDefault(r => r.Id == ruleId)?.Title ?? ruleId ?? "Прочее";

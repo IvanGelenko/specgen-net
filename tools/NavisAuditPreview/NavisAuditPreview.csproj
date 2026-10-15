@@ -12,6 +12,7 @@
     <Compile Include="../../src/PipingSpecPlugin/Audit/AuditRules.cs" Link="AuditRules.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/BoltLengthRule.cs" Link="BoltLengthRule.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/MaterialRule.cs" Link="MaterialRule.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Audit/LineDataRules.cs" Link="LineDataRules.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/AuditDocxReport.cs" Link="AuditDocxReport.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/ConnectedJointPolicy.cs" Link="ConnectedJointPolicy.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/InsulationJointPolicy.cs" Link="InsulationJointPolicy.cs" />

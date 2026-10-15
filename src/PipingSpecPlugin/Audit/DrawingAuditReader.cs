@@ -27,8 +27,9 @@ namespace PipingSpecPlugin.Audit
             var bolts = options.Enabled.Contains("bolts");
             // The slope needs the pipes' port positions; a connection object's
             // line comes from the parts it joins (status, placeholder).
-            var slope = options.Enabled.Contains("slope");
-            var subParts = options.Enabled.Contains("placeholder") || options.Enabled.Contains("status");
+            var welds = options.Enabled.Contains("welds");
+            var slope = options.Enabled.Contains("slope") || options.Enabled.Contains("pipelength") || welds;
+            var subParts = options.Enabled.Contains("placeholder") || options.Enabled.Contains("status") || welds;
             var connections = options.Enabled.Contains("connections") || collision || options.Enabled.Contains("wall") || bolts || slope || subParts;
             snapshot.DrawingMmPerUnit = DrawingMmPerUnit(database);
             var shapes = new List<Shape>();
@@ -362,7 +363,7 @@ namespace PipingSpecPlugin.Audit
                     if (row <= 0 || row == own || !rows.Add(row)) continue;
                     var values = Properties(dlm, row);
                     string Get(string name) => values.TryGetValue(name, out var v) && !string.IsNullOrWhiteSpace(v) ? v.Trim() : null;
-                    item.SubParts.Add(new AuditSubPart { Description = Get("PartSizeLongDesc") ?? Get("ShortDescription") ?? Get("PnPClassName"),
+                    item.SubParts.Add(new AuditSubPart { ClassName = Get("PnPClassName"), Description = Get("PartSizeLongDesc") ?? Get("ShortDescription") ?? Get("PnPClassName"),
                         Spec = Get("Spec"), Status = Get("Status") });
                 }
             }

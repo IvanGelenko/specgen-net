@@ -104,7 +104,10 @@ namespace PipingSpecPlugin.UI
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             buttons.Children.Add(_show); buttons.Children.Add(_select); buttons.Children.Add(_export); buttons.Children.Add(_run);
             bottom.Children.Add(buttons);
-            DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
+            // The buttons at the very top (the user's request): always in
+            // reach, whatever the parameters and the results take below.
+            bottom.Margin = new Thickness(0, 0, 0, 10);
+            DockPanel.SetDock(bottom, Dock.Top); root.Children.Insert(0, bottom);
             // «Описание» takes the remaining width: with fixed widths the table
             // was wider than the window and «Элементы» sat behind a scroll bar.
             // The check is the group header (see GroupStyle), not a column.

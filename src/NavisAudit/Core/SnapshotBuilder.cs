@@ -158,6 +158,7 @@ namespace NavisAudit.Core
             foreach (var fastener in PlantProps.Fasteners(item).Values)
                 part.SubParts.Add(new AuditSubPart
                 {
+                    ClassName = PlantProps.First(fastener, new[] { "Имя класса", "ClassName", "Class Name" }),
                     Description = PlantProps.First(fastener, PlantProps.DescriptionNames),
                     Spec = PlantProps.First(fastener, PlantProps.SpecNames),
                     Status = PlantProps.First(fastener, PlantProps.StatusNames),
@@ -314,6 +315,9 @@ namespace NavisAudit.Core
                     Link(connector, parts[all[i].B]);
                     if (all[i].Tap) verified.Add(i);
                 }
+                // Where the joint is (weld spacing): its centre of gravity, else
+                // the port-to-port point it was tied to.
+                connector.Position = cog ?? (hits.Count > 0 ? all[hits.First()].At : null);
                 connector.ConnectionsRead = true;
             }
             // A stub-in weld without a position (17 of 57 in the 0873 model):
@@ -339,6 +343,7 @@ namespace NavisAudit.Core
                     var weld = welds[n++];
                     Link(weld, parts[all[i].A]);
                     Link(weld, parts[all[i].B]);
+                    weld.Position = weld.Position ?? all[i].At;
                     verified.Add(i);
                 }
             }

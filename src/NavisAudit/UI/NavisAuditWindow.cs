@@ -112,7 +112,10 @@ namespace NavisAudit.UI
             var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
             buttons.Children.Add(_show); buttons.Children.Add(_export); buttons.Children.Add(_run);
             bottom.Children.Add(buttons);
-            DockPanel.SetDock(bottom, Dock.Bottom); root.Children.Add(bottom);
+            // The buttons at the very top (the user's request): always in
+            // reach, whatever the parameters and the results take below.
+            bottom.Margin = new Thickness(0, 0, 0, 10);
+            DockPanel.SetDock(bottom, Dock.Top); root.Children.Insert(0, bottom);
             foreach (var (label, property, width) in new[] { ("Результат", "Severity", 110d), ("Линия", "Line", 140d), ("Описание", "Message", 0d), ("Источник", "Sources", 170d), ("Элементы", "Keys", 120d) })
             {
                 var style = new Style(typeof(TextBlock));

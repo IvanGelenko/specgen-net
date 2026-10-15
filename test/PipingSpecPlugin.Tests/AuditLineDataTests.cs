@@ -92,6 +92,85 @@ public class AuditLineDataTests
         Assert.Empty(Run(Of(tapped, Pipe("A", 0)), "slope"));
     }
 
+    // ---- pipe length -------------------------------------------------------
+
+    static AuditSnapshot Mm(params AuditPart[] parts)
+    {
+        var snapshot = Of(parts);
+        snapshot.DrawingMmPerUnit = 1;
+        return snapshot;
+    }
+
+    static AuditPart Straight(string key, double length, string line = "L1")
+    {
+        var pipe = Part(key, "Pipe", line);
+        pipe.Axis = new List<double[]> { new[] { 0.0, 0, 0 }, new[] { length, 0, 0 } };
+        return pipe;
+    }
+
+    [Fact] public void APipeShorterThan100MmIsNamed()
+    {
+        var issue = Assert.Single(Run(Mm(Straight("A", 60), Straight("B", 100), Straight("C", 2500)), "pipelength"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "A" }, issue.Keys);
+        Assert.Contains("длина 60 мм", issue.Message);
+        Assert.Equal(40, issue.Magnitude);
+    }
+
+    [Fact] public void PipeLengthNeedsTheDrawingUnits()
+    {
+        var snapshot = Of(Straight("A", 60));       // INSUNITS unknown
+        Assert.Equal("Не проверено", Assert.Single(Run(snapshot, "pipelength")).Severity);
+        var inches = Of(Straight("B", 3)); inches.DrawingMmPerUnit = 25.4;   // 76.2 mm
+        Assert.Single(Run(inches, "pipelength"));
+    }
+
+    // ---- weld spacing ------------------------------------------------------
+
+    static AuditPart Weld(string key, double x, params AuditPart[] joins)
+    {
+        var weld = Part(key, "P3dConnector", null); weld.IsConnector = true;
+        weld.SubParts.Add(new AuditSubPart { ClassName = "Buttweld", Description = "Buttweld" });
+        weld.Position = new[] { x, 0, 0 };
+        foreach (var part in joins) { weld.Neighbours.Add(part.Key); part.Neighbours.Add(weld.Key); }
+        return weld;
+    }
+
+    [Fact] public void WeldsOnAShortPipeAreTooClose()
+    {
+        var pipe = Straight("P", 80);
+        var issue = Assert.Single(Run(Mm(pipe, Weld("W1", 0, pipe), Weld("W2", 80, pipe)), "welds"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "W1", "P", "W2" }, issue.Keys);
+        Assert.Contains("80 мм между центрами", issue.Message);
+        Assert.Equal("L1", issue.Line);
+    }
+
+    [Fact] public void AStubInNextToAButtWeldIsTooClose()
+    {
+        var header = Straight("H", 3000);
+        var tap = Weld("T", 60, header); tap.SubParts[0].ClassName = "TapWeld";
+        var issues = Run(Mm(header, Weld("W1", 0, header), tap, Weld("W2", 3000, header)), "welds");
+        Assert.Equal(new[] { "H", "T", "W1" }, Assert.Single(issues).Keys.OrderBy(k => k));
+    }
+
+    [Fact] public void WeldsAtTheEndsOfAFittingAreNotChecked()
+    {
+        // A DN 50 tee: its end welds 67 mm apart by the factory (0873 model).
+        var tee = Part("T", "Tee");
+        Assert.Empty(Run(Mm(tee, Weld("W1", 0, tee), Weld("W2", 67, tee), Weld("W3", 34, tee)), "welds"));
+    }
+
+    [Fact] public void FlangedJointsAreNotWeldsAndFarWeldsPass()
+    {
+        var pipe = Straight("P", 80);
+        var flanged = Weld("F", 80, pipe); flanged.SubParts.Clear();
+        flanged.SubParts.Add(new AuditSubPart { ClassName = "Gasket", Description = "Прокладка" });
+        Assert.Empty(Run(Mm(pipe, Weld("W1", 0, pipe), flanged), "welds"));
+        var longPipe = Straight("L", 500);
+        Assert.Empty(Run(Mm(longPipe, Weld("A", 0, longPipe), Weld("B", 500, longPipe)), "welds"));
+    }
+
     // ---- status ------------------------------------------------------------
 
     [Fact] public void OneStatusOnTheLinePassesWhateverTheLanguage()

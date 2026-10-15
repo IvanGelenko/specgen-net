@@ -17,7 +17,7 @@ namespace NavisAudit.Plugins
 {
     // «Аудит трубопроводов» on the Add-ins tab.
     [Plugin("NavisAudit", "PSPG", DisplayName = "Аудит трубопроводов",
-        ToolTip = "Аудит трубопроводов Plant 3D в модели Navisworks: коллизии, толщины стенок, материал, уклон, статус, детали из PlaceHolder, идентификаторы арматуры, соединения")]
+        ToolTip = "Аудит трубопроводов Plant 3D в модели Navisworks: коллизии, толщины стенок, материал, уклон, длина труб, расстояние между швами, статус, детали из PlaceHolder, идентификаторы арматуры, соединения")]
     [AddInPlugin(AddInLocation.AddIn, Icon = "Images\\Audit16.png", LargeIcon = "Images\\Audit32.png")]
     public sealed class AuditPlugin : AddInPlugin
     {

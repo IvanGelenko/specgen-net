@@ -136,6 +136,114 @@ namespace PipingSpecPlugin.Audit
         }
     }
 
+    // A straight pipe piece is not shorter than 100 mm.
+    public sealed class PipeLengthRule : IAuditRule
+    {
+        public const double MinMm = 100;
+
+        public string Id => "pipelength";
+        public string Title => "Длина прямых участков труб";
+        public string Description => "Прямая труба не короче 100 мм. Длина — между концами трубы в модели.";
+
+        public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
+        {
+            var pipes = snapshot.Parts.Where(p => string.Equals((p.ClassName ?? "").Trim(), "Pipe", StringComparison.OrdinalIgnoreCase) && options.Includes(p)).ToList();
+            if (pipes.Count == 0) yield break;
+            var mm = snapshot.DrawingMmPerUnit;
+            var unknown = new List<AuditPart>();
+            foreach (var pipe in pipes)
+            {
+                var length = LengthMm(pipe, mm);
+                if (!length.HasValue) { unknown.Add(pipe); continue; }
+                if (length.Value >= MinMm - 0.05) continue;
+                var issue = AuditRules.Issue(Id, Title, "Несоответствие",
+                    $"{AuditRules.NameOf(pipe)}: длина {length.Value:0.#} мм — меньше {MinMm:0} мм.", new[] { pipe });
+                issue.Magnitude = MinMm - length.Value;
+                yield return issue;
+            }
+            foreach (var line in unknown.GroupBy(p => p.LineKey ?? AuditOptions.NoLine, StringComparer.OrdinalIgnoreCase))
+                yield return AuditRules.Issue(Id, Title, "Не проверено", (mm.HasValue ? "Не определены концы труб" : "Единицы чертежа (INSUNITS) не заданы")
+                    + $" — длина не вычислена ({line.Count()}): " + string.Join(", ", line.Select(AuditRules.NameOf)), line);
+        }
+
+        public static double? LengthMm(AuditPart pipe, double? mmPerUnit)
+        {
+            var ends = SlopeRule.Ends(pipe.Axis ?? pipe.Ports.Where(p => p.Position != null).Select(p => p.Position).ToList());
+            if (ends == null || !mmPerUnit.HasValue) return null;
+            return Geometry.Distance(ends[0], ends[1]) * mmPerUnit.Value;
+        }
+    }
+
+    // Neighbouring welds are at least 100 mm apart: the welds on one pipe —
+    // its two ends, a stub-in next to a butt weld. Measured between the
+    // welds' centres, along the pipe's axis. The welds at the ends of a
+    // tee, elbow or reducer are as close as the factory fitting makes them
+    // (a DN 50 tee: 67 mm) — every one was a remark (39 in the 0873
+    // Navisworks model), so fittings are not checked.
+    public sealed class WeldSpacingRule : IAuditRule
+    {
+        public const double MinMm = 100;
+
+        public string Id => "welds";
+        public string Title => "Расстояние между сварными швами";
+        public string Description => "Между соседними сварными швами на одной трубе — не менее 100 мм (между центрами швов, по оси трубы): швы на концах короткой трубы, врезка рядом со стыковым швом. Швы на концах отводов, тройников и переходов не проверяются — их расстояние задано заводской деталью.";
+
+        public static bool IsWeld(AuditPart part) => part.IsConnector && part.SubParts.Any(s =>
+            (s.ClassName ?? "").IndexOf("Weld", StringComparison.OrdinalIgnoreCase) >= 0
+            || (s.Description ?? "").IndexOf("weld", StringComparison.OrdinalIgnoreCase) >= 0
+            || (s.Description ?? "").IndexOf("сварн", StringComparison.OrdinalIgnoreCase) >= 0);
+
+        // The weld's centre: its own position, else the middle of its ports.
+        public static double[] Centre(AuditPart weld)
+        {
+            if (weld.Position != null && weld.Position.Length == 3) return weld.Position;
+            var points = weld.Ports.Where(p => p.Position != null && p.Position.Length == 3).Select(p => p.Position).ToList();
+            if (points.Count == 0) return null;
+            return new[] { points.Average(p => p[0]), points.Average(p => p[1]), points.Average(p => p[2]) };
+        }
+
+        public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
+        {
+            var byKey = LineData.Index(snapshot);
+            var mm = snapshot.DrawingMmPerUnit;
+            var reported = new HashSet<string>(StringComparer.Ordinal);
+            var unknown = new Dictionary<string, AuditPart>(StringComparer.Ordinal);
+            foreach (var part in snapshot.Parts.Where(p => string.Equals((p.ClassName ?? "").Trim(), "Pipe", StringComparison.OrdinalIgnoreCase) && options.Includes(p)))
+            {
+                var welds = part.Neighbours.Select(k => byKey.TryGetValue(k, out var w) ? w : null).Where(w => w != null && IsWeld(w))
+                    .GroupBy(w => w.Key).Select(g => g.First()).OrderBy(w => w.Key, StringComparer.Ordinal).ToList();
+                if (welds.Count < 2) continue;
+                foreach (var weld in welds.Where(w => Centre(w) == null || !mm.HasValue)) unknown[weld.Key] = weld;
+                var placed = welds.Where(w => Centre(w) != null).ToList();
+                if (!mm.HasValue) continue;
+                for (int i = 0; i < placed.Count; i++)
+                    for (int j = i + 1; j < placed.Count; j++)
+                    {
+                        var distance = Geometry.Distance(Centre(placed[i]), Centre(placed[j])) * mm.Value;
+                        if (distance >= MinMm - 0.05 || !reported.Add(placed[i].Key + "\n" + placed[j].Key)) continue;
+                        var issue = AuditRules.Issue(Id, Title, "Несоответствие",
+                            $"Сварные швы [{placed[i].Key}] и [{placed[j].Key}] на трубе {AuditRules.NameOf(part)}: {distance:0.#} мм между центрами — меньше {MinMm:0} мм.",
+                            new[] { placed[i], part, placed[j] });
+                        issue.Magnitude = MinMm - distance;
+                        issue.Line = part.LineLabel;
+                        yield return issue;
+                    }
+            }
+            if (unknown.Count > 0)
+                yield return AuditRules.Issue(Id, Title, "Не проверено", (mm.HasValue ? "Не определено положение сварных швов" : "Единицы чертежа (INSUNITS) не заданы")
+                    + $" — расстояние не вычислено ({unknown.Count}): " + string.Join(", ", unknown.Keys.OrderBy(k => k, StringComparer.Ordinal).Select(k => $"[{k}]")), unknown.Values);
+        }
+    }
+
+    static class Geometry
+    {
+        public static double Distance(double[] a, double[] b)
+        {
+            double dx = a[0] - b[0], dy = a[1] - b[1], dz = a[2] - b[2];
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+    }
+
     // One status for every element of a line (pipes, fittings, valves,
     // supports, the line's welds and flanged joints).
     public sealed class StatusRule : IAuditRule

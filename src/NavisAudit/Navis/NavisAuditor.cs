@@ -14,7 +14,7 @@ namespace NavisAudit.Navis
         // The checks offered in Navisworks: the Plant 3D rules that need no
         // more than the model gives (no bolts: the flange faces and ports of
         // a joint are not in the model's properties).
-        public static readonly string[] Checks = { "collisions", "wall", "material", "slope", "status", "placeholder", "tags", "connections" };
+        public static readonly string[] Checks = { "collisions", "wall", "material", "slope", "pipelength", "welds", "status", "placeholder", "tags", "connections" };
 
         public Document Document { get; }
         public ScanResult Scan { get; private set; }

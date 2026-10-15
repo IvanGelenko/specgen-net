@@ -27,9 +27,12 @@ namespace PipingSpecPlugin.Audit
         {
             var byKey = new Dictionary<string, AuditPart>(StringComparer.Ordinal);
             foreach (var p in snapshot.Parts) byKey.TryAdd(p.Key, p);
+            // Links stored on the other side, indexed once: scanning every
+            // part's links per connector grew with the square of the model.
+            var reverse = Reverse(snapshot.Parts);
             foreach (var connector in snapshot.Parts.Where(p => p.IsConnector && (p.BoltSets.Count > 0 || p.BoltsError != null)))
             {
-                var faces = Faces(connector, snapshot.Parts);
+                var faces = Faces(connector, reverse);
                 // A joint is on the selected lines if the connector or a part
                 // it joins is (connectors often have no line number).
                 if (!options.Includes(connector) && !faces.Any(f => byKey.TryGetValue(f.Key, out var p) && options.Includes(p))) continue;
@@ -42,7 +45,11 @@ namespace PipingSpecPlugin.Audit
                     continue;
                 }
                 var caveats = new List<string>();
-                var stack = Stack(connector, faces, byKey, snapshot, parts, caveats, out var why);
+                var stack = Stack(connector, faces, byKey, snapshot, reverse, parts, caveats, out var why, out var twin);
+                // The same sets on both sides of a spectacle blind: one remark
+                // (from the joint with the lower key) naming both joints.
+                if (twin != null && string.CompareOrdinal(twin.Key, connector.Key) < 0 && SameSets(twin, connector)) continue;
+                if (twin != null && SameSets(twin, connector)) name = $"Соединения [{connector.Key}] и [{twin.Key}]";
                 foreach (var set in connector.BoltSets)
                 {
                     var issue = Check(set, stack, why, caveats, name, parts);
@@ -95,10 +102,14 @@ namespace PipingSpecPlugin.Audit
 
         // Thicknesses clamped by the set, mm. null with the reason when the
         // joint cannot be measured.
+        // twin: the joint on the far side of a wafer / blind when it carries
+        // bolt sets too.
         static List<(string What, double Mm)> Stack(AuditPart connector, List<(string Key, string Port)> faces,
-            IReadOnlyDictionary<string, AuditPart> byKey, AuditSnapshot snapshot, List<AuditPart> parts, List<string> caveats, out string why)
+            IReadOnlyDictionary<string, AuditPart> byKey, AuditSnapshot snapshot, ILookup<string, (AuditPart Part, AuditLink Link)> reverse,
+            List<AuditPart> parts, List<string> caveats, out string why, out AuditPart twin)
         {
             why = null;
+            twin = null;
             if (!connector.ConnectionsRead) { why = "соединения не прочитаны" + (string.IsNullOrWhiteSpace(connector.ConnectionsError) ? "." : ": " + connector.ConnectionsError.Trim()); return null; }
             if (faces.Count != 2) { why = $"соединение связывает {faces.Count} дет. вместо двух — пакет не определён."; return null; }
             var stack = new List<(string, double)>();
@@ -118,7 +129,8 @@ namespace PipingSpecPlugin.Audit
                     // gaskets; the set runs from the flange on this side to
                     // the flange on the far side.
                     if (end == null) { why = $"порт детали {AuditRules.NameOf(part)} у соединения не найден."; return null; }
-                    if (!Wafer(part, end, byKey, snapshot, parts, stack, flanges, caveats, out why)) return null;
+                    if (!Wafer(part, end, byKey, snapshot, reverse, parts, stack, flanges, caveats, out why, out var far)) return null;
+                    if (far.BoltSets.Count > 0) twin = far;
                     continue;
                 }
                 var thickness = Flange(part, end, out var reason);
@@ -152,20 +164,21 @@ namespace PipingSpecPlugin.Audit
         // Adds the body and the far gasket to the stack, the far flange to
         // flanges (its thickness may have to be estimated, see Stack).
         static bool Wafer(AuditPart wafer, AuditPort near, IReadOnlyDictionary<string, AuditPart> byKey, AuditSnapshot snapshot,
-            List<AuditPart> parts, List<(string, double)> stack, List<(AuditPart Part, AuditPort End, double? Mm, string Why)> flanges,
-            List<string> caveats, out string why)
+            ILookup<string, (AuditPart Part, AuditLink Link)> reverse, List<AuditPart> parts, List<(string, double)> stack,
+            List<(AuditPart Part, AuditPort End, double? Mm, string Why)> flanges, List<string> caveats, out string why, out AuditPart joint)
         {
+            joint = null;
             var name = AuditRules.NameOf(wafer);
             var far = wafer.Ports.Where(p => !string.Equals(p.Name, near.Name, StringComparison.OrdinalIgnoreCase)).ToList();
             if (far.Count != 1) { why = $"у межфланцевой детали {name} {far.Count + 1} портов — пакет не определён."; return false; }
             var body = Distance(near, far[0], snapshot.DrawingMmPerUnit, out why);
             if (!body.HasValue) { why = $"{name}: {why}"; return false; }
             stack.Add(($"корпус [{wafer.Key}]", body.Value));
-            var other = LinksOf(wafer, snapshot.Parts).Where(l => string.Equals(l.Port, far[0].Name, StringComparison.OrdinalIgnoreCase))
+            var other = LinksOf(wafer, reverse).Where(l => string.Equals(l.Port, far[0].Name, StringComparison.OrdinalIgnoreCase))
                 .Select(l => byKey.GetValueOrDefault(l.OtherKey)).Where(p => p != null).ToList();
             if (other.Count != 1 || !other[0].IsConnector)
             { why = $"за межфланцевой деталью {name} не найдено фланцевое соединение — пакет не определён."; return false; }
-            var joint = other[0];
+            joint = other[0];
             parts.Add(joint);
             // Plant 3D puts a set on each side of a spectacle blind
             // (audit-model.dwg); the flange holes take one stud through it all.
@@ -174,7 +187,7 @@ namespace PipingSpecPlugin.Audit
             var gap = Gap(joint, snapshot.DrawingMmPerUnit, out why);
             if (!gap.HasValue) return false;
             stack.Add(($"прокладка [{joint.Key}]", gap.Value));
-            var beyond = Faces(joint, snapshot.Parts).Where(f => f.Key != wafer.Key).ToList();
+            var beyond = Faces(joint, reverse).Where(f => f.Key != wafer.Key).ToList();
             if (beyond.Count != 1 || !byKey.TryGetValue(beyond[0].Key, out var flange))
             { why = $"за межфланцевой деталью {name} фланец не найден — пакет не определён."; return false; }
             parts.Add(flange);
@@ -214,13 +227,22 @@ namespace PipingSpecPlugin.Audit
             return Math.Sqrt(dx * dx + dy * dy + dz * dz) * mmPerUnit.Value;
         }
 
+        static bool SameSets(AuditPart a, AuditPart b) =>
+            a.BoltSets.Count == b.BoltSets.Count && a.BoltSets.Zip(b.BoltSets).All(p =>
+                string.Equals((p.First.LengthRaw ?? "").Trim(), (p.Second.LengthRaw ?? "").Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals((p.First.Size ?? "").Trim(), (p.Second.Size ?? "").Trim(), StringComparison.OrdinalIgnoreCase));
+
+        // Every part's links indexed by the part they lead to.
+        internal static ILookup<string, (AuditPart Part, AuditLink Link)> Reverse(IEnumerable<AuditPart> all) =>
+            all.SelectMany(o => o.Links.Select(l => (Part: o, Link: l))).ToLookup(t => t.Link.OtherKey ?? "", StringComparer.Ordinal);
+
         // The parts a part is joined to, with their port at the joint.
-        internal static List<(string Key, string Port)> Faces(AuditPart part, IEnumerable<AuditPart> all) =>
-            LinksOf(part, all).Select(l => (l.OtherKey, l.OtherPort)).ToList();
+        internal static List<(string Key, string Port)> Faces(AuditPart part, ILookup<string, (AuditPart Part, AuditLink Link)> reverse) =>
+            LinksOf(part, reverse).Select(l => (l.OtherKey, l.OtherPort)).ToList();
 
         // This part's links seen from its side. Native connections may be
         // stored on either side only, so the others' links are turned round.
-        internal static List<AuditLink> LinksOf(AuditPart part, IEnumerable<AuditPart> all)
+        internal static List<AuditLink> LinksOf(AuditPart part, ILookup<string, (AuditPart Part, AuditLink Link)> reverse)
         {
             var links = new List<AuditLink>();
             void Add(string port, string key, string otherPort)
@@ -231,8 +253,7 @@ namespace PipingSpecPlugin.Audit
                 links.Add(new AuditLink { Port = port, OtherKey = key, OtherPort = otherPort });
             }
             foreach (var link in part.Links) Add(link.Port, link.OtherKey, link.OtherPort);
-            foreach (var other in all)
-                foreach (var link in other.Links.Where(l => l.OtherKey == part.Key)) Add(link.OtherPort, other.Key, link.Port);
+            foreach (var (other, link) in reverse[part.Key ?? ""]) Add(link.OtherPort, other.Key, link.Port);
             return links;
         }
 

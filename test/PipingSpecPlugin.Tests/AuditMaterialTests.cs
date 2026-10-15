@@ -50,6 +50,12 @@ public class AuditMaterialTests
     [InlineData("09Г2C", "09Г2С")]          // Latin C in a Russian grade
     [InlineData(" 12х18н10т ", "12Х18Н10Т")]
     [InlineData("AISI 321", "AISI321")]     // no Cyrillic: Latin kept
+    [InlineData("20 ГОСТ 1050-2013", "20")]  // the standard is not the grade
+    [InlineData("Сталь 09Г2С ГОСТ 19281-2014", "09Г2С")]
+    [InlineData("Ст.20", "20")]               // quality steel 20
+    [InlineData("Ст20", "20")]
+    [InlineData("Ст3сп", "СТ3СП")]            // ordinary-quality grade kept
+    [InlineData("ВСт3пс", "ВСТ3ПС")]
     public void MaterialsAreNormalised(string raw, string expected)
         => Assert.Equal(expected, MaterialRule.Normalize(raw));
 
@@ -132,6 +138,19 @@ public class AuditMaterialTests
         var issues = AuditRules.Run(snapshot, options);
         Assert.Equal(new double?[] { 9, 1, 1 }, issues.Select(i => i.Magnitude));
         Assert.Equal("material", issues[^1].RuleId);
+    }
+
+    [Fact] public void PipesWithoutALineNumberAreOneRemarkNotOnePerPipe()
+    {
+        var snapshot = new AuditSnapshot();
+        for (int i = 0; i < 5; i++)
+            snapshot.Parts.Add(new AuditPart { Key = "N" + i, ClassName = "Pipe", IsPipeOrElbow = true, Diameter = "50", WallRaw = "4", WallMm = 4, LineLabel = AuditOptions.NoLineLabel });
+        var options = new AuditOptions();
+        options.Enabled.Add("wall");
+        var issue = Assert.Single(AuditRules.Run(snapshot, options));
+        Assert.Equal("Не проверено", issue.Severity);
+        Assert.Equal(5, issue.Keys.Count);
+        Assert.Contains("5 труб / отводов", issue.Message);
     }
 
     // ---- structures with each other ----------------------------------------

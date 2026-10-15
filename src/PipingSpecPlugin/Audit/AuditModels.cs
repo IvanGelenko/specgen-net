@@ -151,12 +151,12 @@ namespace PipingSpecPlugin.Audit
         // collision the overlap of the two parts' boxes («Показать в модели»
         // zooms there); null when the place is just the elements themselves.
         public double[] Bounds { get; set; }
-        // How bad it is, for the order within a check (bigger first): clash
-        // depth or bolt shortfall in mm, wall difference in mm, number of odd
-        // parts. null = no measure.
         // A clash of two structures (no line): shown when structure clashes
         // are on, whatever lines are selected.
         public bool BetweenStructures { get; set; }
+        // How bad it is, for the order within a check (bigger first): clash
+        // depth or bolt shortfall in mm, wall difference in mm, number of odd
+        // parts. null = no measure.
         public double? Magnitude { get => _magnitude; set => _magnitude = value.HasValue ? Math.Round(value.Value, 3) : null; }
         double? _magnitude;
         public IEnumerable<string> SelectableKeys => SelectionKeys.Count > 0 ? SelectionKeys : Keys;

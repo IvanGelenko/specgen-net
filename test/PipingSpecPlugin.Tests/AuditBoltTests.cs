@@ -135,10 +135,18 @@ public class AuditBoltTests
         // Plant 3D placed a set on each side (audit-model.dwg): each is held
         // against the whole stack, a shortfall only asks to check the scheme.
         c2.BoltSets.Add(new AuditBoltSet { LengthRaw = "90", Size = "М16", Description = "Шпилька" });
+        // The same sets on both sides: one remark naming both joints.
+        var issue = Assert.Single(Run(snapshot));
+        Assert.Equal("Проверить", issue.Severity);
+        Assert.Contains("по обе стороны", issue.Message);
+        Assert.Contains("Соединения [C1] и [C2]", issue.Message);
+        Assert.Contains("C2", issue.Keys);
+        // Different sets: each side is its own remark.
+        c2.BoltSets[0].LengthRaw = "85";
         var issues = Run(snapshot);
         Assert.Equal(2, issues.Count);
         Assert.All(issues, i => Assert.Equal("Проверить", i.Severity));
-        Assert.All(issues, i => Assert.Contains("по обе стороны", i.Message));
+        c2.BoltSets[0].LengthRaw = "90";
         c1.BoltSets[0].LengthRaw = c2.BoltSets[0].LengthRaw = "100";
         Assert.Empty(Run(snapshot));
         // A valve beyond the blind without FlangeThickness: flange A stands in.

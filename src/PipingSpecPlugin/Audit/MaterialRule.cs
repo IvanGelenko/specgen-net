@@ -59,10 +59,15 @@ namespace PipingSpecPlugin.Audit
 
         // «Сталь 20» = «20», case and spacing ignored, Latin look-alikes in a
         // Russian grade read as Cyrillic («09Г2C» with a Latin C = «09Г2С»).
+        // A trailing Russian standard is not part of the grade («20 ГОСТ
+        // 1050-2013» = «20»); «Ст.20» / «Ст20» is quality steel 20, while
+        // «Ст3», «ВСт3пс» (one digit) are other, ordinary-quality grades.
         public static string Normalize(string material)
         {
             var text = Regex.Replace((material ?? "").Trim(), @"\s+", " ");
+            text = Regex.Replace(text, @"\s+(ГОСТ|ТУ|ОСТ|СТО)(\s|$).*$", "", RegexOptions.IgnoreCase);
             text = Regex.Replace(text, @"^сталь\s+", "", RegexOptions.IgnoreCase);
+            text = Regex.Replace(text, @"^ст\.?\s*(\d{2}[^\d]?.*)$", "$1", RegexOptions.IgnoreCase);
             text = text.ToUpperInvariant();
             if (Regex.IsMatch(text, @"[Ѐ-ӿ]"))
             {

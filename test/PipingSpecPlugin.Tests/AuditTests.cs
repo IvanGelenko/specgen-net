@@ -127,8 +127,10 @@ namespace PipingSpecPlugin.Tests
         {
             var snapshot = new AuditSnapshot(); snapshot.Parts.Add(Part("A", line: null)); snapshot.Parts.Add(Part("B", line: null));
             var options = Enabled("wall"); options.SelectedLines = new System.Collections.Generic.HashSet<string> { AuditOptions.NoLine };
-            var issues = AuditRules.Run(snapshot, options);
-            Assert.Equal(2, issues.Count); Assert.All(issues, i => Assert.Equal("Не проверено", i.Severity));
+            var issue = Assert.Single(AuditRules.Run(snapshot, options));
+            // Not compared as one pipeline: one «Не проверено» for both, no mismatch.
+            Assert.Equal("Не проверено", issue.Severity);
+            Assert.Equal(new[] { "A", "B" }, issue.Keys);
         }
         [Fact]
         public void SelectedLineClashesWithUnselectedLineAreRetained()

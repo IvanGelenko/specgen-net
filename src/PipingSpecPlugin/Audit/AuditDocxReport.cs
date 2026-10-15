@@ -46,7 +46,7 @@ namespace PipingSpecPlugin.Audit
                         ["LINES"] = lines.Count == 0 ? "Линии не выбраны." : string.Join("; ", lines.Select(s => s == AuditOptions.NoLine ? AuditOptions.NoLineLabel : s)),
                         ["COUNTS"] = $"Линий: {lines.Count}. Деталей на выбранных линиях: {selectedParts.Count}. Замечаний: {issues.Count}.",
                         ["CHECKS"] = rules.Count == 0 ? "Проверки не выбраны." : string.Join("\n", rules.Select(r => r.Title + ". " + (r.Id == "wall"
-                            ? $"Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром; тройники и переходы — стенка конца не тоньше соединённой трубы. Допуск {options.WallToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм."
+                            ? $"Трубы, отводы и изгибы трубы одной линии с одинаковым номинальным диаметром — замечание на каждую пару соединённых деталей, где стенка меняется; тройники и переходы — стенка конца не тоньше соединённой трубы. Допуск {options.WallToleranceMm.ToString("0.###", CultureInfo.GetCultureInfo("ru-RU"))} мм."
                             : r.Description))),
                         ["SCOPE"] = "Выбранные линии текущего чертежа. " + (options.Enabled.Contains("collisions")
                             ? $"Коллизии проверяются со всеми объектами и загруженными внешними ссылками. Проверено пар: {snapshot.CollisionPairsChecked}. Пересечения деталей, соединённых через объект соединения, не учитываются (не учтено: {snapshot.ConnectedJointsIgnored}). Вставок внешних ссылок: {snapshot.XrefInstancesChecked}; недоступно: {snapshot.XrefInstancesUnavailable}. Используется полная геометрия без учёта XCLIP. "

@@ -15,10 +15,15 @@ namespace PipingSpecPlugin.Audit
             // it would only add «no line ID» (its line is unknown, not missing),
             // «no wall» and «no diameter».
             var parts = snapshot.Parts.Where(p => p.IsPipeOrElbow && !p.LineUnknown && options.Includes(p)).ToList();
+            // Pipes without a line number cannot be compared: one remark for
+            // all of them — one per pipe was most of the list (27 of 35 rows in
+            // audit-model.dwg).
+            var unlined = parts.Where(p => string.IsNullOrWhiteSpace(p.LineKey)).ToList();
+            if (unlined.Count > 0)
+                yield return AuditRules.Issue(Id, Title, "Не проверено",
+                    $"Не задан номер линии у {unlined.Count} труб / отводов — толщины стенок не сравниваются.", unlined);
             foreach (var p in parts)
             {
-                if (string.IsNullOrWhiteSpace(p.LineKey))
-                    yield return AuditRules.Issue(Id, Title, "Не проверено", "Не задан идентификатор линии.", new[] { p });
                 // WallMm is WallRaw in the part's own catalogue LengthUnit,
                 // converted to mm. A readable number with an unknown unit is
                 // named as such, not as an unreadable wall.

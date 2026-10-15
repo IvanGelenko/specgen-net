@@ -51,6 +51,9 @@ namespace PipingSpecPlugin.Commands
                     {
                         foreach (var handle in PartEntityIndex.EntityHandlesForRow(dlm, record.PnPID, disk))
                         {
+                            // An isometric marker linked to the part's row is
+                            // not one of its elements (the audit skips it too).
+                            if (IsIsoSymbol(disk, handle)) continue;
                             var key = handle.ToString();
                             // Gaskets/bolts/weld subparts can share a connector's
                             // handle. Prefer the entity's own row for its properties.
@@ -107,6 +110,17 @@ namespace PipingSpecPlugin.Commands
             foreach (var line in result.Lines) line.Count = elements[line.Key];
             result.Lines.Sort((a, b) => AuditLineOrder.Compare(a.Key, b.Key));
             return result;
+        }
+
+        static bool IsIsoSymbol(Database disk, Handle handle)
+        {
+            try
+            {
+                for (var rx = disk.GetObjectId(false, handle, 0).ObjectClass; rx != null; rx = rx.MyParent)
+                    if (rx.Name.StartsWith("AcPpDb3dIso", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            catch { }
+            return false;
         }
 
         // One entity whose own row cannot be resolved (stale handle, non-

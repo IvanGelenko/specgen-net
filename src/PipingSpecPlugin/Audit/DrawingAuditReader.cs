@@ -233,7 +233,22 @@ namespace PipingSpecPlugin.Audit
         // are PartPort rows — as for the tee / reducer walls (ReadEnds).
         static void ReadFlangeFaces(AuditSnapshot snapshot, Database database, DataLinksManager dlm)
         {
-            foreach (var part in snapshot.Parts.Where(p => p.Ports.Count > 0))
+            // Only the parts a bolted joint can reach: its two faces and, past a
+            // wafer body or a blind, the next joint and its far flange (three
+            // hops). Every part of a large model meant thousands of DLM reads.
+            var byKey = snapshot.Parts.GroupBy(p => p.Key).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+            var near = new HashSet<string>(StringComparer.Ordinal);
+            var frontier = snapshot.Parts.Where(p => p.IsConnector && p.BoltSets.Count > 0).Select(p => p.Key).ToList();
+            for (int hop = 0; hop < 3 && frontier.Count > 0; hop++)
+            {
+                var next = new List<string>();
+                foreach (var key in frontier)
+                    if (byKey.TryGetValue(key, out var p))
+                        foreach (var n in p.Neighbours)
+                            if (near.Add(n)) next.Add(n);
+                frontier = next;
+            }
+            foreach (var part in snapshot.Parts.Where(p => p.Ports.Count > 0 && near.Contains(p.Key)))
             {
                 try
                 {
@@ -560,7 +575,10 @@ namespace PipingSpecPlugin.Audit
                 {
                     var b = sorted[j];
                     bool betweenStructures = a.IsStructure && b.IsStructure;
-                    if (!a.Selected && !b.Selected && !(structures && betweenStructures)) continue;
+                    // Switched off, two structures are never compared — with
+                    // all lines selected (PSAUDITJSON) they used to be anyway.
+                    if (betweenStructures && !structures) continue;
+                    if (!a.Selected && !b.Selected && !betweenStructures) continue;
                     // Pieces of one block insertion are one object, not a clash
                     // (entities of the host have distinct selection handles).
                     if (a.Part.SelectionKey != null && string.Equals(a.Part.SelectionKey, b.Part.SelectionKey, StringComparison.Ordinal)) continue;
@@ -597,7 +615,9 @@ namespace PipingSpecPlugin.Audit
                         var clash = AuditRules.Issue("collisions", "Коллизии", "Пересечение",
                             $"Обнаружено пересечение {(betweenStructures ? "конструкций" : insulation ? "с участием изоляции" : "объёмов")}: {a.Part.Description} ↔ {b.Part.Description}. " +
                             $"Глубина ≈ {depth.Value * mmPerUnit:0.#} мм. Проверьте, не является ли оно предусмотренным сопряжением.", new[] { a.Part, b.Part });
-                        clash.Bounds = Overlap(a.Bounds, b.Bounds);
+                        // The overlap region itself: the two parts' boxes
+                        // overlap far wider (a long pipe through a beam).
+                        clash.Bounds = region ?? Overlap(a.Bounds, b.Bounds);
                         clash.Magnitude = depth.Value * mmPerUnit;
                         clash.BetweenStructures = betweenStructures;
                         snapshot.GeometryIssues.Add(clash);

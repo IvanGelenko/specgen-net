@@ -11,7 +11,7 @@ namespace PipingSpecPlugin.Tracing
     internal sealed class TracingParameters
     {
         public string Spec = "!_Rus-PipeAndFittings_ст20_PN16";
-        public double Nd = 20, Wall = 4, Gap = 2, Radius = 90, MinGap = 1;   // MinGap: the smallest accepted gap (1, 2 or 3 mm in tight places; never an interference)
+        public double Nd = 20, Wall = 4, Gap = 10, Radius = 90, MinGap = 1;   // MinGap: the smallest accepted gap (1, 2 or 3 mm in tight places; never an interference)
     }
 
     /// <summary>Choice of the lines to be traced: the lines of the drawing in a list, with a filter and the parameters.</summary>

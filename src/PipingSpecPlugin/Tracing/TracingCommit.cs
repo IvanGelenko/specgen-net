@@ -53,7 +53,7 @@ namespace PipingSpecPlugin.Tracing
             string specName = args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : "!_Rus-PipeAndFittings_ст20_PN16";
             double nd = args.TryGetProperty("nd", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetDouble() : 20;
             double wallArg = args.TryGetProperty("wall", out var wj) && wj.ValueKind == JsonValueKind.Number ? wj.GetDouble() : 4;
-            double gap = args.TryGetProperty("gap", out var gj) && gj.ValueKind == JsonValueKind.Number ? gj.GetDouble() : 2;
+            double gap = args.TryGetProperty("gap", out var gj) && gj.ValueKind == JsonValueKind.Number ? gj.GetDouble() : 10;
             double R = args.TryGetProperty("radius", out var rj) && rj.ValueKind == JsonValueKind.Number ? rj.GetDouble() : 90;
             double pad = args.TryGetProperty("pad", out var pj) && pj.ValueKind == JsonValueKind.Number ? pj.GetDouble() : 10;
             double endMargin = args.TryGetProperty("end_margin", out var ej) && ej.ValueKind == JsonValueKind.Number ? ej.GetDouble() : 50;
@@ -832,7 +832,14 @@ namespace PipingSpecPlugin.Tracing
             var before = ModelRows(doc, dlm);
             var added = new HashSet<int>();
             var log = new List<string>();
-            string progressPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "plant3d_tracing_progress.txt");
+            // one log file per run (the last 10 are kept): after a crash of Plant 3D it shows the spec, the sizes and the last part that was being made
+            string progressPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "plant3d_tracing_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt");
+            try
+            {
+                foreach (var old in new System.IO.DirectoryInfo(System.IO.Path.GetTempPath()).GetFiles("plant3d_tracing_*.txt").OrderByDescending(f => f.LastWriteTime).Skip(9)) { try { old.Delete(); } catch { } }
+                System.IO.File.WriteAllText(progressPath, "start " + DateTime.Now.ToString("HH:mm:ss") + " spec=" + specName + " tracer=" + DescOf(pipePart) + " items=" + items.Count + " document=" + doc.Name + Environment.NewLine);
+            }
+            catch { }
             void Prog(string msg) { try { System.IO.File.AppendAllText(progressPath, msg + Environment.NewLine); } catch { } }
             try
             {
@@ -842,8 +849,7 @@ namespace PipingSpecPlugin.Tracing
                 {
                     using (var adder = new PipingObjectAdder(piping.DataLinksManager3d, doc.Database))
                     {
-                        string progress = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "plant3d_tracing_progress.txt");
-                        try { System.IO.File.WriteAllText(progress, "start " + DateTime.Now.ToString("HH:mm:ss") + Environment.NewLine); } catch { }
+                        string progress = progressPath;
                         int pn = 0;
                         foreach (var it in items.Where(i => i.Kind == "pipe"))
                         {

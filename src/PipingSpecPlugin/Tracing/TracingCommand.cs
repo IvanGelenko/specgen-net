@@ -33,6 +33,7 @@ namespace PipingSpecPlugin.Tracing
     public class TracingCommand
     {
         static readonly TracingParameters Par = new TracingParameters();
+        static int _creationsInSession;      // Plant 3D crashed natively on the second big creation of a session (and after erasing parts): the user is warned
         const string LayerName = "Спутник";
         const int LayerColorIndex = 1;                 // red
         const string CollisionLayerName = "Спутник-коллизия";
@@ -92,6 +93,16 @@ namespace PipingSpecPlugin.Tracing
                     if (answer != WinForms.DialogResult.Yes) { ed.WriteMessage("\nОтменено: сохраните чертёж и запустите команду снова."); return; }
                 }
 
+                if (_creationsInSession > 0)
+                {
+                    var again = WinForms.MessageBox.Show(
+                        "В этом сеансе Plant 3D спутник уже создавался.\n\nПовторное большое создание в том же сеансе несколько раз приводило к аварийному "
+                      + "завершению Plant 3D (внутренняя ошибка при создании стыков). Надёжнее сохранить чертёж, перезапустить Plant 3D и создать спутник заново.\n\n"
+                      + "Всё равно создать сейчас?",
+                        "Спутник", WinForms.MessageBoxButtons.YesNo, WinForms.MessageBoxIcon.Warning, WinForms.MessageBoxDefaultButton.Button2);
+                    if (again != WinForms.DialogResult.Yes) { ed.WriteMessage("\nОтменено: сохраните чертёж, перезапустите Plant 3D и запустите команду снова."); return; }
+                }
+
                 // 3. creation (its own rollback removes everything of a route again when any check fails)
                 var result = new StringBuilder(); int made = 0, failed = 0, hitParts = 0; bool stopped = false;
                 for (int ri = 0; ri < routes.Count; ri++)
@@ -119,7 +130,7 @@ namespace PipingSpecPlugin.Tracing
                     // the parts exist from here on: a failure of the layer must not be reported as "not created"
                     var all = created.GetProperty("handles").EnumerateArray().Select(h => h.GetString()).ToList();
                     var hits = new HashSet<string>(created.GetProperty("collision_handles").EnumerateArray().Select(h => h.GetString()));
-                    made++; hitParts += hits.Count;
+                    made++; hitParts += hits.Count; _creationsInSession++;
                     string layerNote = "";
                     try
                     {
@@ -132,7 +143,7 @@ namespace PipingSpecPlugin.Tracing
                 }
                 result.AppendLine();
                 result.AppendLine($"Слой «{LayerName}» — красный, цвет «по слою». Слой «{CollisionLayerName}» — фиолетовый: детали в местах, где столкновение с основной линией неизбежно.");
-                result.AppendLine("Проверьте результат и сохраните чертёж.");
+                result.AppendLine("Проверьте результат и сохраните чертёж. Следующий спутник лучше создавать после перезапуска Plant 3D.");
                 ed.WriteMessage($"\nСпутник: создано маршрутов {made}, с ошибкой {failed}" + (hitParts > 0 ? $", деталей в коллизии (фиолетовые): {hitParts}." : "."));
                 using (var rd = new TracingReportDialog("Спутник: результат", result.ToString(), "Закрыть", false)) rd.ShowDialog();
             }
@@ -147,7 +158,7 @@ namespace PipingSpecPlugin.Tracing
         static void PlanLine(TracingLine line, List<Route> routes, List<string> notes)
         {
             var covered = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            int found = 0, attempts = 0; var errors = new List<string>();
+            int found = 0, attempts = 0; var errors = new List<string>(); var extra = new Queue<string>();
             foreach (var p in line.Pipes.OrderByDescending(q => q.length))
             {
                 if (covered.Contains(p.handle)) continue;
@@ -180,6 +191,7 @@ namespace PipingSpecPlugin.Tracing
                         r.Warnings.Add(t);
                     }
                     routes.Add(r); found++;
+                    foreach (var bh in plan.GetProperty("branch_routes").EnumerateArray()) { var h2 = bh.GetString(); if (h2 != null && !extra.Contains(h2)) extra.Enqueue(h2); }
                 }
                 catch (Exception ex)
                 {
@@ -187,6 +199,35 @@ namespace PipingSpecPlugin.Tracing
                     if (!errors.Contains(ex.Message)) errors.Add(ex.Message);
                     if (found > 0 && p.length >= 300) notes.Add($"{line.Tag}: маршрут от трубы {p.handle} ({p.length:0} мм) не рассчитан — {ex.Message}");
                 }
+            }
+            // the branches of the tees that go on round elbows: every one is a route of its own (and may have branches again)
+            for (int guard = 0; extra.Count > 0 && guard < 60; guard++)
+            {
+                string bh = extra.Dequeue();
+                if (covered.Contains(bh)) continue;
+                try
+                {
+                    var res = Call(bh, dry: true); var plan = res.GetProperty("plan");
+                    foreach (var s2 in plan.GetProperty("route").EnumerateArray())
+                    { var t = s2.GetString() ?? ""; int sp = t.IndexOf(' '); if (sp > 0) covered.Add(t.Substring(sp + 1)); }
+                    var parts = plan.GetProperty("parts"); var cc = plan.GetProperty("collision_check");
+                    var r = new Route
+                    {
+                        Line = line, Start = bh, Plan = plan,
+                        Pipes = GetInt(parts, "pipes"), Bends = GetInt(parts, "bends"), Closing = GetInt(parts, "closing_bends_180"), Welds = GetInt(parts, "welds"),
+                        Hits = cc.TryGetProperty("parts_in_collision", out var hp2) ? hp2.GetInt32() : 0, MinClear = cc.GetProperty("min_clearance_mm").GetDouble(),
+                    };
+                    foreach (var w in plan.GetProperty("warnings").EnumerateArray())
+                    {
+                        var t = w.GetString() ?? "";
+                        if (t.StartsWith("Riser branch", StringComparison.Ordinal) || t.StartsWith("Lateral offsets", StringComparison.Ordinal)
+                            || t.StartsWith("The closing bends lie", StringComparison.Ordinal) || t.StartsWith("COLLISIONS with the route", StringComparison.Ordinal)) continue;
+                        r.Warnings.Add(t);
+                    }
+                    routes.Add(r); found++;
+                    foreach (var b2 in plan.GetProperty("branch_routes").EnumerateArray()) { var h3 = b2.GetString(); if (h3 != null) extra.Enqueue(h3); }
+                }
+                catch (Exception ex) { notes.Add($"{line.Tag}: ответвление от трубы {bh} не рассчитано — {ex.Message}"); }
             }
             if (found == 0) notes.Add($"{line.Tag}: спутник рассчитать не удалось — {(errors.Count > 0 ? string.Join(" | ", errors) : "в линии нет подходящих труб")}");
         }

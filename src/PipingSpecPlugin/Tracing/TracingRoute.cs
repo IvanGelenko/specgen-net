@@ -31,6 +31,10 @@ namespace PipingSpecPlugin.Tracing
             public bool Riser; public Vector3d B, C; public double CSign, Bmax, DeltaLat; public Point3d Origin; public Dictionary<double, double> SignBySide = new Dictionary<double, double>();
             public List<(double x1, double x2, double y1, double y2, double z1, double z2)> Rects = new List<(double, double, double, double, double, double)>();
             public List<string> Handles = new List<string>(), Info = new List<string>();
+            public List<(Point3d p1, Point3d p2, double rad)> Cyls = new List<(Point3d, Point3d, double)>();   // the pipes of a branch (real geometry, not the box of a slanted pipe)
+            public List<RSec> Chain; public string FirstPipe;     // a branch that goes on round elbows: its sections (the tracer legs follow them without a break)
+            public string TeeH;                    // the tee of the route this branch grows from (null: a vent / drain on a dynamic port)
+            public int HeavyC, HeavyD;             // the side (+1 / -1 along C / along the run) on which the branch parts reach farther: the handwheel and the stem
         }
         sealed class RBox { public string H, Desc; public double A1, A2, L1, L2, W1, W2; }
         sealed class RSec
@@ -158,8 +162,9 @@ namespace PipingSpecPlugin.Tracing
             return null;
         }
 
-        static List<RPart> WalkRoute(Document doc, DataLinksManager dlm, RPart first, string outPort)
+        static List<RPart> WalkRoute(Document doc, DataLinksManager dlm, RPart first, string outPort, out bool endsAtTee)
         {
+            endsAtTee = false;
             var res = new List<RPart> { first };
             first.Out = outPort; first.In = first.Ports.First(q => q.name != outPort).name;
             var cur = first;
@@ -169,6 +174,7 @@ namespace PipingSpecPlugin.Tracing
                 if (nx == null) break;
                 var np = MakeRPart(doc, dlm, nx.Value.id); np.In = nx.Value.port;
                 np.Out = ThroughPort(np, np.In);
+                if (np.Out == null && np.Kind == "tee") { endsAtTee = true; break; }      // this route is a branch of that tee: it ends in front of it
                 if (np.Out == null) throw new InvalidOperationException("The route runs into a part it cannot pass through (" + np.Desc + ", " + np.H + ").");
                 res.Add(np); cur = np;
             }
@@ -181,7 +187,7 @@ namespace PipingSpecPlugin.Tracing
             string specName = args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : "!_Rus-PipeAndFittings_ст20_PN16";
             double nd = args.TryGetProperty("nd", out var n) && n.ValueKind == JsonValueKind.Number ? n.GetDouble() : 20;
             double wallArg = args.TryGetProperty("wall", out var wj) && wj.ValueKind == JsonValueKind.Number ? wj.GetDouble() : 4;
-            double gap = args.TryGetProperty("gap", out var gj) && gj.ValueKind == JsonValueKind.Number ? gj.GetDouble() : 2;
+            double gap = args.TryGetProperty("gap", out var gj) && gj.ValueKind == JsonValueKind.Number ? gj.GetDouble() : 10;   // the default gap between the tracer and the main pipe (user: 10 mm)
             double R = args.TryGetProperty("radius", out var rj) && rj.ValueKind == JsonValueKind.Number ? rj.GetDouble() : 90;
             double pad = args.TryGetProperty("pad", out var pj) && pj.ValueKind == JsonValueKind.Number ? pj.GetDouble() : 10;
             double endMargin = args.TryGetProperty("end_margin", out var ej) && ej.ValueKind == JsonValueKind.Number ? ej.GetDouble() : 50;
@@ -215,19 +221,21 @@ namespace PipingSpecPlugin.Tracing
             // ---- the route: parts in order from one free end to the other ---------------------------------------
             var first = MakeRPart(doc, dlm, startId);
             if (first.Kind != "pipe") throw new InvalidOperationException("'pipe' must be a plain pipe of the route.");
-            var fwd = WalkRoute(doc, dlm, first, "S2");
+            var fwd = WalkRoute(doc, dlm, first, "S2", out bool fwdAtTee);
             var first2 = MakeRPart(doc, dlm, startId);
-            var bwd = WalkRoute(doc, dlm, first2, "S1");
+            var bwd = WalkRoute(doc, dlm, first2, "S1", out bool bwdAtTee);
             bwd.Reverse();
             foreach (var bp0 in bwd) { var t = bp0.In; bp0.In = bp0.Out; bp0.Out = t; }   // seen from the other end: swap
             var chain = new List<RPart>(bwd); chain.AddRange(fwd.Skip(1));
             // chain[0].In and chain[last].Out are the free ends; the start part appears once (from 'bwd', with In/Out swapped back correctly below)
             chain[bwd.Count - 1].Out = fwd[0].Out; chain[bwd.Count - 1].In = bwd[bwd.Count - 1].In;
+            bool startAtTee, endAtTee;      // the end of the route is the branch port of a tee (a branch of a larger route)
             // the same route direction whichever pipe of the line was picked (the plan must not depend on it): start at the end with the smaller X, then Y, then Z
             {
                 var e0 = chain[0].InPos; var e1 = chain[chain.Count - 1].OutPos;
                 bool startFirst = Math.Abs(e0.X - e1.X) > 1 ? e0.X < e1.X : Math.Abs(e0.Y - e1.Y) > 1 ? e0.Y < e1.Y : e0.Z <= e1.Z;
                 if (!startFirst) { chain.Reverse(); foreach (var cp in chain) { var tp = cp.In; cp.In = cp.Out; cp.Out = tp; } }
+                startAtTee = startFirst ? bwdAtTee : fwdAtTee; endAtTee = startFirst ? fwdAtTee : bwdAtTee;
             }
             double rMain = chain.Where(c => c.Kind == "pipe").Max(c => c.Od) / 2;
             var distinctOd = chain.Where(c => c.Kind == "pipe").Select(c => Math.Round(c.Od, 1)).Distinct().OrderBy(x => x).ToList();
@@ -354,6 +362,7 @@ namespace PipingSpecPlugin.Tracing
                     if (nk < 0 || nk >= secs.Count || secs[nk].IsRiser) continue;
                     var hz = secs[nk]; double lj = LJ(rs, sg, hz);
                     if (lj - l0 < 0.5) continue;
+                    if (hz.Len >= 15 * (lj - l0) + 300) continue;                       // a long run goes at a slight angle: no S-bend, no room needed
                     Detour(lj - l0, out double th, out double dg, double.MaxValue);
                     double rt = R * Math.Tan(th / 2), x = (lj - l0) / Math.Tan(th), ka = KA(hz, rs, sg);
                     bool other = nk < k ? (nk > 0 && secs[nk - 1].IsRiser) : (nk + 1 < secs.Count && secs[nk + 1].IsRiser);
@@ -388,7 +397,7 @@ namespace PipingSpecPlugin.Tracing
                     if (rs.Perp)
                     {
                         // two perpendicular runs: the diagonal place is fixed, only the lateral offsets against the two runs can grow; the smallest total shift that keeps the gap
-                        var cand = new List<double> { l0, 50, 56, 59.5, 62, 70, 80, 95 }.Where(x => x < l0 + 0.1 || x > l0 + 6.5).ToList();
+                        var cand = new List<double> { l0 }.Concat(new[] { -9.0, -3, 0.5, 3, 11, 21, 36, 60 }.Select(d => rOff + d)).Where(x => x < l0 + 0.1 || x > l0 + 6.5).Distinct().ToList();   // relative to the offset of the tracer from the axis: any DN and any gap
                         var pairs = cand.SelectMany(a => cand.Select(b => (a, b))).OrderBy(t => (t.a - l0) + (t.b - l0)).ThenBy(t => Math.Max(t.a, t.b)).ToList();
                         double keepA = l0, keepB = l0, keepC = double.MinValue;
                         foreach (var (pa, pb) in pairs)
@@ -426,7 +435,23 @@ namespace PipingSpecPlugin.Tracing
                     }
                     else
                     {
-                        foreach (double g in new[] { l0, -l0, 62, -62, 80, -80, 100, -100, 110, -110, 120, -120, 140, -140 })      // the vertical stands diagonally: l0 ... 140 mm ahead of or behind the axis
+                        // first the user's way for a riser between runs that go along one line (a U-turn up and back, a Z): the vertical line stands BESIDE the pipe at the level of
+                        // its axis (along the run: 0) at the side offset "pipe + tracer + a few mm"; the runs leave view 3 for that offset by a smooth S-bend before the riser
+                        bool sideOk = false;
+                        foreach (double extra in new[] { 0.0, 4, 8, 12, 18, 25, 35 })
+                        {
+                            double ljs = rOff + extra;
+                            if (ljs > l0 && ljs < l0 + 6.5) continue;                   // two 15 degree bends make at least 6.1 mm
+                            if (sg > 0) { rs.LjP = ljs; rs.GP = 0; } else { rs.LjM = ljs; rs.GM = 0; }
+                            if (!ShiftFits(k, sg)) continue;
+                            double cs = RiserMin(k, sg);
+                            if (cs >= flexGap) { sideOk = true; bestC = cs; bestG = 0; break; }
+                        }
+                        if (sideOk) { okFound = true; }
+                        else
+                        {
+                            if (sg > 0) rs.LjP = l0; else rs.LjM = l0;                 // no room for that: the vertical stands ahead of / behind the riser, at the lateral offset of view 3
+                        foreach (double g in new[] { l0, -l0 }.Concat(new[] { 3.0, 21, 41, 51, 61, 81 }.SelectMany(d => new[] { rOff + d, -(rOff + d) })))      // the vertical stands diagonally: l0 ... 140 mm ahead of or behind the axis
                         {
                             if (sg > 0) rs.GP = g; else rs.GM = g;
                             double c = RiserMin(k, sg);
@@ -434,6 +459,7 @@ namespace PipingSpecPlugin.Tracing
                             if (c >= flexGap) { bestC = c; bestG = g; okFound = true; break; }      // the smallest shift along the run that keeps the gap
                         }
                         if (sg > 0) rs.GP = bestG; else rs.GM = bestG;
+                        }
                     }
                     if (bestC < flexGap) riserTouch.Add("riser " + k + " tracer " + (sg > 0 ? "+" : "-") + " " + Math.Round(bestC, 1) + " mm");
                 }
@@ -470,6 +496,7 @@ namespace PipingSpecPlugin.Tracing
                 double SpanOf(double lj, double kaa, bool start)
                 {
                     if (lj - l0 < 0.5) return 0;
+                    if (sc.Len >= 15 * (lj - l0) + 300) return 0;                      // a long run goes at a slight angle, no room is kept for an S-bend
                     Detour(lj - l0, out double thj, out double dgj, double.MaxValue);
                     double rtj0 = R * Math.Tan(thj / 2), xj0 = (lj - l0) / Math.Tan(thj);
                     return start ? Math.Max(pad, kaa + R + 10) + 2 * rtj0 + xj0 : sc.Len - (Math.Min(sc.Len - pad, kaa - R - 10) - 2 * rtj0 - xj0);
@@ -487,7 +514,7 @@ namespace PipingSpecPlugin.Tracing
             }
 
             // ---- vents and drains: vertical branches welded into the horizontal pipes of the route (dynamic ports Dn) -----------------
-            var branches = new List<RBranch>(); var branchByName = new Dictionary<string, RBranch>();
+            var branches = new List<RBranch>(); var branchByName = new Dictionary<string, RBranch>(); var branchRoutes = new List<string>();
             var mainSet = new HashSet<string>(chain.Select(c => c.H), StringComparer.OrdinalIgnoreCase);
             for (int k = 0; k < secs.Count; k++)
             {
@@ -533,12 +560,180 @@ namespace PipingSpecPlugin.Tracing
                                 foreach (var x in new[] { r.x1, r.x2 }) foreach (var y in new[] { r.y1, r.y2 }) foreach (var z in new[] { r.z1, r.z2 })
                                     br.Bmax = Math.Max(br.Bmax, (new Point3d(x, y, z) - q.pos).DotProduct(br.B));
                         }
+                        SetHeavySides(br, sc);
                         branches.Add(br); branchByName[br.Name] = br;
                     }
+                // ---- the branches of the tees of the route: the line goes on beyond the tee, the supply tracer runs along it to the end and back ------------------
+                foreach (var tee in sc.Parts.Where(p => p.Kind == "tee" && p.In != null && p.Out != null))
+                {
+                    try
+                    {
+                        var bp = tee.Ports.FirstOrDefault(q => q.name != tee.In && q.name != tee.Out);
+                        if (bp.name == null) continue;
+                        if (!heatBranches) { warnings.Add("The branch of tee " + tee.H + " is not heated (heat_branches=false)."); continue; }
+                        double ab = (bp.pos - sc.A0).DotProduct(sc.D);
+                        if (Math.Abs(bp.dir.DotProduct(sc.D)) > 0.3) { warnings.Add("NOT HEATED: the branch of tee " + tee.H + " is not perpendicular to the run: heat it by hand."); continue; }
+                        if (ab < 0 || ab > sc.Len) continue;
+                        var br = new RBranch { Name = tee.H + "." + bp.name, Pipe = tee.H, TeeH = tee.H, Sec = k, A = ab, Riser = true, Origin = bp.pos, ZMin = double.MaxValue, ZMax = double.MinValue };
+                        br.B = (bp.dir - sc.D * bp.dir.DotProduct(sc.D)).GetNormal(); br.C = sc.D.CrossProduct(br.B).GetNormal();
+                        // the parts of the branch, from the tee on: pipes as cylinders, valves and flanges as boxes; the walk stops at the first elbow
+                        var links = ConnList(doc, tee.Id).Where(c => (c.h1 == tee.H && c.p1 == bp.name) || (c.h2 == tee.H && c.p2 == bp.name)).ToList();
+                        if (links.Count == 0) { warnings.Add("The branch port " + bp.name + " of tee " + tee.H + " is free: nothing to heat."); continue; }
+                        var seenB = new HashSet<string> { tee.H }; var queue = new Queue<string>(); queue.Enqueue(links[0].h1 == tee.H ? links[0].h2 : links[0].h1);
+                        bool bends = false; string firstPipe = null;
+                        while (queue.Count > 0 && seenB.Count < 80)
+                        {
+                            string hb = queue.Dequeue();
+                            if (hb == null || !seenB.Add(hb) || mainSet.Contains(hb)) continue;
+                            var idb = IdFromHandle(doc.Database, hb);
+                            br.Handles.Add(hb);
+                            string cls = idb.ObjectClass.Name;
+                            bool stop = false;
+                            if (!cls.Contains("Connector"))
+                            {
+                                string desc = DescById(doc, dlm, idb).Trim();
+                                if (cls == "AcPpDb3dPipe")
+                                {
+                                    if (firstPipe == null) firstPipe = hb;
+                                    var pr = SafePorts(doc, idb); var s1 = pr.FirstOrDefault(q => q.name == "S1"); var s2 = pr.FirstOrDefault(q => q.name == "S2");
+                                    double od;
+                                    using (doc.LockDocument()) using (var tr = doc.Database.TransactionManager.StartTransaction()) { od = ((Pipe)tr.GetObject(idb, OpenMode.ForRead)).OuterDiameter; tr.Commit(); }
+                                    if (s1.name != null && s2.name != null) { br.Cyls.Add((s1.pos, s2.pos, od / 2)); br.Info.Add(hb + " Pipe " + Math.Round(s1.pos.DistanceTo(s2.pos), 0) + " mm " + desc); }
+                                }
+                                else if (Regex.IsMatch(desc, "Отвод|Elbow")) { bends = true; stop = true; }       // the branch turns here: it is heated up to this point
+                                else
+                                {
+                                    using (doc.LockDocument()) using (var tr = doc.Database.TransactionManager.StartTransaction())
+                                    {
+                                        var ext = ((Entity)tr.GetObject(idb, OpenMode.ForRead)).GeometricExtents;
+                                        br.Rects.Add((ext.MinPoint.X, ext.MaxPoint.X, ext.MinPoint.Y, ext.MaxPoint.Y, ext.MinPoint.Z, ext.MaxPoint.Z));
+                                        br.Info.Add(hb + " " + cls.Replace("AcPpDb3d", "") + " " + desc);
+                                        tr.Commit();
+                                    }
+                                }
+                            }
+                            if (stop) continue;
+                            foreach (var c in ConnList(doc, idb)) { string o = c.h1 == hb ? c.h2 : c.h1; if (o != null && !seenB.Contains(o)) queue.Enqueue(o); }
+                        }
+                        if (br.Cyls.Count == 0 && br.Rects.Count == 0) { warnings.Add("NOT HEATED: nothing found behind the branch port of tee " + tee.H + "."); continue; }
+                        // the end of the branch along B, measured from the axis of the run
+                        br.Bmax = double.MinValue;
+                        foreach (var cy in br.Cyls) foreach (var e in new[] { cy.p1, cy.p2 }) br.Bmax = Math.Max(br.Bmax, (e - bp.pos).DotProduct(br.B) + cy.rad);
+                        foreach (var r in br.Rects)
+                            foreach (var x in new[] { r.x1, r.x2 }) foreach (var y in new[] { r.y1, r.y2 }) foreach (var z in new[] { r.z1, r.z2 })
+                                br.Bmax = Math.Max(br.Bmax, (new Point3d(x, y, z) - bp.pos).DotProduct(br.B));
+                        if (bends)
+                        {
+                            // the branch goes on round an elbow: the legs of the dip follow all its pipes without a break (one tracer goes out along the whole branch and comes back);
+                            // when that is not possible the branch is heated by a loop of its own (a break in the tracer, a warning says so)
+                            try
+                            {
+                                br.Chain = BuildBranchChain(tee, bp); br.FirstPipe = firstPipe;
+                                br.Bmax = br.Chain[0].Len - 30 - overshoot + dipTail + Rdip;               // the first straight leg stops 30 mm in front of the first elbow
+                                foreach (var bs in br.Chain.Skip(1)) foreach (var bpart in bs.Parts.Where(q => q.Kind == "pipe")) br.Cyls.Add((bpart.InPos, bpart.OutPos, bpart.Od / 2));
+                            }
+                            catch (Exception bex)
+                            {
+                                if (firstPipe != null) { branchRoutes.Add(firstPipe); warnings.Add("The branch of tee " + tee.H + " goes on round elbows and cannot be followed by the dip (" + bex.Message + "): it is heated by a loop of its own, the tracer is interrupted at the tee."); }
+                                else warnings.Add("NOT HEATED: the branch of tee " + tee.H + " has no pipe in front of its elbow.");
+                                continue;
+                            }
+                        }
+                        SetHeavySides(br, sc);
+                        branches.Add(br); branchByName[br.Name] = br;
+                    }
+                    catch (Exception ex) { warnings.Add("NOT HEATED: the branch of tee " + tee.H + " could not be read: " + ex.Message); }
+                }
+            }
+            // the sections of a branch that goes on round elbows (from the branch port of the tee to its free end), the same construction as the sections of the route
+            List<RSec> BuildBranchChain(RPart tee, (string name, Point3d pos, Vector3d dir) bp)
+            {
+                var first = MakeRPart(doc, dlm, tee.Id);
+                var walked = WalkRoute(doc, dlm, first, bp.name, out bool endsAtTee);
+                var partsB = walked.Skip(1).ToList();
+                if (partsB.Count == 0) throw new InvalidOperationException("nothing behind the branch port");
+                if (partsB.Any(q => q.Kind == "tee")) throw new InvalidOperationException("a tee inside the branch");
+                var list = new List<RSec>(); var cur2 = new RSec(); Point3d a0 = bp.pos;
+                foreach (var part in partsB)
+                {
+                    if (part.Kind == "elbow")
+                    {
+                        if (cur2.Parts.Count == 0) throw new InvalidOperationException("two elbows follow each other");
+                        cur2.A0 = a0; cur2.EndPt = part.InPos; cur2.ElbowAfter = part; list.Add(cur2);
+                        cur2 = new RSec(); a0 = part.OutPos; continue;
+                    }
+                    cur2.Parts.Add(part);
+                }
+                if (cur2.Parts.Count == 0) throw new InvalidOperationException("the branch ends in an elbow");
+                cur2.A0 = a0; cur2.EndPt = partsB[partsB.Count - 1].OutPos; list.Add(cur2);
+                for (int i = 0; i < list.Count; i++)
+                {
+                    var sc2 = list[i]; var dv = sc2.EndPt - sc2.A0; sc2.Len = dv.Length;
+                    if (sc2.Len < 1) throw new InvalidOperationException("a section of the branch has no length");
+                    sc2.D = dv.GetNormal();
+                }
+                for (int i = 0; i + 1 < list.Count; i++)
+                {
+                    var el = list[i].ElbowAfter; var dk = list[i].D; var dn = list[i + 1].D;
+                    if (Math.Abs(dk.DotProduct(dn)) > 0.05) throw new InvalidOperationException("an elbow of the branch is not a 90 degree one");
+                    list[i].Re = el.InPos.DistanceTo(el.OutPos) / Math.Sqrt(2);
+                    list[i].Pc = el.InPos + dk * list[i].Re; list[i].Cc = el.InPos + dn * list[i].Re;
+                }
+                return list;
+            }
+            // the two legs of the dip along a branch with elbows: vertices (without the first corners q1 / q2 and the closing bend), the radii of the corners, the direction of the last section
+            bool BranchLegs(RBranch br, Vector3d runDir, double cdir, double lat, double shift, out List<Point3d> la, out List<Point3d> lb, out List<(Point3d p, double r)> radii, out Vector3d dLast, out string why)
+            {
+                la = new List<Point3d>(); lb = new List<Point3d>(); radii = new List<(Point3d, double)>(); dLast = default; why = null;
+                var ch = br.Chain;
+                Vector3d oA = br.C * (cdir * lat) + runDir * (shift - Rdip), oB = br.C * (cdir * lat) + runDir * (shift + Rdip);
+                for (int i = 0; i + 1 < ch.Count; i++)
+                {
+                    var dk = ch[i].D; var dn = ch[i + 1].D;
+                    var ax = dk.CrossProduct(dn).GetNormal();
+                    var rot = Matrix3d.Rotation(Math.PI / 2, ax, Point3d.Origin);
+                    if (dk.TransformBy(rot).DotProduct(dn) < 0.99) rot = Matrix3d.Rotation(-Math.PI / 2, ax, Point3d.Origin);
+                    var oA2 = oA.TransformBy(rot); var oB2 = oB.TransformBy(rot);
+                    foreach (var (o1, o2, list) in new[] { (oA, oA2, la), (oB, oB2, lb) })
+                    {
+                        var corner = ch[i].Pc + o1 + dk * ((o2 - o1).DotProduct(dk));
+                        double rT2 = ch[i].Re - o1.DotProduct(dn);
+                        if (rT2 < 25) { why = "the radius of the tracer round the elbow would be only " + Math.Round(rT2, 1) + " mm"; return false; }
+                        radii.Add((corner, rT2)); list.Add(corner);
+                    }
+                    oA = oA2; oB = oB2;
+                }
+                var last = ch[ch.Count - 1]; dLast = last.D;
+                double legEnd = last.Len + overshoot - (dipTail + Rdip);
+                if (legEnd < 60) { why = "the last section of the branch is too short for the closing bend"; return false; }
+                la.Add(last.A0 + last.D * legEnd + oA); lb.Add(last.A0 + last.D * legEnd + oB);
+                return true;
+            }
+            // the handwheel and the stem make the branch reach farther to one side: the tracer must dip on the other side (user)
+            void SetHeavySides(RBranch br, RSec sc)
+            {
+                double cMax = double.MinValue, cMin = double.MaxValue, dMax = double.MinValue, dMin = double.MaxValue;
+                void Take(Point3d q)
+                {
+                    var v = q - br.Origin; double c = v.DotProduct(br.C), d = v.DotProduct(sc.D);
+                    cMax = Math.Max(cMax, c); cMin = Math.Min(cMin, c); dMax = Math.Max(dMax, d); dMin = Math.Min(dMin, d);
+                }
+                foreach (var r in br.Rects)
+                    foreach (var x in new[] { r.x1, r.x2 }) foreach (var y in new[] { r.y1, r.y2 }) foreach (var z in new[] { r.z1, r.z2 }) Take(new Point3d(x, y, z));
+                if (br.Rects.Count == 0) return;
+                double ac = cMax + cMin, ad = dMax + dMin;          // > 0: reaches farther towards + (twice the offset of the centre)
+                br.HeavyC = Math.Abs(ac) > 6 ? Math.Sign(ac) : 0;           // the box of a valve with a handwheel is lopsided by a few mm already
+                br.HeavyD = Math.Abs(ad) > 6 ? Math.Sign(ad) : 0;
             }
             double VOfZ(RSec sc, double a, double z) => (z - (sc.A0.Z + sc.D.Z * a)) / sc.W.Z;
             bool RectsClear(RBranch br, Point3d q)
             {
+                foreach (var cy in br.Cyls)
+                {
+                    var sg = cy.p2 - cy.p1; double len2 = sg.DotProduct(sg);
+                    double tt = len2 < 1e-9 ? 0 : Math.Max(0, Math.Min(1, (q - cy.p1).DotProduct(sg) / len2));
+                    if ((q - (cy.p1 + sg * tt)).Length < cy.rad + rT + gap - 0.1) return false;
+                }
                 foreach (var r in br.Rects)
                     if (q.Z >= r.z1 - rT - gap && q.Z <= r.z2 + rT + gap)
                     {
@@ -609,13 +804,13 @@ namespace PipingSpecPlugin.Tracing
             {
                 var lats = new List<double>();
                 foreach (int dg in new[] { 15, 30, 45, 60 }) lats.Add(l0 + 2 * R * (1 - Math.Cos(dg * Math.PI / 180)));
-                for (int k = 0; k <= 30; k++) lats.Add(60 + 10 * k);
+                for (int k = 0; k <= 30; k++) lats.Add(rOff + 1 + 10 * k);
                 double bestCost = double.MaxValue, bl = 0, bsh = 0, bs = 1;
                 foreach (double cdir in new[] { 1.0, -1.0 })
                     foreach (double lat in lats)
                         foreach (double shift in new[] { 0.0, 40, -40, 80, -80, 120, -120, 160, -160, 200, -200, 260, -260 })
                         {
-                            double cost = lat + 2.0 * Math.Abs(shift);
+                            double cost = lat + 2.0 * Math.Abs(shift) + (cdir == br.HeavyC ? 400 : 0) + (br.HeavyD != 0 && Math.Sign(shift) == br.HeavyD ? 150 : 0);
                             if (cost >= bestCost) continue;
                             if (RDipOk(br, sg, cdir, lat, shift)) { bestCost = cost; bl = lat; bsh = shift; bs = cdir; }
                         }
@@ -656,7 +851,18 @@ namespace PipingSpecPlugin.Tracing
                     br.DeltaLat = Math.Abs(br.CSign * br.LDip - ro.DotProduct(br.C));
                     warnings.Add("Riser branch " + br.Name + ": section " + br.Sec + " (" + Math.Round(rsc.Len, 0) + " mm) at " + Math.Round(br.A, 0) + " mm, side " + br.Side + ", lateral " + Math.Round(br.LDip, 1) + " (sign " + br.CSign + "), shift " + br.Shift + ", delta " + Math.Round(br.DeltaLat, 1) + ", Bmax " + Math.Round(br.Bmax, 0) + ", parts " + string.Join(" | ", br.Info) + ".");
                 }
+                if (br.Chain != null)
+                {
+                    var rsc2 = secs[br.Sec];
+                    if (!BranchLegs(br, rsc2.D, br.CSign, br.LDip, br.Shift, out _, out _, out _, out _, out string whyNot))
+                    {
+                        warnings.Add("The branch " + br.Name + " goes on round elbows and the dip cannot follow it (" + whyNot + "): it is heated by a loop of its own, the tracer is interrupted at the tee.");
+                        branches.Remove(br); branchByName.Remove(br.Name); if (br.FirstPipe != null) branchRoutes.Add(br.FirstPipe); continue;
+                    }
+                }
                 if (!useSupply) warnings.Add("Branch " + br.Name + " is heated from the return side (handwheel on the other one).");
+                if (br.Riser && br.HeavyC != 0 && br.SignBySide.TryGetValue(br.Side, out var chosenSign) && chosenSign == br.HeavyC)
+                    warnings.Add("Branch " + br.Name + ": the dip had to go on the side of the handwheel (no room on the other side): check it.");
             }
             // the tracer that does NOT heat a branch must still pass it without touching: a plain detour where its straight pass is too close to the branch parts
             var passObst = new Dictionary<double, List<(double a1, double a2, double lobs, string h)>> { [+1] = new List<(double, double, double, string)>(), [-1] = new List<(double, double, double, string)>() };
@@ -665,6 +871,7 @@ namespace PipingSpecPlugin.Tracing
                 double other = -br.Side; var sc = secs[br.Sec];
                 if (br.Riser)
                 {
+                    if (br.TeeH != null) continue;       // the other tracer passes the branch of a tee under it: the box of the tee gives it the detour
                     var oo = Off(sc, other);
                     for (double aa = br.A - 150; aa <= br.A + 150; aa += 10)
                         if (!RectsClear(br, sc.A0 + sc.D * aa + oo)) { warnings.Add("CHECK: the straight tracer passes too close to the branch " + br.Name + " (at " + Math.Round(aa, 0) + " mm of riser " + br.Sec + "); move it by hand."); break; }
@@ -729,7 +936,7 @@ namespace PipingSpecPlugin.Tracing
                 {
                     double ul = Math.Cos(q * Math.PI / 4), uv = Math.Sin(q * Math.PI / 4);
                     if (ul * lc + uv * vc < -1e-6) continue;                       // never towards the pipe
-                    bool isLat = Math.Abs(uv) < 1e-6; double pen = isLat ? 0 : (q % 2 == 0 ? 8 : 4);
+                    bool isLat = Math.Abs(uv) < 1e-6; double pen = isLat ? 0 : (sc.IsRiser ? (q % 2 == 0 ? 8 : 4) : 500);   // user: round a valve on a horizontal run always at the SIDES, never underneath (only if the side has no free place at all)
                     for (double m = 2 * R * (1 - Math.Cos(Math.PI / 12)) + 0.1; m <= 700; m += 0.5)
                     {
                         if (bl.Any(b => InExp(b, lc + m * ul, vc + m * uv))) continue;
@@ -747,6 +954,7 @@ namespace PipingSpecPlugin.Tracing
                 var oo = Off(sc, sigma); double olc = oo.DotProduct(sc.L), ovc = oo.DotProduct(sc.W);
                 foreach (var b in sc.Boxes)
                 {
+                    if (branches.Any(x => x.TeeH == b.H && x.Side == sigma)) continue;     // this tracer dips along the branch of that tee
                     if (!InExp(b, olc, ovc)) continue;                       // the tracer's place is clear of the box
                     res.Add((b.A1, b.A2, l0 + DispFor(sc, sigma, new[] { b }).m, b.H));
                 }
@@ -781,6 +989,8 @@ namespace PipingSpecPlugin.Tracing
                 if (ce.Count == 2) { wideEnd = ce.Max(q => q.lobs); aEnd = ce.Max(q => q.a2) + pad + 10; }
                 if (cs.Count == 2) { wideStart = cs.Max(q => q.lobs); aStart = cs.Min(q => q.a1) - pad - 10; }
             }
+            if (startAtTee) { aStart = tailU + l0 + 60; wideStart = 0; }                                                          // the closing bend lies inside the pipe, 60 mm from the tee
+            if (endAtTee) { aEnd = secs[secs.Count - 1].Len - (tailU + l0 + 60); wideEnd = 0; }
             double rUstart = wideStart > 0 ? wideStart : rU, rUend = wideEnd > 0 ? wideEnd : rU;
 
             // ---- the tracer polylines -------------------------------------------------------------------------------------------
@@ -834,10 +1044,17 @@ namespace PipingSpecPlugin.Tracing
                     {
                         // behind a riser the tracer lies at the lateral offset lj; back to view 3 on the straight run
                         double ljs = LJ(secs[k - 1], sigma, sc);
-                        Detour(ljs - l0, out double thj, out double dgj, double.MaxValue);
-                        double rtj = R * Math.Tan(thj / 2), xj = (ljs - l0) / Math.Tan(thj);
-                        double s3 = Math.Max(pad, KA(sc, secs[k - 1], sigma) + R + 10) + rtj;
-                        v.Add(Pt(sc, s3, sigma * ljs, v0)); v.Add(Pt(sc, s3 + xj, sigma * l0, v0)); prevEnd = s3 + xj + rtj;
+                        double aKs = KA(sc, secs[k - 1], sigma);
+                        var clsS = Clusters(ObstaclesFor(sc, sigma));
+                        double nextF = clsS.Count > 0 ? clsS[0].a1 - pad - 2 * R * Math.Tan(Math.PI / 24) : sc.Len;      // where the next feature of the run begins
+                        if (nextF - (aKs + R) >= 15 * (ljs - l0)) prevEnd = aKs + R;       // the user's way: no S-bend, the straight pipe goes at a slight angle from the corner to the next feature (its bend turns by a fraction of a degree)
+                        else
+                        {
+                            Detour(ljs - l0, out double thj, out double dgj, double.MaxValue);
+                            double rtj = R * Math.Tan(thj / 2), xj = (ljs - l0) / Math.Tan(thj);
+                            double s3 = Math.Max(pad, aKs + R + 10) + rtj;
+                            v.Add(Pt(sc, s3, sigma * ljs, v0)); v.Add(Pt(sc, s3 + xj, sigma * l0, v0)); prevEnd = s3 + xj + rtj;
+                        }
                     }
                     double endA = lastSec ? aEnd : sc.Len;
                     var cls = Clusters(ObstaclesFor(sc, sigma));
@@ -882,7 +1099,18 @@ namespace PipingSpecPlugin.Tracing
                         Detour(delta, out double th, out double dg, Math.Min(roomB, roomA));
                         double rt = R * Math.Tan(th / 2), x = delta / Math.Tan(th);
                         double c2 = c.a1 - pad - rt, c1 = c2 - x, c3 = c.a2 + pad + rt, c4 = c3 + x;
-                        if (!ringStart) { v.Add(sc.A0 + sc.D * c1 + oS); v.Add(sc.A0 + sc.D * c2 + tS); }
+                        // the user's way at a vent / drain: no S-bends; the straight pipe runs at a slight angle from the previous feature straight to the (turned) bend of the dip,
+                        // and from the dip straight on to the next feature; the gap grows a little on the way, which is allowed
+                        bool skewIn = false, skewOut = false; double qaOut = 0;
+                        if (riserDip)
+                        {
+                            double qa = cBr[0].A + cBr[0].Shift;
+                            skewIn = !ringStart && (qa - 2 * Rdip - prevEnd) >= Math.Max(15 * delta, 120);
+                            double nextF2 = ci + 1 < cls.Count ? cls[ci + 1].a1 - pad - 2 * R * Math.Tan(Math.PI / 24) - 20 : endA;
+                            skewOut = !ringEnd && (nextF2 - (qa + 2 * Rdip)) >= Math.Max(15 * delta, 120);
+                            qaOut = qa + 2 * Rdip;
+                        }
+                        if (!ringStart && !skewIn) { v.Add(sc.A0 + sc.D * c1 + oS); v.Add(sc.A0 + sc.D * c2 + tS); }
                         if (riserDip)
                         {
                             var br = cBr[0];
@@ -890,9 +1118,22 @@ namespace PipingSpecPlugin.Tracing
                             var q1 = sc.A0 + sc.D * (br.A + br.Shift - Rdip) + tS; var q2 = sc.A0 + sc.D * (br.A + br.Shift + Rdip) + tS;
                             var p1 = q1 + br.B * (vPortB - b0); var p2 = q2 + br.B * (vPortB - b0);
                             cornerRs.Add((q1, Rdip)); cornerRs.Add((q2, Rdip));
+                            if (br.Chain != null)
+                            {
+                                // the branch goes on round elbows: out along all of it and back, one tracer without a break
+                                BranchLegs(br, sc.D, br.CSign, br.LDip, br.Shift, out var legA, out var legB, out var radii, out var dLast, out _);
+                                foreach (var rr in radii) cornerRs.Add(rr);
+                                v.Add(q1); v.AddRange(legA); paths.Add(v);
+                                var pA = legA[legA.Count - 1]; var pB = legB[legB.Count - 1];
+                                dips.Add(new TItem { Kind = "u", P1 = pA, P2 = pB, X = dLast.Negate(), Y = (pB - pA).GetNormal(), R = Rdip, L1 = dipTail, L2 = dipTail, Tracer = "dip" });
+                                legB.Reverse(); v = new List<Point3d>(legB); v.Add(q2);
+                            }
+                            else
+                            {
                             v.Add(q1); v.Add(p1); paths.Add(v);
                             dips.Add(new TItem { Kind = "u", P1 = p1, P2 = p2, X = br.B.Negate(), Y = (p2 - p1).GetNormal(), R = Rdip, L1 = dipTail, L2 = dipTail, Tracer = "dip" });
                             v = new List<Point3d> { p2, q2 };
+                            }
                         }
                         else
                         foreach (var br in cBr)
@@ -906,8 +1147,8 @@ namespace PipingSpecPlugin.Tracing
                             dips.Add(new TItem { Kind = "u", P1 = p1, P2 = p2, X = br.Down ? Vector3d.ZAxis : Vector3d.ZAxis.Negate(), Y = (p2 - p1).GetNormal(), R = Rdip, L1 = dipTail, L2 = dipTail, Tracer = "dip" });
                             v = new List<Point3d> { p2, q2 };
                         }
-                        if (!ringEnd) { v.Add(sc.A0 + sc.D * c3 + tS); v.Add(sc.A0 + sc.D * c4 + oS); }
-                        prevEnd = ringEnd ? c.a2 + pad : c4 + rt;
+                        if (!ringEnd && !skewOut) { v.Add(sc.A0 + sc.D * c3 + tS); v.Add(sc.A0 + sc.D * c4 + oS); }
+                        prevEnd = ringEnd ? c.a2 + pad : skewOut ? qaOut : c4 + rt;
                         detours.Add(new { section = k, tracer = sigma > 0 ? "+" : "-", parts = c.hs, from_mm = Math.Round(c.a1, 1), to_mm = Math.Round(c.a2, 1), lateral = Math.Round(c.lobs, 1), bend_angle_deg = Math.Round(th * 180 / Math.PI, 1) });
                         if (prevEnd > endA + 0.5) throw new InvalidOperationException("Section " + k + ": the detour round " + string.Join(",", c.hs) + " does not fit before the end of the section (" + Math.Round(prevEnd - endA, 0) + " mm short; section " + Math.Round(sc.Len, 0) + " mm, window " + Math.Round(c.a1, 0) + ".." + Math.Round(c.a2, 0) + ", delta " + Math.Round(delta, 1) + ", angle " + Math.Round(th * 180 / Math.PI, 0) + " " + string.Join(" | ", cBr.Select(b => b.Name + " lat " + Math.Round(b.LDip, 1) + " sign " + b.CSign + " deltaLat " + Math.Round(b.DeltaLat, 1) + " A " + Math.Round(b.A, 0) + " shift " + b.Shift + " Bmax " + Math.Round(b.Bmax, 0))) + ").");
                     }
@@ -919,11 +1160,16 @@ namespace PipingSpecPlugin.Tracing
                         if (!sc.IsRiser && !sc.Hold && LJ(nx, sigma, sc) - l0 > 0.5)
                         {
                             double ljE = LJ(nx, sigma, sc);
-                            Detour(ljE - l0, out double the, out double dge, double.MaxValue);
-                            double rte = R * Math.Tan(the / 2), xe = (ljE - l0) / Math.Tan(the);
-                            var rsx = nx; double e2 = Math.Min(sc.Len - pad, KA(sc, rsx, sigma) - R - 10) - rte, e1 = e2 - xe;
-                            if (e1 - rte < prevEnd - 0.5) throw new InvalidOperationException("Section " + k + ": no room for the shift of the tracers before the riser (" + Math.Round(prevEnd - (e1 - rte), 0) + " mm short).");
-                            v.Add(Pt(sc, e1, sigma * l0, v0)); v.Add(Pt(sc, e2, sigma * ljE, v0));
+                            var rsx = nx;
+                            if (KA(sc, rsx, sigma) - R - prevEnd >= 15 * (ljE - l0)) { /* the user's way: the straight pipe goes at a slight angle from the previous feature straight to the corner */ }
+                            else
+                            {
+                                Detour(ljE - l0, out double the, out double dge, double.MaxValue);
+                                double rte = R * Math.Tan(the / 2), xe = (ljE - l0) / Math.Tan(the);
+                                double e2 = Math.Min(sc.Len - pad, KA(sc, rsx, sigma) - R - 10) - rte, e1 = e2 - xe;
+                                if (e1 - rte < prevEnd - 0.5) throw new InvalidOperationException("Section " + k + ": no room for the shift of the tracers before the riser (" + Math.Round(prevEnd - (e1 - rte), 0) + " mm short).");
+                                v.Add(Pt(sc, e1, sigma * l0, v0)); v.Add(Pt(sc, e2, sigma * ljE, v0));
+                            }
                         }
                         RSec hz = sc.IsRiser ? nx : sc, rs = sc.IsRiser ? sc : nx;
                         double aK = KA(hz, rs, sigma);
@@ -1060,6 +1306,14 @@ namespace PipingSpecPlugin.Tracing
                     if (cs < gap - tol) { if (curItem != null) curItem.Hit = true; if (collisions.Count < 8) collisions.Add(what + " at " + Fmt(q) + " is " + Math.Round(cs, 2) + " mm from the support " + sb.h + " (needs " + gap + ")"); }
                 }
                 foreach (var br in branches)
+                    foreach (var cy in br.Cyls)
+                    {
+                        var sg2 = cy.p2 - cy.p1; double l22 = sg2.DotProduct(sg2);
+                        double t2 = l22 < 1e-9 ? 0 : Math.Max(0, Math.Min(1, (q - cy.p1).DotProduct(sg2) / l22));
+                        double cc = (q - (cy.p1 + sg2 * t2)).Length - rT - cy.rad;
+                        if (cc < gap - tol) { if (curItem != null) curItem.Hit = true; if (collisions.Count < 8) collisions.Add(what + " at " + Fmt(q) + " is " + Math.Round(cc, 2) + " mm from the pipe of the branch " + br.Name + " (needs " + gap + ")"); }
+                    }
+                foreach (var br in branches)
                     foreach (var r in br.Rects)
                     {
                         double cb = BoxDist3(q, r.x1, r.x2, r.y1, r.y2, r.z1, r.z2) - rT;
@@ -1068,6 +1322,7 @@ namespace PipingSpecPlugin.Tracing
                 foreach (var sc in secs)
                     foreach (var b in sc.Boxes)
                     {
+                        if (branches.Any(x => x.TeeH == b.H)) continue;        // the box of a tee with a heated branch is replaced by the cylinders of the branch
                         var c = q - sc.A0; double a = c.DotProduct(sc.D), l = c.DotProduct(sc.L), w = c.DotProduct(sc.W);
                         double da = Math.Max(Math.Max(b.A1 - a, 0), a - b.A2), dl = Math.Max(Math.Max(b.L1 - l, 0), l - b.L2), dw = Math.Max(Math.Max(b.W1 - w, 0), w - b.W2);
                         double cl = Math.Sqrt(da * da + dl * dl + dw * dw) - rT;
@@ -1098,7 +1353,7 @@ namespace PipingSpecPlugin.Tracing
             int hitParts = items.Count(i => i.Hit);
             if (collisions.Count > 0) warnings.Add("COLLISIONS with the route: " + string.Join("; ", collisions));
             if (hitParts > 0) warnings.Add(hitParts + " tracer parts touch or enter the main line where that cannot be avoided: they are created anyway and painted violet (layer of the collisions).");
-            foreach (var part in chain.Where(c => c.Kind == "tee"))
+            foreach (var part in chain.Where(c => c.Kind == "tee" && !branches.Any(b => b.TeeH == c.H)))
                 warnings.Add("Tee " + part.H + ": its branch is passed by, not heated.");
             foreach (var part in chain.Where(c => c.Kind == "other")) warnings.Add("Part " + part.H + " (" + part.Desc + ") is treated as a wide part of unknown kind.");
 
@@ -1111,6 +1366,7 @@ namespace PipingSpecPlugin.Tracing
                 tracer = new { spec = specName, pipe = DescOf(pipePart), od = odT, gap, radius = R, lateral_offset = Math.Round(l0, 2), vertical_offset = Math.Round(v0, 2) },
                 detours,
                 collision_check = new { points_checked = samples, min_clearance_mm = Math.Round(minClear, 2), required_mm = gap, tolerance_mm = tol, collisions, parts_in_collision = hitParts },
+                branch_routes = branchRoutes.ToList(),
                 parts = new { pipes = nPipes, bends = nBends, closing_bends_180 = nU, welds = nPipes + nBends + nU, tracer_pipe_length_mm = Math.Round(pipeLen, 0) },
                 warnings
             };

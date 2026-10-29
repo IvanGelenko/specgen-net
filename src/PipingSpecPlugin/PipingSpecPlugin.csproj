@@ -83,6 +83,11 @@
       <HintPath>$(AcadInstallDir)\AcDbMgd.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <!-- Brep: the faces of a 3D solid (PSTOSOLID paints them). -->
+    <Reference Include="AcDbMgdBrep">
+      <HintPath>$(AcadInstallDir)\acdbmgdbrep.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="AcMgd">
       <HintPath>$(AcadInstallDir)\AcMgd.dll</HintPath>
       <Private>False</Private>
@@ -126,6 +131,24 @@
     </Reference>
     <Reference Include="PnPDataObjects">
       <HintPath>$(AcadInstallDir)\PnPDataObjects.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <!-- Heat tracing generator (Tracing\): BentPipe / ConnectorWrapper live in PnP3dPipeUI,
+         the symbol lookup in PnP3dContentMgd, the spec parts in PnP3dPartsRepository. -->
+    <Reference Include="PnP3dPipeUI">
+      <HintPath>$(Plnt3DDir)\PnP3dPipeUI.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnP3dContentMgd">
+      <HintPath>$(Plnt3DDir)\PnP3dContentMgd.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnP3dPartsRepository">
+      <HintPath>$(AcadInstallDir)\PnP3dPartsRepository.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PnP3dDataLinkManager">
+      <HintPath>$(AcadInstallDir)\PnP3dDataLinkManager.dll</HintPath>
       <Private>False</Private>
     </Reference>
   </ItemGroup>

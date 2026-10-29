@@ -42,6 +42,8 @@ class Program
             var grid = Find<DataGrid>(content, _ => true);
             if (grid.Items.Count > 0) grid.SelectedIndex = 0;
             Idle();
+            // «expand»: open the first result group, as a click on it would.
+            if (args.Contains("expand") && FindVisual<Expander>(grid) is Expander first) { first.IsExpanded = true; Idle(); }
         }
         int w = (int)content.ActualWidth, h = (int)content.ActualHeight;
         var bitmap = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32); bitmap.Render(content);
@@ -54,6 +56,18 @@ class Program
     {
         for (int i = 0; i < 3; i++)
             System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(System.Windows.Threading.DispatcherPriority.ApplicationIdle, new Action(() => { }));
+    }
+
+    static T FindVisual<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T hit) return hit;
+            var deeper = FindVisual<T>(child);
+            if (deeper != null) return deeper;
+        }
+        return null;
     }
 
     static T Find<T>(DependencyObject root, Func<T, bool> match) where T : DependencyObject

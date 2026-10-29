@@ -5,6 +5,7 @@
     <Compile Include="../../src/PipingSpecPlugin/Audit/AuditDocxReport.cs" Link="AuditDocxReport.cs" />
     <EmbeddedResource Include="../../src/PipingSpecPlugin/Resources/AuditReportTemplate.docx" LogicalName="PipingSpecPlugin.AuditReportTemplate.docx" />
     <Compile Include="../../src/PipingSpecPlugin/UI/CommandIcons.cs" Link="CommandIcons.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/UI/AuditGroups.cs" Link="AuditGroups.cs" />
     <Compile Include="../../src/PipingSpecPlugin/UI/AuditWindow.cs" Link="AuditWindow.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/AuditModels.cs" Link="AuditModels.cs" />
     <Compile Include="../../src/PipingSpecPlugin/Audit/AuditRules.cs" Link="AuditRules.cs" />

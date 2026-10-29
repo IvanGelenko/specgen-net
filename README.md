@@ -32,6 +32,57 @@ layer in the current model/paper space, including unsaved edits. Block and xref
 insertions are selected as whole objects by their insertion layer. The command
 does not save the drawing, change layer visibility or modify geometry.
 
+`PSTOSOLID` (**Геометрия → В 3D-тело**) turns the selection into one 3D
+solid. Blocks and xrefs are walked through their definitions at any depth;
+Plant 3D parts and other objects are exploded until only bodies are left
+(pipes and fittings without their insulation envelope). Each body's faces
+get the colour the object was seen with: ByBlock takes the insertion's
+colour, layer «0» inside a block takes the insertion's layer, ByLayer takes
+the layer's colour. Objects on layers that are off or frozen are skipped.
+The bodies are united pairwise; a body that cannot be united stays a separate
+solid. The result is on the current layer. The prompt **Удалить/Оставить**
+(default **Оставить**) decides whether the objects that went into the body are
+erased afterwards, through ERASE so Plant 3D removes parts with their
+connections. Lines, texts and objects that gave no body are never erased.
+One ОТМЕНИТЬ (UNDO) undoes the command. Coplanar faces of different colours
+merge into one face of one of the colours. Console test: `TOSOLIDSMOKE` in
+`tools/AuditSmoke`.
+
+`PSTRACING` (**Спутник → Спутник линии**) builds the heat tracing of a pipe line by
+an algorithm (no AI at run time). Pick any pipe of the line; the command walks the
+whole route (straight runs, 90° elbows, risers, flanges, valves, spectacle blinds,
+tees), lays two DN20 25x4 tracers on both sides below the pipe (view 3: ±45° from
+the vertical, gap 2 mm), steps them round wide parts, heats vertical and horizontal
+branches (vents, drains), closes the loop with 180° bends beyond the free ends,
+and keeps view 3 on every horizontal run. On the risers the tracers run on straight
+vertical lines and join the horizontal runs with 90° bends (R = 90, handles 100/0/0
+as the room allows), without winding round the pipe. The plan is computed first
+(**preview**, nothing is changed) and shown with its warnings (what could not be
+heated, tight places); the parts are created only after the confirmation. Where a
+collision with the main line cannot be avoided the part is created all the same, the
+warning names it and the parts concerned go to the layer «Спутник-коллизия» (violet). Parts are
+the tracer pipe of the chosen spec, «ИЗГИБ ТРУБЫ» bends and Buttweld connectors
+made by Plant 3D's own `ConnectorWrapper`, on the layer «Спутник» (red), colour
+ByLayer. A failed creation erases everything it made. Parameters in the dialog: the mini-catalogue (spec) of the tracer pipe — chosen from the
+list of the project's specs —, gap, bend radius and the smallest accepted gap (default 1 mm;
+the drawn pipes are a few mm off their axes). The same number is used by the planner and by
+the final check, which also looks at the branches and the supports; a part closer than that
+is created all the same and goes to the violet layer. A line that is already traced is refused. Source: `src/PipingSpecPlugin/Tracing` (`TracingRoute.cs` — the route
+planner, `TracingCommit.cs` — creation of the parts, `TracingSupport.cs` — Plant 3D
+helpers, `TracingCommand.cs` — the command). Known limits: only 90° elbows, a branch
+behind a tee is passed by (warning), routes of opposite directions after a riser
+are refused.
+
+`PSMCP` / **Claude → Сервер MCP** (`PSMCPTOGGLE`) is the connection of the assistant Claude to this
+Plant 3D: a local HTTP server on `127.0.0.1:18765` that carries the calls of the MCP tools
+(read parts, ports and connections, create pipes, branches, supports, heat tracing, set layers …)
+to the AutoCAD main thread. It is **off by default**: the ribbon button switches it on and off,
+`PSMCP` also shows the state and switches the automatic start (file
+`%LOCALAPPDATA%\Plant3dMcp\autostart` or the variable `PLANT3D_MCP_AUTOSTART=1`). Every request must
+carry the token of the session (`%LOCALAPPDATA%\Plant3dMcp\token`, new on every start); browsers,
+foreign Host headers and other content types are refused; nothing leaves the machine. `send_command`
+stays disabled unless `PLANT3D_MCP_ALLOW_COMMANDS=1`. Source: `src/PipingSpecPlugin/Mcp`.
+
 `PSAUDIT` opens the model audit for selected lines in the active drawing.
 The checklist uses the same saved-DWG `PartReader`, `LineNumberTag` and entity
 handle resolution as **Select by line**, including **Without line number**.

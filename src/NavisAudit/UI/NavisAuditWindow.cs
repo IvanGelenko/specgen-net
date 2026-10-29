@@ -125,14 +125,8 @@ namespace NavisAudit.UI
                 _grid.Columns.Add(new DataGridTextColumn { Header = label, Binding = binding, ElementStyle = style,
                     Width = width > 0 ? new DataGridLength(width) : new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = width > 0 ? 60 : 250 });
             }
-            var header = new FrameworkElementFactory(typeof(TextBlock));
-            var title2 = new MultiBinding { StringFormat = "{0} — {1}" };
-            title2.Bindings.Add(new Binding("Name"));
-            title2.Bindings.Add(new Binding("ItemCount"));
-            header.SetBinding(TextBlock.TextProperty, title2);
-            header.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
-            header.SetValue(TextBlock.MarginProperty, new Thickness(4, 10, 0, 4));
-            _grid.GroupStyle.Add(new GroupStyle { HeaderTemplate = new DataTemplate { VisualTree = header } });
+            // Group: «Коллизии с другими элементами — 8», folded at first.
+            AuditGroups.Apply(_grid);
             root.Children.Add(_grid); Content = root;
             CommandIcons.Decorate(_run, "PSAUDIT"); CommandIcons.Decorate(_show, "SHOW"); CommandIcons.Decorate(_export, "LOAD");
             // A click selects the row's elements in the model (the window stays).

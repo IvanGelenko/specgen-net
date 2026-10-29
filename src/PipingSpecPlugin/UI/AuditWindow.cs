@@ -118,15 +118,8 @@ namespace PipingSpecPlugin.UI
                 _grid.Columns.Add(new DataGridTextColumn { Header = label, Binding = new Binding(property), ElementStyle = style,
                     Width = width > 0 ? new DataGridLength(width) : new DataGridLength(1, DataGridLengthUnitType.Star), MinWidth = width > 0 ? 60 : 250 });
             }
-            // Group header: «Коллизии с другими элементами — 4».
-            var header = new FrameworkElementFactory(typeof(TextBlock));
-            var title = new MultiBinding { StringFormat = "{0} — {1}" };
-            title.Bindings.Add(new Binding("Name"));
-            title.Bindings.Add(new Binding("ItemCount"));
-            header.SetBinding(TextBlock.TextProperty, title);
-            header.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
-            header.SetValue(TextBlock.MarginProperty, new Thickness(4, 10, 0, 4));
-            _grid.GroupStyle.Add(new GroupStyle { HeaderTemplate = new DataTemplate { VisualTree = header } });
+            // Group: «Коллизии с другими элементами — 4», folded at first.
+            AuditGroups.Apply(_grid);
             root.Children.Add(_grid); Content = root;
             CommandIcons.Decorate(_run, "PSAUDIT"); CommandIcons.Decorate(_show, "SHOW"); CommandIcons.Decorate(_select, "SELECTBYLINE"); CommandIcons.Decorate(_export, "LOAD");
             _grid.SelectionChanged += (_, __) => _select.IsEnabled = _show.IsEnabled = _grid.SelectedItems.Cast<AuditIssue>().Any(i => i.Keys.Count > 0);

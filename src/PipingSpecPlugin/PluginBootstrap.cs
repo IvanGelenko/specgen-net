@@ -34,6 +34,10 @@ namespace PipingSpecPlugin
 
             try { TryCheckForUpdates(); }
             catch { /* updates must never block or break load */ }
+
+            // The embedded MCP server (Claude <-> Plant 3D) is off unless the user opted in (PSMCP / PLANT3D_MCP_AUTOSTART=1 / autostart file).
+            try { Mcp.McpServer.AutoStart(); }
+            catch { /* the server must never break the load */ }
         }
 
         /// <summary>
@@ -73,6 +77,7 @@ namespace PipingSpecPlugin
 
         public void Terminate()
         {
+            try { Mcp.McpServer.Stop(); } catch { }
             // Session end: detach what Initialize attached (AutoCAD is going
             // away anyway, but a handler outliving the plug-in is never
             // useful).
@@ -239,6 +244,27 @@ namespace PipingSpecPlugin
                 + "линии (идентификатором линии).",
                 "icon32.png"));
             tab.Panels.Add(new RibbonPanel { Source = selectSource });
+
+            var geometrySource = new RibbonPanelSource { Title = "Геометрия" };
+            geometrySource.Items.Add(MakeButton("В 3D-тело", "PSTOSOLID",
+                "Превратить выбранные объекты в одно 3D-тело: расчленить детали, блоки и внешние ссылки "
+                + "на любую глубину, объединить тела и сохранить исходные цвета (на гранях тела). "
+                + "Исходные объекты — оставить или удалить."));
+            tab.Panels.Add(new RibbonPanel { Source = geometrySource });
+
+            var tracingSource = new RibbonPanelSource { Title = "Спутник" };
+            tracingSource.Items.Add(MakeButton("Спутник линии", "PSTRACING",
+                "Создать спутник обогрева (две трубы DN20 по бокам снизу, вид 3) вдоль выбранных линий: стояки, "
+                + "обход арматуры, воздушники и дренажи, замыкание на концах. Линии выбираются в окне со списком; "
+                + "алгоритм считает план без изменения чертежа и создаёт детали на слое «Спутник» только после "
+                + "подтверждения. Места неизбежной коллизии создаются на фиолетовом слое «Спутник-коллизия»."));
+            tab.Panels.Add(new RibbonPanel { Source = tracingSource });
+
+            var mcpSource = new RibbonPanelSource { Title = "Claude" };
+            mcpSource.Items.Add(MakeButton("Сервер MCP", "PSMCPTOGGLE",
+                "Включить или выключить подключение Claude к этому Plant 3D (локальный сервер MCP на 127.0.0.1:18765, "
+                + "доступ только по токену сеанса). Первое нажатие включает, второе выключает. Состояние и автозапуск — команда PSMCP."));
+            tab.Panels.Add(new RibbonPanel { Source = mcpSource });
 
             // Панель «Связи» (CONNECTALL / CONNECTALLDIAG) временно скрыта:
             // «Соединить смежные» работает некорректно и дорабатывается.

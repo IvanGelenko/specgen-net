@@ -25,7 +25,7 @@ using Autodesk.AutoCAD.Runtime;
 // class with a command must be listed here (a missing one = "unknown
 // command"). The ribbon («Спецификация» tab, PluginBootstrap) calls
 // WRITESPECPROJ / WRITESPECDWG, INSULSPECPROJ / INSULSPECDWG / INSULHELP, SELECTBYLAYER, PSCOLORBYLAYER, MOVEBYTAG,
-// SYNCVT, SELECTBYSTATUS, SELECTBYLINE, PSAUDIT and SPECABOUT; WRITESPEC,
+// SYNCVT, SELECTBYSTATUS, SELECTBYLINE, PSAUDIT, PSTRACING and SPECABOUT; PSMCPTOGGLE (the MCP server button) and PSMCP (embedded MCP server, command line); WRITESPEC,
 // PSAUDITJSON and CONNECTALL / CONNECTALLDIAG (hidden from the ribbon while
 // unfinished) are command-line only. The early diagnostic commands
 // (PSPING / LISTPARTS / GENSPEC …) were removed for the production cut.
@@ -40,4 +40,7 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.AuditCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ColorByLayerCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.SelectByLayerCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ToSolidCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Tracing.TracingCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Mcp.McpCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

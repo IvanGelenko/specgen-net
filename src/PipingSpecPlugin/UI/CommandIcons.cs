@@ -38,6 +38,25 @@ namespace PipingSpecPlugin.UI
                     Shape("M3,16 L15,22 27,16 M3,23 L15,29 24,24", null, blue);
                     Shape("M25,13 C23,17 20,19 20,22 A5,5 0 0 0 30,22 C30,19 27,16 25,13 Z", amber, paper);
                     break;
+                case "PSTOSOLID":
+                    // Two small parts merging into one cube.
+                    Shape("M3,10 L9,7 15,10 9,13 Z M3,10 L3,16 9,19 9,13", paper, blue);
+                    Shape("M13,15 L22,11 30,15 22,19 Z", green, ink);
+                    Shape("M13,15 L13,25 22,29 22,19 Z", green, ink);
+                    Shape("M22,19 L30,15 30,25 22,29 Z", green, ink);
+                    break;
+                case "PSTRACING":
+                    // A main pipe with two red tracer pipes along it, closed by a bend at the end.
+                    Shape("M3,9 L29,9 L29,19 L3,19 Z", paper, blue);
+                    Shape("M3,23 L23,23 A4,4 0 0 0 23,29 L3,29", null, (Brush)new BrushConverter().ConvertFromString("#D8453B"));
+                    break;
+                case "PSMCPTOGGLE":
+                    // Two blocks joined by a link: the connection to an outside assistant.
+                    Shape("M3,10 L13,10 13,22 3,22 Z", paper, blue);
+                    Shape("M13,13 L19,13 M13,19 L19,19", null, blue);
+                    Shape("M19,10 L29,10 29,22 19,22 Z", green, ink);
+                    Shape("M7,15 L9,17 M23,15 L25,17", null, paper);
+                    break;
                 case "PSAUDIT":
                     Shape("M5,3 L21,3 21,28 5,28 Z", paper, blue);
                     Shape("M9,9 L16,9 M9,14 L14,14 M9,19 L12,19", null, blue);

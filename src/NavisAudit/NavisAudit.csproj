@@ -59,6 +59,7 @@
     <Compile Include="..\PipingSpecPlugin\Spec\VtValueParsing.cs" Link="Shared\VtValueParsing.cs" />
     <Compile Include="..\PipingSpecPlugin\Spec\XmlText.cs" Link="Shared\XmlText.cs" />
     <Compile Include="..\PipingSpecPlugin\UI\CommandIcons.cs" Link="Shared\CommandIcons.cs" />
+    <Compile Include="..\PipingSpecPlugin\UI\AuditGroups.cs" Link="Shared\AuditGroups.cs" />
     <EmbeddedResource Include="..\PipingSpecPlugin\Resources\AuditReportTemplate.docx" LogicalName="PipingSpecPlugin.AuditReportTemplate.docx" />
   </ItemGroup>
 

@@ -36,6 +36,8 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SyncTransaction.cs" Link="Spec\SyncTransaction.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecTemplateWriter.cs" Link="Spec\SpecTemplateWriter.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\XmlText.cs" Link="Spec\XmlText.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\EntityValueGroups.cs" Link="Spec\EntityValueGroups.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Solids\SolidLook.cs" Link="Solids\SolidLook.cs" />
 
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\PartRecord.cs" Link="Spec\PartRecord.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\SpecRow.cs" Link="Spec\SpecRow.cs" />

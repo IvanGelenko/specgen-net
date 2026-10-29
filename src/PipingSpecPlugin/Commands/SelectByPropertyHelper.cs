@@ -100,8 +100,9 @@ namespace PipingSpecPlugin.Commands
             //    Matching by PnPID instead silently dropped parts whenever an
             //    edit shifted the in-memory row ids out of step with disk —
             //    that is the "часто не подхватывается если изменено" report.
-            var handlesByKey = new Dictionary<string, List<Handle>>(StringComparer.Ordinal);
-            var countByKey = new Dictionary<string, int>(StringComparer.Ordinal);
+            // Grouped by ENTITY (EntityValueGroups): a weld's P3dConnector row
+            // has no Status — its Buttweld / Gasket row does.
+            var rows = new List<(string Value, IReadOnlyCollection<long> Handles)>();
             try
             {
                 using var diskDb = new Database(false, true);
@@ -126,18 +127,11 @@ namespace PipingSpecPlugin.Commands
                     foreach (var rec in records)
                     {
                         if (rec == null) continue;
-                        var raw = valueOf(rec);
-                        var key = string.IsNullOrWhiteSpace(raw) ? nullKey : raw.Trim();
-                        if (!handlesByKey.TryGetValue(key, out var list))
-                        {
-                            list = new List<Handle>();
-                            handlesByKey[key] = list;
-                        }
-                        countByKey[key] = (countByKey.TryGetValue(key, out var c) ? c : 0) + 1;
-
+                        var handles = new List<long>();
                         if (diskDlm != null)
                             foreach (var h in PartEntityIndex.EntityHandlesForRow(diskDlm, rec.PnPID, diskDb))
-                                list.Add(h);
+                                handles.Add(h.Value);
+                        rows.Add((valueOf(rec), handles));
                     }
                 }
                 finally
@@ -155,7 +149,8 @@ namespace PipingSpecPlugin.Commands
                 return;
             }
 
-            if (handlesByKey.Count == 0)
+            var groups = EntityValueGroups.Build(rows, nullKey);
+            if (groups.Count == 0)
             {
                 Say($"[{title}] В чертеже не найдено деталей Plant 3D.");
                 WinForms.MessageBox.Show(
@@ -165,13 +160,13 @@ namespace PipingSpecPlugin.Commands
             }
 
             // Real values first (natural-ish order), null bucket last.
-            var options = handlesByKey
+            var options = groups
                 .OrderBy(kv => kv.Key == nullKey ? 1 : 0)
                 .ThenBy(kv => kv.Key, StringComparer.CurrentCulture)
                 .Select(kv => new Option(
                     kv.Key,
                     kv.Key == nullKey ? nullLabel : kv.Key,
-                    countByKey[kv.Key]))
+                    kv.Value.Count))
                 .ToList();
 
             var chosen = ShowPicker(title, promptText, options);
@@ -188,7 +183,7 @@ namespace PipingSpecPlugin.Commands
             // dropped parts whose in-memory row ids had drifted from disk.
             var ids = new List<ObjectId>();
             var seen = new HashSet<ObjectId>();
-            foreach (var handle in handlesByKey[chosen.Key])
+            foreach (var handle in groups[chosen.Key].Handles.Select(v => new Handle(v)))
             {
                 ObjectId entId;
                 try { entId = db.GetObjectId(false, handle, 0); }

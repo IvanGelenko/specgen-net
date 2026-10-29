@@ -50,7 +50,7 @@ merge into one face of one of the colours. Console test: `TOSOLIDSMOKE` in
 
 `PSTRACING` (**Спутник → Спутник линии**) builds the heat tracing of a pipe line by
 an algorithm (no AI at run time). Pick any pipe of the line; the command walks the
-whole route (straight runs, 90° elbows, risers, flanges, valves, spectacle blinds,
+whole route (straight runs, elbows of 25-135° (45°, 60°, 90°), risers, flanges, valves, spectacle blinds,
 tees), lays two DN20 25x4 tracers on both sides below the pipe (view 3: ±45° from
 the vertical, gap 10 mm by default), steps them round wide parts, heats vertical and horizontal
 branches (vents, drains), closes the loop with 180° bends beyond the free ends,
@@ -69,7 +69,7 @@ the drawn pipes are a few mm off their axes). The same number is used by the pla
 the final check, which also looks at the branches and the supports; a part closer than that
 is created all the same and goes to the violet layer. A line that is already traced is refused. Source: `src/PipingSpecPlugin/Tracing` (`TracingRoute.cs` — the route
 planner, `TracingCommit.cs` — creation of the parts, `TracingSupport.cs` — Plant 3D
-helpers, `TracingCommand.cs` — the command). The branch of a tee is heated too: a straight branch gets a dip of the supply tracer along it to the end and back; a branch that goes on round elbows is followed by the same dip without a break: one tracer goes out along all its pipes and elbows (the legs run concentric with the elbows), closes with a bend beyond the end and comes back. Only when that is not possible (a tee inside the branch, too tight elbows) the branch becomes a route of its own with a closing bend inside its first pipe, and the plan says that the tracer is interrupted there. The dip round a vent or drain avoids the side of the handwheel. Known limits: only 90° elbows, a branch
+helpers, `TracingCommand.cs` — the command). The branch of a tee is heated too: a straight branch gets a dip of the supply tracer along it to the end and back; a branch that goes on round elbows is followed by the same dip without a break: one tracer goes out along all its pipes and elbows (the legs run concentric with the elbows), closes with a bend beyond the end and comes back. Only when that is not possible (a tee inside the branch, too tight elbows) the branch becomes a route of its own with a closing bend inside its first pipe, and the plan says that the tracer is interrupted there. The dip round a vent or drain avoids the side of the handwheel. Known limits: elbows of 25-135° in the run (90° next to risers and in branches), a branch
 that turns (after its elbow), routes of opposite directions after a riser
 are refused.
 

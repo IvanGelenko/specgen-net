@@ -191,6 +191,7 @@ namespace PipingSpecPlugin.Tracing
                         r.Warnings.Add(t);
                     }
                     routes.Add(r); found++;
+                    if (plan.TryGetProperty("covered_handles", out var chs)) foreach (var chh in chs.EnumerateArray()) { var hs = chh.GetString(); if (hs != null) covered.Add(hs); }
                     foreach (var bh in plan.GetProperty("branch_routes").EnumerateArray()) { var h2 = bh.GetString(); if (h2 != null && !extra.Contains(h2)) extra.Enqueue(h2); }
                 }
                 catch (Exception ex)
@@ -225,6 +226,7 @@ namespace PipingSpecPlugin.Tracing
                         r.Warnings.Add(t);
                     }
                     routes.Add(r); found++;
+                    if (plan.TryGetProperty("covered_handles", out var chs2)) foreach (var chh in chs2.EnumerateArray()) { var hs = chh.GetString(); if (hs != null) covered.Add(hs); }
                     foreach (var b2 in plan.GetProperty("branch_routes").EnumerateArray()) { var h3 = b2.GetString(); if (h3 != null) extra.Enqueue(h3); }
                 }
                 catch (Exception ex) { notes.Add($"{line.Tag}: ответвление от трубы {bh} не рассчитано — {ex.Message}"); }

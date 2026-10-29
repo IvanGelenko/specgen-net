@@ -42,6 +42,7 @@ namespace PipingSpecPlugin.Tracing
             public Point3d A0, EndPt; public Vector3d D, L, W, L2, W2; public double Len, Twist;   // (L,W) at the start of the section, (L2,W2) at its end; Twist = rotation of the tracers about the axis between the two
             public List<RPart> Parts = new List<RPart>(); public List<RBox> Boxes = new List<RBox>();
             public RPart ElbowAfter; public double Re; public Point3d Pc, Cc;
+            public double ElbowTheta;   // the turning angle of the elbow behind the section (90, 60, 45 ... degrees)
             public bool IsRiser, Hold, Perp; public Vector3d PP, PM, Combo, Gd, Lpv, Lnv; public double LjP, LjM, LbP, LbM, GP, GM, JS, JE;   // LjP/LjM: lateral offset against the run before the riser, LbP/LbM: against the run after it   // riser: horizontal offsets of the two tracers; horizontal: where the lateral shift near the risers is done
         }
 
@@ -271,14 +272,17 @@ namespace PipingSpecPlugin.Tracing
                 for (int k = 0; k + 1 < secs.Count; k++)
                 {
                     var el = secs[k].ElbowAfter; var dk = secs[k].D; var dn = secs[k + 1].D;
-                    if (Math.Abs(dk.DotProduct(dn)) > 0.05) throw new InvalidOperationException("The elbow " + el.H + " is not a 90 degree one: only 90 degree elbows are supported.");
-                    secs[k].Re = el.InPos.DistanceTo(el.OutPos) / Math.Sqrt(2);
-                    secs[k].Pc = el.InPos + dk * secs[k].Re; secs[k].Cc = el.InPos + dn * secs[k].Re;
+                    double cth = Math.Max(-1.0, Math.Min(1.0, dk.DotProduct(dn))), thE = Math.Acos(cth);          // the angle by which the direction turns
+                    if (thE < 25 * Math.PI / 180 || thE > 135 * Math.PI / 180) throw new InvalidOperationException("The elbow " + el.H + " turns the pipe by " + Math.Round(thE * 180 / Math.PI, 1) + " degrees: elbows of 25 to 135 degrees (90, 60, 45 ...) are supported.");
+                    secs[k].ElbowTheta = thE;
+                    secs[k].Re = el.InPos.DistanceTo(el.OutPos) / (2 * Math.Sin(thE / 2));                   // the radius of the axis of the elbow (90 degrees: chord / sqrt 2)
+                    secs[k].Pc = el.InPos + dk * (secs[k].Re * Math.Tan(thE / 2));                            // where the axes of the two pipes meet
+                    var nIn = (dn - dk * cth).GetNormal(); secs[k].Cc = el.InPos + nIn * secs[k].Re;           // the centre of the arc
                 }
 
             // ---- the offset frames: view 3 on every horizontal run (two tracers at 45 degrees below the axis, both sides) ---------
             // a riser takes its start frame from the horizontal run below it and its end frame from the one above it; when they differ the tracers twist round the riser
-            if (!secs.Any(sc => Math.Abs(sc.D.Z) < 0.5)) throw new InvalidOperationException("The route has no horizontal section to take the tracer side from.");
+            if (!secs.Any(sc => Math.Abs(sc.D.Z) < 0.9)) throw new InvalidOperationException("The route has no horizontal section to take the tracer side from.");
             Matrix3d TurnRot(int k)
             {
                 var ax = secs[k].D.CrossProduct(secs[k + 1].D).GetNormal();
@@ -297,7 +301,7 @@ namespace PipingSpecPlugin.Tracing
                 for (int k = 0; k < secs.Count; k++)
                 {
                     var sc = secs[k];
-                    sc.IsRiser = Math.Abs(sc.D.Z) >= 0.5;
+                    sc.IsRiser = Math.Abs(sc.D.Z) >= 0.9;
                     if (sc.IsRiser) continue;
                     if (havePrev && k > 0 && secs[k - 1].IsRiser && prevDir.DotProduct(sc.D) < -0.9) flipSide = !flipSide;
                     prevDir = sc.D; havePrev = true;
@@ -340,7 +344,7 @@ namespace PipingSpecPlugin.Tracing
             {
                 var u0 = (sc.ElbowAfter.InPos - sc.Cc) / sc.Re; var u1 = (sc.ElbowAfter.OutPos - sc.Cc) / sc.Re; Point3d pa = sc.ElbowAfter.InPos;
                 for (int kk = 1; kk <= 48; kk++)
-                { double phi = Math.PI / 2 * kk / 48.0; var q2 = sc.Cc + (u0 * Math.Cos(phi) + u1 * Math.Sin(phi)) * sc.Re; mainCyls.Add((pa, q2, rMain)); pa = q2; }
+                { double phi = sc.ElbowTheta * kk / 48.0; var q2 = sc.Cc + (u0 * Math.Sin(sc.ElbowTheta - phi) + u1 * Math.Sin(phi)) / Math.Sin(sc.ElbowTheta) * sc.Re; mainCyls.Add((pa, q2, rMain)); pa = q2; }
             }
             double MainClear(Point3d q)
             {
@@ -838,13 +842,21 @@ namespace PipingSpecPlugin.Tracing
             }
             foreach (var br in branches.ToList())
             {
-                (double cost, double lat, double shift)? bestSupply = BestFor(br, dipSide), bestOther = BestFor(br, -dipSide);
+                // the dip is made by the tracer line that is nearer to the branch (the other one would have to cross the run or the branch)
+                double sNear = dipSide;
+                if (br.Riser)
+                {
+                    var rscN = secs[br.Sec];
+                    double dn = Off(rscN, 1).DotProduct(br.B) - Off(rscN, -1).DotProduct(br.B);
+                    if (Math.Abs(dn) > 1) sNear = dn > 0 ? 1 : -1;
+                }
+                (double cost, double lat, double shift)? bestSupply = BestFor(br, sNear), bestOther = BestFor(br, -sNear);
                 double costSupply = bestSupply == null ? double.MaxValue : bestSupply.Value.cost + 2.0 * Math.Abs(bestSupply.Value.shift);
-                double costOther = bestOther == null ? double.MaxValue : bestOther.Value.cost + 2.0 * Math.Abs(bestOther.Value.shift) + 100;
+                double costOther = bestOther == null ? double.MaxValue : bestOther.Value.cost + 2.0 * Math.Abs(bestOther.Value.shift) + (sNear == dipSide ? 100 : 400);
                 if (bestSupply == null && bestOther == null) { warnings.Add("NOT HEATED: branch " + br.Name + ": no clear place for the tracer dip beside it (handwheel?)."); branches.Remove(br); branchByName.Remove(br.Name); continue; }
                 bool useSupply = costSupply <= costOther;
                 var pick = useSupply ? bestSupply.Value : bestOther.Value;
-                br.Side = useSupply ? dipSide : -dipSide; br.LDip = pick.lat; br.Shift = pick.shift;
+                br.Side = useSupply ? sNear : -sNear; br.LDip = pick.lat; br.Shift = pick.shift;
                 if (br.Riser)
                 {
                     br.CSign = br.SignBySide[br.Side]; var rsc = secs[br.Sec]; var ro = Off(rsc, br.Side);
@@ -1157,6 +1169,7 @@ namespace PipingSpecPlugin.Tracing
                     {
                         // a riser: square corner between the vertical line of the riser and the lateral line lJ of the horizontal run (90 degree bend)
                         var nx = secs[k + 1];
+                        if (Math.Abs(sc.ElbowTheta - Math.PI / 2) > 8 * Math.PI / 180) throw new InvalidOperationException("The elbow " + sc.ElbowAfter.H + " joins a vertical run: only 90 degree elbows are supported there.");
                         if (!sc.IsRiser && !sc.Hold && LJ(nx, sigma, sc) - l0 > 0.5)
                         {
                             double ljE = LJ(nx, sigma, sc);
@@ -1181,8 +1194,16 @@ namespace PipingSpecPlugin.Tracing
                         // the corner of the offset lines; the tracer bend is concentric with the elbow
                         var nx = secs[k + 1];
                         var ok = sigma * l0 * sc.L2 + v0 * sc.W2; var on = sigma * l0 * nx.L + v0 * nx.W;
-                        var corner = sc.Pc + ok + sc.D * ((on - ok).DotProduct(sc.D));
-                        double rT2 = sc.Re - ok.DotProduct(nx.D);
+                        // the two offset lines (along this section and along the next one) meet at the corner; the tracer bend is concentric with the elbow
+                        var axE = sc.D.CrossProduct(nx.D).GetNormal();
+                        var rotE = Matrix3d.Rotation(sc.ElbowTheta, axE, Point3d.Origin);
+                        if (sc.D.TransformBy(rotE).DotProduct(nx.D) < 0.99) rotE = Matrix3d.Rotation(-sc.ElbowTheta, axE, Point3d.Origin);
+                        if ((ok.TransformBy(rotE) - on).Length > 1.5) throw new InvalidOperationException("The elbow " + sc.ElbowAfter.H + " turns the run in an oblique plane: the tracers cannot follow it (only turns in the horizontal plane or in a vertical plane are supported).");
+                        double cE = sc.D.DotProduct(nx.D); var wE = on - ok;
+                        double aE = (wE.DotProduct(sc.D) - cE * wE.DotProduct(nx.D)) / (1 - cE * cE);
+                        var corner = sc.Pc + ok + sc.D * aE;
+                        var nInE = (nx.D - sc.D * cE).GetNormal();
+                        double rT2 = sc.Re - ok.DotProduct(nInE);
                         if (rT2 <= 1) throw new InvalidOperationException("The radius of elbow " + sc.ElbowAfter.H + " is too small for the tracer to follow it.");
                         cornerRs.Add((corner, rT2)); v.Add(corner);
                         if (prevEnd > sc.Len + 0.5) throw new InvalidOperationException("Section " + k + " is too short for the detours and the corner.");
@@ -1217,9 +1238,13 @@ namespace PipingSpecPlugin.Tracing
                     var expDir = prev != null ? prev.TOut : (next != null ? next.TIn : (V[V.Count - 1] - V[0]).GetNormal());
                     if ((to - from).DotProduct(expDir) < -0.5) throw new InvalidOperationException("The bends overlap near " + Fmt(from) + " (tracer " + tag + ", prev bend " + (prev == null ? "-" : Fmt(prev.Corner) + " th " + Math.Round(prev.Theta * 180 / Math.PI, 1) + " R " + prev.R) + ", next bend " + (next == null ? "-" : Fmt(next.Corner) + " th " + Math.Round(next.Theta * 180 / Math.PI, 1) + " R " + next.R) + ", straight " + Math.Round((to - from).DotProduct(expDir), 1) + "): there is no room for them between the neighbouring features.");
                     double l2p = 0, l1n = 0;
-                    foreach (var cand in new[] { (handleLen, handleLen), (handleLen, 0.0), (0.0, handleLen), (0.0, 0.0) })
+                    // a straight too short for two full handles: both bends keep as much of the handle as fits (the rest stays the minimum straight)
+                    double hPart = prev != null && next != null ? Math.Min(handleLen, (seg - minStraight) / 2) : 0;
+                    if (hPart < 20 || hPart >= handleLen) hPart = -1;                          // no use: too short a handle (or the full one, tried first)
+                    foreach (var cand in new[] { (handleLen, handleLen), (hPart, hPart), (handleLen, 0.0), (0.0, handleLen), (0.0, 0.0) })
                     {
                         if ((prev == null && cand.Item1 > 0) || (next == null && cand.Item2 > 0)) continue;
+                        if (cand.Item1 < 0 || cand.Item2 < 0) continue;
                         double rest = seg - cand.Item1 - cand.Item2; if (rest < -1e-6) continue;
                         if (rest <= 0.5 || rest >= minStraight - 1e-6) { l2p = cand.Item1; l1n = cand.Item2; break; }
                     }
@@ -1286,7 +1311,7 @@ namespace PipingSpecPlugin.Tracing
             {
                 var u0 = (sc.ElbowAfter.InPos - sc.Cc) / sc.Re; var u1 = (sc.ElbowAfter.OutPos - sc.Cc) / sc.Re; Point3d pa = sc.ElbowAfter.InPos;
                 for (int k = 1; k <= 48; k++)
-                { double phi = Math.PI / 2 * k / 48.0; var q2 = sc.Cc + (u0 * Math.Cos(phi) + u1 * Math.Sin(phi)) * sc.Re; cyls.Add((pa, q2, rMain, "elbow " + sc.ElbowAfter.H)); pa = q2; }
+                { double phi = sc.ElbowTheta * k / 48.0; var q2 = sc.Cc + (u0 * Math.Sin(sc.ElbowTheta - phi) + u1 * Math.Sin(phi)) / Math.Sin(sc.ElbowTheta) * sc.Re; cyls.Add((pa, q2, rMain, "elbow " + sc.ElbowAfter.H)); pa = q2; }
             }
             TItem curItem = null;
             void CheckPoint(Point3d q, string what)
@@ -1367,6 +1392,7 @@ namespace PipingSpecPlugin.Tracing
                 detours,
                 collision_check = new { points_checked = samples, min_clearance_mm = Math.Round(minClear, 2), required_mm = gap, tolerance_mm = tol, collisions, parts_in_collision = hitParts },
                 branch_routes = branchRoutes.ToList(),
+                covered_handles = branches.SelectMany(b => b.Handles).Distinct().ToList(),      // the pipes of the branches the dip heats: no route of their own
                 parts = new { pipes = nPipes, bends = nBends, closing_bends_180 = nU, welds = nPipes + nBends + nU, tracer_pipe_length_mm = Math.Round(pipeLen, 0) },
                 warnings
             };

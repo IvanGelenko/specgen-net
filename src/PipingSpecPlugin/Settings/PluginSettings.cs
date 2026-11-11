@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -20,7 +20,7 @@ namespace PipingSpecPlugin.Settings
         // pattern as a database migrations table. Bumping the constant
         // and adding an Upgrade case is the only way to change the
         // file shape safely; never silently rename a property.
-        public const int CurrentSchemaVersion = 8;
+        public const int CurrentSchemaVersion = 9;
         public int SchemaVersion { get; set; } = CurrentSchemaVersion;
 
         // Path to the user's preferred .docx Word template. Empty means
@@ -97,6 +97,10 @@ namespace PipingSpecPlugin.Settings
         // PSAUDIT: clash structures (members, solids, blocks) with each other.
         public bool AuditStructureCollisions { get; set; } = true;
 
+        public string LastIsoOutputDirectory { get; set; } = "";
+        public string LastIsoStyle { get; set; } = ""; // Legacy setting, no longer used.
+        public string LastIsoTemplatePath { get; set; } = "";
+        public double LastIsoSymbolScale { get; set; } = 10;
         public string InsulationScope { get; set; } = "proj";
         public string[] InsulationLines { get; set; } = null;
         public string[] KnownInsulationLines { get; set; } = null;
@@ -202,6 +206,9 @@ namespace PipingSpecPlugin.Settings
                     // defaults. (v6–v8 builds also stored a materials table,
                     // template path, breakdown mode or insulation types for
                     // earlier variants — dropped keys are ignored on load.)
+                    goto case 8;
+                case 8:
+                    LastIsoOutputDirectory = "";
                     break;
             }
             SchemaVersion = CurrentSchemaVersion;

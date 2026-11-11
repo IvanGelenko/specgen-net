@@ -57,6 +57,15 @@ namespace PipingSpecPlugin.UI
                     Shape("M19,10 L29,10 29,22 19,22 Z", green, ink);
                     Shape("M7,15 L9,17 M23,15 L25,17", null, paper);
                     break;
+                case "PSISOMETRIC":
+                case "ISOGENERATE":
+                    // A drawing sheet with an isometric pipe route and a dimension chain.
+                    Shape("M3,2 L29,2 29,30 3,30 Z", paper, blue);
+                    Shape("M8,19 L15,23 24,18 24,10", null, green);
+                    Shape("M8,13 L15,17 23,12 M8,10 L8,15 M23,9 L23,14", null, ink);
+                    Shape("M8,13 L11,13 M8,13 L9,15 M23,12 L20,12 M23,12 L22,10", null, ink);
+                    Shape("M21,26 L26,26", null, blue);
+                    break;
                 case "PSAUDIT":
                     Shape("M5,3 L21,3 21,28 5,28 Z", paper, blue);
                     Shape("M9,9 L16,9 M9,14 L14,14 M9,19 L12,19", null, blue);

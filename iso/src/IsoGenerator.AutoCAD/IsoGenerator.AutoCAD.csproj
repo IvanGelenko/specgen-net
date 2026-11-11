@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <PlatformTarget>x64</PlatformTarget>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>IsoGenerator</AssemblyName>
+    <AcadInstallDir Condition="'$(AcadInstallDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</AcadInstallDir>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../IsoGenerator.Core/IsoGenerator.Core.csproj" /><ProjectReference Include="../IsoGenerator.Publishing/IsoGenerator.Publishing.csproj" />
+    <Reference Include="AcCoreMgd"><HintPath>$(AcadInstallDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="AcDbMgd"><HintPath>$(AcadInstallDir)\AcDbMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnP3dObjectsMgd"><HintPath>$(AcadInstallDir)\PLNT3D\PnP3dObjectsMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataLinks"><HintPath>$(AcadInstallDir)\PnPDataLinks.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPDataObjects"><HintPath>$(AcadInstallDir)\PnPDataObjects.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnPProjectManagerMgd"><HintPath>$(AcadInstallDir)\PLNT3D\PnPProjectManagerMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnP3dProjectPartsMgd"><HintPath>$(AcadInstallDir)\PLNT3D\PnP3dProjectPartsMgd.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="PnP3dPartsRepository"><HintPath>$(AcadInstallDir)\PnP3dPartsRepository.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

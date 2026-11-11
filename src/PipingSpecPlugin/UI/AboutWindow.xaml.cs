@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Interop;
@@ -30,11 +30,13 @@ namespace PipingSpecPlugin.UI
 
             FeaturesText.Text = string.Join(Environment.NewLine, new[]
             {
-                "Плагин формирует спецификацию трубопроводов (ведомость",
-                "изделий и материалов) по данным модели AutoCAD Plant 3D и",
-                "выводит её в документ Word на основе пользовательского шаблона.",
-                "Также готовит данные для расчёта тепловой изоляции:",
-                "трубы и фитинги по линиям (панель «Изоляция»).",
+                "SpecGen помогает работать с трубопроводными моделями AutoCAD Plant 3D.",
+                "",
+                "Формирует спецификации по данным проекта и выпускает документы Word по пользовательским шаблонам.",
+                "",
+                "Создаёт изометрии выбранных линий в DWG и общем PDF: с размерами, обозначениями элементов и спецификацией.",
+                "",
+                "Готовит данные для расчёта изоляции, выполняет аудит модели и предоставляет инструменты выбора и обработки её элементов.",
             });
         }
 
@@ -56,6 +58,10 @@ namespace PipingSpecPlugin.UI
             try
             {
                 var info = await UpdateService.CheckAsync();
+                if(info!=null&&!info.CheckSucceeded)
+                {
+                    MessageBox.Show(this,info.CheckError+"\n\nДиагностика: "+UpdateService.LogFilePath,"Проверка обновлений",MessageBoxButton.OK,MessageBoxImage.Warning);return;
+                }
                 if (info != null && info.UpdateAvailable)
                 {
                     var win = new UpdateWindow(info);
@@ -65,7 +71,9 @@ namespace PipingSpecPlugin.UI
                 else
                 {
                     MessageBox.Show(this,
-                        "У вас установлена последняя версия.",
+                        info!=null&&UpdateChecker.Compare(UpdateChecker.NormalizeVersion(info.CurrentVersion),UpdateChecker.NormalizeVersion(info.LatestVersion))>0
+                            ?$"У вас версия {info.CurrentVersion}, на GitHub опубликована {info.LatestVersion}. Более нового релиза пока нет."
+                            :$"Установлена актуальная версия {UpdateService.CurrentVersion()}.",
                         "Проверка обновлений",
                         MessageBoxButton.OK, MessageBoxImage.Information);
                 }

@@ -1,4 +1,4 @@
-namespace PipingSpecPlugin.Update
+﻿namespace PipingSpecPlugin.Update
 {
     /// <summary>
     /// Result of an update check: the latest published version, whether it
@@ -9,6 +9,8 @@ namespace PipingSpecPlugin.Update
     public class UpdateInfo
     {
         public bool UpdateAvailable;
+        public bool CheckSucceeded = true;
+        public string CheckError;
         public string CurrentVersion;   // e.g. "1.1.5"
         public string LatestVersion;    // e.g. "1.2.0"
         public string ReleaseTag;       // raw tag, e.g. "v1.2.0"
@@ -22,7 +24,10 @@ namespace PipingSpecPlugin.Update
         public string InstallerSha256;
         public long? InstallerSize;     // asset "size" in bytes, when reported
 
-        /// <summary>A check that found nothing newer (or failed quietly).</summary>
+        public static UpdateInfo Failed(string current,string error) => new UpdateInfo
+        { CurrentVersion=current, CheckSucceeded=false, CheckError=error, LatestVersion=null };
+
+        /// <summary>A successful check that found nothing newer.</summary>
         public static UpdateInfo None(string current) => new UpdateInfo
         {
             UpdateAvailable = false,

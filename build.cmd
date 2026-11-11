@@ -63,6 +63,12 @@ if exist "%BUILDOUT%\DocumentFormat.OpenXml.dll" (
     echo WARNING: DocumentFormat.OpenXml.dll missing from build output.
     echo The installer will be built without it; WRITESPEC will fail at runtime.
 )
+rem The ISO module and its template/symbol library are mandatory installer payload.
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\stage-iso.ps1 -BuildOutput "%BUILDOUT%" -Destination "%STAGE%\Contents\Windows"
+if errorlevel 1 (
+    echo Failed to stage the isometric module.
+    exit /b 1
+)
 if exist src\PipingSpecPlugin\Resources\icon16.png (
     copy /y src\PipingSpecPlugin\Resources\icon16.png %STAGE%\Contents\Resources\icon16.png >nul
 )

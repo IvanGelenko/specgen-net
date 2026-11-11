@@ -167,4 +167,12 @@
     <EmbeddedResource Include="Resources\icon32.png" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Ship the autonomous isometric module as part of SpecGen. Compile against Plant 2025 APIs. -->
+    <ProjectReference Include="..\..\iso\src\IsoGenerator.AutoCAD\IsoGenerator.AutoCAD.csproj" />
+    <Content Include="..\..\iso\iso_template.dwg" Link="iso_template.dwg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\iso\assets\IsoSymbolStyles.dwg" Link="assets\IsoSymbolStyles.dwg" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="..\..\iso\assets\IsoSkeyAcadBlockMap.xml" Link="assets\IsoSkeyAcadBlockMap.xml" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup><Content Include="..\..\iso\assets\PDFsharp-LICENSE.txt" Link="assets\PDFsharp-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" /></ItemGroup>
 </Project>

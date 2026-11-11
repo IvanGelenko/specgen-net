@@ -62,6 +62,7 @@ namespace PipingSpecPlugin.Audit
         public string LineLabel { get; set; }
         // The properties could not be read, so LineKey is unknown, not empty.
         public bool LineUnknown { get; set; }
+        public string InsulationThickness { get; set; }
         public string Diameter { get; set; }
         // Plant «Material» / «MaterialCode» of the part.
         public string Material { get; set; }
@@ -140,6 +141,7 @@ namespace PipingSpecPlugin.Audit
     public sealed class AuditEnd
     {
         public string Name { get; set; }
+        public string InsulationThickness { get; set; }
         public string Diameter { get; set; }
         public string WallRaw { get; set; }
         public string LengthUnit { get; set; }

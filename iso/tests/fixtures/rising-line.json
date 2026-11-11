@@ -1,0 +1,2930 @@
+{
+  "Warnings": [],
+  "SchemaVersion": 1,
+  "Parts": [
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164C3",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "2566.982827",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -1359.603,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3926.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        },
+        {
+          "EndCondition": "TAP",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 1066.518
+          },
+          "Name": "D1"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164C8",
+      "Properties": {
+        "PartFamilyLongDesc": "Задвижка клиновая FL PN16 исп.В хладостойкая сталь",
+        "Length": "280",
+        "Material": "хладостойкая сталь",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=VALVE,SKEY=VTFL",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "?-?",
+        "PartSizeLongDesc": "Задвижка клиновая DN150 FL PN16 исп.В хладостойкая сталь",
+        "PnPClassName": "Valve"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3991.085,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4271.085,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164CD",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1070.63332",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4335.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164D5",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 150-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3986.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3926.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164DE",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 150-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4275.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4335.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1650C",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "919.970487",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 2988.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3908.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16514",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 90 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 90-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 5329.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1651C",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "719.097341",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4687.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16524",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 90 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 90-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3708.024,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 5779.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1652C",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1518.518543",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 5779.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 7298.409
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16534",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 90 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 90-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 7298.409
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3400.323,
+            "Z": 7523.409
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1653C",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "4386.397496",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3400.323,
+            "Z": 7523.409
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 7786.72,
+            "Z": 7523.409
+          },
+          "Name": "S2"
+        },
+        {
+          "EndCondition": "TAP",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7601.282
+          },
+          "Name": "D1"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16544",
+      "Properties": {
+        "PartFamilyLongDesc": "Задвижка клиновая FL PN16 исп.В хладостойкая сталь",
+        "Length": "280",
+        "Material": "хладостойкая сталь",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=VALVE,SKEY=VTFL",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "?-?",
+        "PartSizeLongDesc": "Задвижка клиновая DN150 FL PN16 исп.В хладостойкая сталь",
+        "PnPClassName": "Valve"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3973.237
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4253.237
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16549",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1012.153303",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4317.737
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 5329.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16551",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 150-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3968.737
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3908.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1655A",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 150-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4257.737
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4317.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16567",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8734-75, 09Г2С, Основной ряд, s=3 мм",
+        "Length": "100",
+        "Material": "09Г2С",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "3",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 32x3 ГОСТ 8734-75/В 09Г2С ГОСТ 8733-74",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 1066.518
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 966.518
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16571",
+      "Properties": {
+        "PartFamilyLongDesc": "Задвижка клиновая FL PN16 исп.В хладостойкая сталь",
+        "Length": "165",
+        "Material": "хладостойкая сталь",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=VALVE,SKEY=VTFL",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "",
+        "Tag": "?-?",
+        "PartSizeLongDesc": "Задвижка клиновая DN25 FL PN16 исп.В хладостойкая сталь",
+        "PnPClassName": "Valve"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 922.018
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 757.018
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16579",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 25-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 926.518
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 966.518
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16586",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8734-75, 09Г2С, Основной ряд, s=3 мм",
+        "Length": "100",
+        "Material": "09Г2С",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "3",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 32x3 ГОСТ 8734-75/В 09Г2С ГОСТ 8733-74",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7601.282
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7701.282
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16590",
+      "Properties": {
+        "PartFamilyLongDesc": "Задвижка клиновая FL PN16 исп.В хладостойкая сталь",
+        "Length": "165",
+        "Material": "хладостойкая сталь",
+        "DesignStd": "",
+        "ContentIsoSymbolDefinition": "TYPE=VALVE,SKEY=VTFL",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "",
+        "Tag": "?-?",
+        "PartSizeLongDesc": "Задвижка клиновая DN25 FL PN16 исп.В хладостойкая сталь",
+        "PnPClassName": "Valve"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7745.782
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7910.782
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16598",
+      "Properties": {
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 33259-2015",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "25",
+        "WallThickness": "",
+        "Tag": "",
+        "PartSizeLongDesc": "Фланец 25-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PnPClassName": "Flange"
+      },
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7741.282
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7701.282
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1684F",
+      "Properties": {
+        "PartFamilyLongDesc": "Тройник ГОСТ 17376-2001 09Г2С равнопроходный s=8.0 мм",
+        "Length": "",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17376-2001",
+        "ContentIsoSymbolDefinition": "TYPE=TEE,SKEY=TEBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "8",
+        "Tag": "",
+        "PartSizeLongDesc": "Тройник 159x8.0-09Г2С ГОСТ 17376-2001",
+        "PnPClassName": "Tee"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4687.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4427.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4557.121,
+            "X": 3285.323,
+            "Z": 5554.89
+          },
+          "Name": "S3"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16854",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "719.097341",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4427.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3708.024,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1685F",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1738.516967",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4557.121,
+            "X": 3285.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4557.121,
+            "X": 5023.839,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17A85",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 90 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 90-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.7071,
+            "Z": 0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": -64.199,
+            "Z": 1303.491
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17A95",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1971.943786",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -0.7071,
+            "Z": -0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": -64.199,
+            "Z": 1303.491
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.7071,
+            "Z": 0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1330.176,
+            "Z": 2697.865
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17A9D",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 45 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 45-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -0.7071,
+            "Z": -0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1330.176,
+            "Z": 2697.865
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1489.275,
+            "Z": 2763.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17AA5",
+      "Properties": {
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "Length": "1461.047377",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 8732-2025",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "6",
+        "Tag": "",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PnPClassName": "Pipe"
+      },
+      "Ports": [
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1489.275,
+            "Z": 2763.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 2950.323,
+            "Z": 2763.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipe",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17AAD",
+      "Properties": {
+        "PartFamilyLongDesc": "Отвод ГОСТ 17375-2001 90 09Г2С Основной ряд s=5 мм",
+        "Material": "09Г2С",
+        "DesignStd": "ГОСТ 17375-2001",
+        "ContentIsoSymbolDefinition": "TYPE=ELBOW,SKEY=ELBW",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Size": "150",
+        "WallThickness": "5",
+        "Tag": "",
+        "PartSizeLongDesc": "Отвод 90-159x5-09Г2С ГОСТ 17375-2001",
+        "PnPClassName": "Elbow"
+      },
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 2950.323,
+            "Z": 2763.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 2988.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dPipeInlineAsset",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1656C",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 1066.518
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 1066.518
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164D8",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3926.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3926.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164D2",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3991.085,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3986.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164DB",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4271.085,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4275.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "164E1",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4335.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4335.585,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17A8A",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": -223.298,
+            "Z": 1144.392
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16554",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3908.737
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3908.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17ABD",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 2988.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 2988.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16519",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 5329.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 5329.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16521",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5406.219,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16859",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4687.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4687.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16529",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3708.024,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3708.024,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16531",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 5779.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 5779.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16539",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 7298.409
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3175.323,
+            "Z": 7298.409
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16541",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3400.323,
+            "Z": 7523.409
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 3400.323,
+            "Z": 7523.409
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1658B",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7601.282
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7601.282
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1654E",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3973.237
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 3968.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16557",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4253.237
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4257.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1655D",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4317.737
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 3175.323,
+            "Z": 4317.737
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1657C",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 966.518
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 966.518
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16576",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 922.018
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -2643.094,
+            "X": -223.298,
+            "Z": 926.518
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1659B",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7701.282
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7701.282
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16595",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": 1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7745.782
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "FL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.0,
+            "Z": -1.0
+          },
+          "Position": {
+            "Y": -3483.024,
+            "X": 5593.521,
+            "Z": 7741.282
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "1685C",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": -1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4427.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 1.0,
+            "X": 0.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4427.121,
+            "X": 3175.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "16864",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4557.121,
+            "X": 3285.323,
+            "Z": 5554.89
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -4557.121,
+            "X": 3285.323,
+            "Z": 5554.89
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17A9A",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -0.7071,
+            "Z": -0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": -64.199,
+            "Z": 1303.491
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.7071,
+            "Z": 0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": -64.199,
+            "Z": 1303.491
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17AA2",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 0.7071,
+            "Z": 0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1330.176,
+            "Z": 2697.865
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -0.7071,
+            "Z": -0.7071
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1330.176,
+            "Z": 2697.865
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17AAA",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1489.275,
+            "Z": 2763.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 1489.275,
+            "Z": 2763.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    },
+    {
+      "SourceDrawing": "fixture.dwg",
+      "Handle": "17AB2",
+      "Properties": {},
+      "Ports": [
+        {
+          "EndCondition": "BV",
+          "Direction": {
+            "Y": 0.0,
+            "X": 1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 2950.323,
+            "Z": 2763.766
+          },
+          "Name": "S1"
+        },
+        {
+          "EndCondition": "PL",
+          "Direction": {
+            "Y": 0.0,
+            "X": -1.0,
+            "Z": 0.0
+          },
+          "Position": {
+            "Y": -5631.219,
+            "X": 2950.323,
+            "Z": 2763.766
+          },
+          "Name": "S2"
+        }
+      ],
+      "Kind": "AcPpDb3dConnector",
+      "Line": "L-RISE"
+    }
+  ],
+  "SourceDrawing": "fixture.dwg",
+  "Connections": [
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "17A95",
+      "SecondPort": "S1",
+      "FirstHandle": "17A9A"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16579",
+      "SecondPort": "S1",
+      "FirstHandle": "16576"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16551",
+      "SecondPort": "S2",
+      "FirstHandle": "16554"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "164CD",
+      "SecondPort": "S1",
+      "FirstHandle": "164E1"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1650C",
+      "SecondPort": "S2",
+      "FirstHandle": "16554"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "164C8",
+      "SecondPort": "S2",
+      "FirstHandle": "164DB"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "164DE",
+      "SecondPort": "S1",
+      "FirstHandle": "164DB"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16854",
+      "SecondPort": "S1",
+      "FirstHandle": "1685C"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "1655A",
+      "SecondPort": "S2",
+      "FirstHandle": "1655D"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1652C",
+      "SecondPort": "S1",
+      "FirstHandle": "16531"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1651C",
+      "SecondPort": "S2",
+      "FirstHandle": "16859"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1655A",
+      "SecondPort": "S1",
+      "FirstHandle": "16557"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16534",
+      "SecondPort": "S2",
+      "FirstHandle": "16541"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16549",
+      "SecondPort": "S1",
+      "FirstHandle": "1655D"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "17AA5",
+      "SecondPort": "S2",
+      "FirstHandle": "17AB2"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16590",
+      "SecondPort": "S1",
+      "FirstHandle": "16595"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1652C",
+      "SecondPort": "S2",
+      "FirstHandle": "16539"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16571",
+      "SecondPort": "S1",
+      "FirstHandle": "16576"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16534",
+      "SecondPort": "S1",
+      "FirstHandle": "16539"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1685F",
+      "SecondPort": "S1",
+      "FirstHandle": "16864"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16544",
+      "SecondPort": "S2",
+      "FirstHandle": "16557"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "1684F",
+      "SecondPort": "S1",
+      "FirstHandle": "16859"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16598",
+      "SecondPort": "S2",
+      "FirstHandle": "1659B"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16586",
+      "SecondPort": "S2",
+      "FirstHandle": "1659B"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17A9D",
+      "SecondPort": "S1",
+      "FirstHandle": "17AA2"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16551",
+      "SecondPort": "S1",
+      "FirstHandle": "1654E"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1653C",
+      "SecondPort": "S1",
+      "FirstHandle": "16541"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "1684F",
+      "SecondPort": "S3",
+      "FirstHandle": "16864"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17AAD",
+      "SecondPort": "S1",
+      "FirstHandle": "17AB2"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16549",
+      "SecondPort": "S2",
+      "FirstHandle": "16519"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "164D5",
+      "SecondPort": "S1",
+      "FirstHandle": "164D2"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17A85",
+      "SecondPort": "S2",
+      "FirstHandle": "17A9A"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "164CD",
+      "SecondPort": "S2",
+      "FirstHandle": "17A8A"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1651C",
+      "SecondPort": "S1",
+      "FirstHandle": "16521"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "1653C",
+      "SecondPort": "D1",
+      "FirstHandle": "1658B"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16586",
+      "SecondPort": "S1",
+      "FirstHandle": "1658B"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16598",
+      "SecondPort": "S1",
+      "FirstHandle": "16595"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "164C3",
+      "SecondPort": "D1",
+      "FirstHandle": "1656C"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "1650C",
+      "SecondPort": "S1",
+      "FirstHandle": "17ABD"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16854",
+      "SecondPort": "S2",
+      "FirstHandle": "16529"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "164DE",
+      "SecondPort": "S2",
+      "FirstHandle": "164E1"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "164C8",
+      "SecondPort": "S1",
+      "FirstHandle": "164D2"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17A9D",
+      "SecondPort": "S2",
+      "FirstHandle": "17AAA"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "164D5",
+      "SecondPort": "S2",
+      "FirstHandle": "164D8"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "164C3",
+      "SecondPort": "S2",
+      "FirstHandle": "164D8"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16567",
+      "SecondPort": "S1",
+      "FirstHandle": "1656C"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "1684F",
+      "SecondPort": "S2",
+      "FirstHandle": "1685C"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "17A95",
+      "SecondPort": "S2",
+      "FirstHandle": "17AA2"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "17AA5",
+      "SecondPort": "S1",
+      "FirstHandle": "17AAA"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16544",
+      "SecondPort": "S1",
+      "FirstHandle": "1654E"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16524",
+      "SecondPort": "S2",
+      "FirstHandle": "16531"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16514",
+      "SecondPort": "S2",
+      "FirstHandle": "16521"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17A85",
+      "SecondPort": "S1",
+      "FirstHandle": "17A8A"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16579",
+      "SecondPort": "S2",
+      "FirstHandle": "1657C"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16524",
+      "SecondPort": "S1",
+      "FirstHandle": "16529"
+    },
+    {
+      "FirstPort": "S2",
+      "SecondHandle": "16567",
+      "SecondPort": "S2",
+      "FirstHandle": "1657C"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "16514",
+      "SecondPort": "S1",
+      "FirstHandle": "16519"
+    },
+    {
+      "FirstPort": "S1",
+      "SecondHandle": "17AAD",
+      "SecondPort": "S2",
+      "FirstHandle": "17ABD"
+    }
+  ]
+}

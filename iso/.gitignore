@@ -1,0 +1,9 @@
+output/
+**/bin/
+**/obj/
+*.dwl
+*.dwl2
+
+# Local reference documents and generated diagnostics are not source assets.
+/*.pdf
+/data/*.pdf

@@ -1,0 +1,12 @@
+[
+  {
+    "source": "C:\\project for test\\Isometric\\IsoSkeyAcadBlockMap.xml",
+    "local": "assets/IsoSkeyAcadBlockMap.xml",
+    "sha256": "7EC2CE4C4515019C79CE21D5B12A222C8F949BE2D077CD674EF081EF90D56CF5"
+  },
+  {
+    "source": "C:\\project for test\\Isometric\\IsoSymbolStyles.dwg",
+    "local": "assets/IsoSymbolStyles.dwg",
+    "sha256": "0D1F47AA227B792BFC7EBE8FAC36D6D7850098138F091E59A4573CB61F6BE55D"
+  }
+]

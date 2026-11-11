@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "template": "iso_template.dwg",
+  "units": "mm",
+  "layout": "А2-гСПДС лист1",
+  "paperMm": [594, 420],
+  "frameBlock": "Рамка_А2г",
+  "modelTableHandle": "9EC0",
+  "paperTextHandles": {"notes": "A13C", "documentNumber": "A141", "sheetNumber": "A146"},
+  "tableTopLeftMm": [404, 415],
+  "tableWidthMm": 185,
+  "status": "inspected; generation mapping requires validation against unchanged template",
+  "rules": {
+    "keepRealDimensionsSeparateFromLayout": true,
+    "inferConnectionsFromProximity": false,
+    "copySampleRowsIntoOutput": false,
+    "copySampleNotesIntoOutput": false,
+    "overwriteSourceTemplate": false
+  }
+}

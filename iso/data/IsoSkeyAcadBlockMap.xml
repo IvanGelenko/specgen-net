@@ -1,0 +1,289 @@
+<?xml version="1.0"?>
+<IsoSkeyMap xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" Version="91.1" Name="Default">
+  <!-- Begin: Fittings -->
+  <SkeyMap SKEY="EL??" AcadBlock="Колено" />
+  <SkeyMap SKEY="EB??" AcadBlock="Колено" />
+  <SkeyMap SKEY="ER??" AcadBlock="РедукторноеКолено" />
+  <SkeyMap SKEY="PB??" AcadBlock="Изгиб" />
+  <SkeyMap SKEY="BE??" AcadBlock="Изгиб" />
+  <SkeyMap SKEY="PB" AcadBlock="Изгиб" />
+  <SkeyMap SKEY="BE" AcadBlock="Изгиб" />
+  <SkeyMap SKEY="MI??" AcadBlock="Изгиб45Градусов" />
+  <SkeyMap SKEY="EU??" AcadBlock="Колено-180обратное" />
+  <SkeyMap SKEY="BU??" AcadBlock="Bend-180return" />
+  <SkeyMap SKEY="BU" AcadBlock="Изгиб-180обратный" />
+  <SkeyMap SKEY="TE??" AcadBlock="Тройник" />
+  <SkeyMap SKEY="TY??" AcadBlock="Тройник" />
+  <SkeyMap SKEY="BT??" AcadBlock="ИзгибподУглом" />
+  <SkeyMap SKEY="RC??" AcadBlock="КонцентричПереход" />
+  <SkeyMap SKEY="CPBW" AcadBlock="КонцентричПереход" />
+  <SkeyMap SKEY="CSBW" AcadBlock="КонцентричПереход" />
+  <SkeyMap SKEY="ESBW" AcadBlock="ЭксцентричПереход" />
+  <SkeyMap SKEY="RE??" AcadBlock="ЭксцентричПереход" />
+  <SkeyMap SKEY="CS??" AcadBlock="КонцентричПереход" />
+  <SkeyMap SKEY="RB??" AcadBlock="КонцентричПереход" />
+  <SkeyMap SKEY="GASK" AcadBlock="Прокладка" />
+  <SkeyMap SKEY="FI??" AcadBlock="Сетчатый-фильр" />
+  <SkeyMap SKEY="FA??" AcadBlock="Фильтр-Угол" />
+  <SkeyMap SKEY="CR??" AcadBlock="Крестовина" />
+  <SkeyMap SKEY="UN??" AcadBlock="Объединение1" />
+  <SkeyMap SKEY="CO??" AcadBlock="Муфта" />
+  <SkeyMap SKEY="COSC" AcadBlock="РезьбоваяМуфта" />
+  <SkeyMap SKEY="CSCP" AcadBlock="Зажимная-муфта" />
+  <SkeyMap SKEY="KABW" AcadBlock="Заглушка" />
+  <SkeyMap SKEY="KASC" AcadBlock="РезьбоваяЗаглушка" />
+  <SkeyMap SKEY="KASW" AcadBlock="РезьбоваяЗаглушка" />
+  <SkeyMap SKEY="KAGL" AcadBlock="РезьбоваяЗаглушка" />
+  <SkeyMap SKEY="KAPF" AcadBlock="РезьбоваяЗаглушка" />
+  <SkeyMap SKEY="KACL" AcadBlock="ЗакрепленнаяЗаглушка" />
+  <SkeyMap SKEY="KAGF" AcadBlock="ЗакрепленнаяЗаглушка" />
+  <SkeyMap SKEY="NC??" AcadBlock="НеИзКаталога" />
+  <SkeyMap SKEY="NI??" AcadBlock="Ниппельная бобышка" />
+  <SkeyMap SKEY="NR??" AcadBlock="Ниппель" />
+  <SkeyMap SKEY="NB??" AcadBlock="НиппельBS" />
+  <SkeyMap SKEY="OP" AcadBlock="Заслонка отверстия" />
+  <SkeyMap SKEY="PR" AcadBlock="Заслонка отверстия" />
+  <SkeyMap SKEY="PL" AcadBlock="Пробка" />
+  <SkeyMap SKEY="BM" AcadBlock="ВставнаяПробка" />
+  <SkeyMap SKEY="SB" AcadBlock="Fig8Blind_Open" />
+  <SkeyMap SKEY="SP" AcadBlock="Глухой" />
+  <SkeyMap SKEY="SR" AcadBlock="Разделитель" />
+  <SkeyMap SKEY="PF" AcadBlock="ТрубныйБлок" />
+  <SkeyMap SKEY="TI??" AcadBlock="Затвор" />
+  <SkeyMap SKEY="ADMM" AcadBlock="M_M_Адапт." />
+  <SkeyMap SKEY="ADMF" AcadBlock="M_F_Адапт." />
+  <SkeyMap SKEY="ET??" AcadBlock="Т-образныйОтвод" />
+  <SkeyMap SKEY="MF??" AcadBlock="ЗакрепленнаяТруба" />
+  <!-- End: Fittings -->
+  
+  <!-- Begin: Olets -->
+  <SkeyMap SKEY="SKSW" AcadBlock="Штуцер1" />
+  <SkeyMap SKEY="TH??" AcadBlock="Штуцер1" />
+  <SkeyMap SKEY="WTBW" AcadBlock="Штуцер1" />
+  <SkeyMap SKEY="HC??" AcadBlock="Штуцерная муфта" />
+  <SkeyMap SKEY="LA??" AcadBlock="ОтводнойПатрубок1" />
+  <SkeyMap SKEY="FE??" AcadBlock="Расширяющийся ободок" />
+  <!-- End: Olets -->
+  
+  <!-- Begin: Flanges -->
+  <SkeyMap SKEY="FLSO" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FOSO" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FLSI" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FLBL" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FLSW" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FLRC" AcadBlock="Фланец" />
+  <SkeyMap SKEY="FLWN" AcadBlock="ФланецWN" />
+  <SkeyMap SKEY="FOWN" AcadBlock="ФланецWN" />
+  <SkeyMap SKEY="FLFL" AcadBlock="ФитингФланец" />
+  <SkeyMap SKEY="FLLB" AcadBlock="ФитингФланец" />
+  <SkeyMap SKEY="FLSE" AcadBlock="Выступ" />
+  <SkeyMap SKEY="FLGM" AcadBlock="Фланец-выровненный" />
+  <SkeyMap SKEY="FLGL" AcadBlock="ВинтовойФланец" />
+  <SkeyMap SKEY="FLPF" AcadBlock="ВинтовойФланец" />
+  <SkeyMap SKEY="FLSC" AcadBlock="ВинтовойФланец" />
+  <SkeyMap SKEY="FLCL" AcadBlock="ЗакрепленныйФланец" />
+  <!-- End: Flanges -->
+
+  <!-- Begin: Fittings -->
+  <SkeyMap SKEY="FO??" AcadBlock="Фильтр-Сдвиг" />
+  <!-- End: Fittings -->
+  
+  <!-- Begin: Reference Dimension -->
+  <SkeyMap SKEY="BLD" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="BLD1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="BLD2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="BLD3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="BLD4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="BLD5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="EQU" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="EQU1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="EQU2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="EQU3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="EQU4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="EQU5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="FLR" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="FLR1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="FLR2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="FLR3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="FLR4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="FLR5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="GRD" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="GRD1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="GRD2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="GRD3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="GRD4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="GRD5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="HST" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="HST1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="HST2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="HST3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="HST4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="HST5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="PIP" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="PIP1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="PIP2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="PIP3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="PIP4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="PIP5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="VST" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="VST1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="VST2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="VST3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="VST4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="VST5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="WAL" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="WAL1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="WAL2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="WAL3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="WAL4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="WAL5" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="XXX" AcadBlock="RefDimDashedLine" />
+  <SkeyMap SKEY="XXX1" AcadBlock="RefDimShortCenterLine" />
+  <SkeyMap SKEY="XXX2" AcadBlock="RefDimPhantom" />
+  <SkeyMap SKEY="XXX3" AcadBlock="RefDimDottedLine" />
+  <SkeyMap SKEY="XXX4" AcadBlock="RefDimCenterLine" />
+  <SkeyMap SKEY="XXX5" AcadBlock="RefDimDashedLine" />
+  <!-- End: Reference Dimension -->
+  <!-- Begin: Valves -->
+  <SkeyMap SKEY="V3??" AcadBlock="3-ходовыйКлапан" />
+  <SkeyMap SKEY="V4??" AcadBlock="4-ходовыйКлапан" />
+  <SkeyMap SKEY="AR??" AcadBlock="УголКлапана" />
+  <SkeyMap SKEY="CAFL" AcadBlock="УголКлапана" />
+  <SkeyMap SKEY="RA??" AcadBlock="УголКлапана" />
+  <SkeyMap SKEY="AV??" AcadBlock="УголКлапана" />
+  <SkeyMap SKEY="VB??" AcadBlock="ШаровойКлапан" />
+  <SkeyMap SKEY="VY??" AcadBlock="ДроссельнаяЗаслонка" />
+  <SkeyMap SKEY="CK??" AcadBlock="ОбратныйКлапан-Alt1" />
+  <SkeyMap SKEY="VC??" AcadBlock="ОбратныйКлапанСоСтрелкой" />
+  <SkeyMap SKEY="VD??" AcadBlock="Мембранный клапан" />
+  <SkeyMap SKEY="VT??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="VV??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="CV??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="VS??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="VG??" AcadBlock="ПроходнойКлапан" />
+  <SkeyMap SKEY="VN??" AcadBlock="ИгольчатыйКлапан" />
+  <SkeyMap SKEY="VP??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="EX??" AcadBlock="РасширенныйСильфон" />
+  <SkeyMap SKEY="VR??" AcadBlock="Задвижка" />
+  <SkeyMap SKEY="ZB??" AcadBlock="ДроссельнаяЗаслонка1" />
+  <SkeyMap SKEY="RV??" AcadBlock="УголКлапана" />
+  <SkeyMap SKEY="M3FL" AcadBlock="3-ходовыйКлапан" />
+  <SkeyMap SKEY="VZSC" AcadBlock="ПредохранительныйКлапанНаконечника" />
+  <!-- End: Valves -->
+
+  <!-- Begin: Multi-port Value -->
+  <!-- The actuator for multi-port valve is NOT shown by default -->
+  <!-- Add the following attribute if you want to show the actuator -->
+  <!-- AcadBlockActuator ="MPVActuator" -->
+  <!-- For example: -->
+  <!-- <SkeyMapMPV SKEY = "MD??" AcadBlockBody ="MPVBody" AcadBlockSpindle ="MPVSpindle" AcadBlockActuator ="MPVActuator"/> -->
+  <SkeyMapMPV SKEY="MD??" AcadBlockBody="MPVBody" AcadBlockSpindle="MPVSpindle" />
+  <SkeyMapMPV SKEY="MZ??" AcadBlockBody="MPVBody" AcadBlockSpindle="MPVSpindle" />
+  <!-- End: Multi-port Value -->
+  <!-- Begin: Valve Operators symbols -->
+  <SkeyMap SKEY="01SP" AcadBlock="Рукоятка_оператора1" />
+  <SkeyMap SKEY="02SP" AcadBlock="Пружина_оператора" />
+  <SkeyMap SKEY="03SP" AcadBlock="Рычаг_оператора" />
+  <SkeyMap SKEY="04SP" AcadBlock="Мембрана_оператора" />
+  <SkeyMap SKEY="05SP" AcadBlock="Рукоятка_оператора1" />
+  <SkeyMap SKEY="06SP" AcadBlock="Рукоятка_оператора2" />
+  <SkeyMap SKEY="07SP" AcadBlock="Пробка_оператора" />
+  <SkeyMap SKEY="08SP" AcadBlock="Ползун_оператора" />
+  <SkeyMap SKEY="09SP" AcadBlock="Оператор_Alt1" />
+  <SkeyMap SKEY="10SP" AcadBlock="Оператор_Alt2" />
+  <SkeyMap SKEY="11SP" AcadBlock="Оператор_Alt3" />
+  <SkeyMap SKEY="12SP" AcadBlock="Оператор_Alt4" />
+  <SkeyMap SKEY="13SP" AcadBlock="Мембрана_оператора" />
+  <SkeyMap SKEY="14SP" AcadBlock="Оператор_Alt5" />
+  <SkeyMap SKEY="15SP" AcadBlock="Оператор_Alt6" />
+  <!-- End: Valve Operators symbols -->
+
+  <!-- Begin: Pipe Supports -->
+  <SkeyMap SKEY="SUPP" AcadBlock="Опора" />
+  <SkeyMap SKEY="01HG" AcadBlock="Опора-общая" />
+  <SkeyMap SKEY="ANCH" AcadBlock="Опора-якорь" />
+  <SkeyMap SKEY="GUID" AcadBlock="Опора-GUID" />
+  <SkeyMap SKEY="SPRG" AcadBlock="Опора-пружина" />
+  <SkeyMap SKEY="SUPP" AcadBlock="Опора" />
+  <SkeyMap SKEY="CLVT" AcadBlock="Конец" />
+  <SkeyMap SKEY="CLMP" AcadBlock="Зажим" />
+  <SkeyMap SKEY="DUCK" AcadBlock="Опора-катет1" />
+  <SkeyMap SKEY="HANG" AcadBlock="Опора-подвеска1" />
+  <SkeyMap SKEY="SKID" AcadBlock="Опора-SKID" />
+  <SkeyMap SKEY="PSIG" AcadBlock="Support-Secondary" />
+   <SkeyMap SKEY="SUPD" AcadBlock="ОпораМ" />
+   <SkeyMap SKEY="SUPN" AcadBlock="ОпораН" />
+   <SkeyMap SKEY="SUPS" AcadBlock="ОпораС" />
+  <!-- End: Pipe Supports -->
+  
+  <!-- Begin: Connections -->
+  <SkeyMap SKEY="END-CONNECTION-PIPELINE" AcadBlock="SplitMark" />
+  <SkeyMap SKEY="END-CONNECTION-EQUIPMENT" AcadBlock="EndEquipment" />
+  <SkeyMap SKEY="TAP-CONNECTION" AcadBlock="EndTapping" />
+  <SkeyMap SKEY="ISO-SPLIT-POINT" AcadBlock="SplitMark" />
+  <!-- 'OnFitting': 'true' or 'false' (default) -->
+  <!--     'true'  = Generate end type symbol(s) for unconnected connection point(s); -->
+  <!--               typically used for flanges or flanged fittings. -->
+  <!--     'false' = Do not generate end type symbol(s) for unconnected connection -->
+  <!--               point(s). -->
+  <EndTypeMap SKEY="WF" AcadBlock="FieldWeld" />
+  <EndTypeMap SKEY="WS" AcadBlock="FieldWeld" />
+  <EndTypeMap SKEY="WW" AcadBlock="Weld" />
+  <EndTypeMap SKEY="BW" AcadBlock="ButtWeld" />
+  <EndTypeMap SKEY="SO" AcadBlock="Weld" />
+  <EndTypeMap SKEY="WN" AcadBlock="Сварной шов" />
+  <EndTypeMap SKEY="SJ" AcadBlock="Сварной шов" />
+  <EndTypeMap SKEY="SW" AcadBlock="SocketWeld" />
+  <EndTypeMap SKEY="GL" AcadBlock="Glued" />
+  <EndTypeMap SKEY="SC" AcadBlock="Thread" />
+  <EndTypeMap SKEY="FL" AcadBlock="ФитингФланец" OnFitting="true" />
+  <EndTypeMap SKEY="LFL" AcadBlock="Фланец-выровненный" OnFitting="true" />
+  <EndTypeMap SKEY="FA" AcadBlock="КонецРаструб" OnFitting="true" />
+  <EndTypeMap SKEY="TC" AcadBlock="КонецРаструб" OnFitting="true" />
+  <EndTypeMap SKEY="BV" AcadBlock="Сварное соединение встык" />
+  <EndTypeMap SKEY="CL" AcadBlock="Зажим" />
+  <!-- End: Connections -->
+  
+  <!-- Begin: Instrument symbols -->
+  <SkeyMap SKEY="ITFL" AcadBlock="КИП-тройник" />
+  <SkeyMap SKEY="II??" AcadBlock="КИП-линейный" />
+  <!-- End: Instrument symbols -->
+  
+  <!-- Begin: Misc. symbols -->  
+  <SkeyMap SKEY="FLOW" AcadBlock="СтрелкаПотока" />
+  <SkeyMap SKEY="FLOR" AcadBlock="Floor_Symbol" />
+  <SkeyMap SKEY="RPAD" AcadBlock="ReinforcementPad" />
+  <!-- End : Misc. symbols -->
+  
+  <!-- Begin: VALVE SKEY TO SPINDLE SKEY -->
+  <ValveToSpindleSkeyMap ValveSKEY="AV??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VV??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VD??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VG??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VT??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VS??" SpindleSKEY="08SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="V3??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="V4??" SpindleSKEY="01SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VB??" SpindleSKEY="03SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VY??" SpindleSKEY="03SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VK??" SpindleSKEY="03SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VP??" SpindleSKEY="07SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="CV??" SpindleSKEY="13SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="VR??" SpindleSKEY="02SP" />
+  <ValveToSpindleSkeyMap ValveSKEY="ZB??" SpindleSKEY="10SP" />
+  <!-- End: VALVE SKEY TO SPINDLE SKEY -->
+
+  <!-- Begin: ASYMMETRIC COMPONENT LIST -->
+  <AsymmetricComponent Type="Flange" Skey="" EndType="FL" />
+  <AsymmetricComponent Type="COUPLING" Skey="FE??" EndType="TC" />
+  <!-- End: ASYMMETRIC COMPONENT LIST -->
+
+  <SkeyCLTextMap SKEY="BLD*" CLTEXT="BUILDING" />
+  <SkeyCLTextMap SKEY="EQU*" CLTEXT="CL EQUIPMENT" />
+  <SkeyCLTextMap SKEY="FLR*" CLTEXT="FLOOR" />
+  <SkeyCLTextMap SKEY="GRD*" CLTEXT="CL GRID" />
+  <SkeyCLTextMap SKEY="HST*" CLTEXT="CL BEAM" />
+  <SkeyCLTextMap SKEY="PIP*" CLTEXT="CL PIPE" />
+  <SkeyCLTextMap SKEY="VST*" CLTEXT="CL COLUMN" />
+  <SkeyCLTextMap SKEY="WAL*" CLTEXT="WALL" />
+</IsoSkeyMap>

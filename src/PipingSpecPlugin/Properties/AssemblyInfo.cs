@@ -1,12 +1,12 @@
-using System.Reflection;
+﻿using System.Reflection;
 using System.Runtime.InteropServices;
 using Autodesk.AutoCAD.Runtime;
 
 [assembly: AssemblyTitle("PipingSpecPlugin")]
-[assembly: AssemblyDescription("Plant 3D piping specification generator")]
+[assembly: AssemblyDescription("Инструменты для трубопроводных проектов AutoCAD Plant 3D 2025/2026")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("In-house")]
-[assembly: AssemblyProduct("PipingSpecPlugin")]
+[assembly: AssemblyProduct("SpecGen")]
 [assembly: AssemblyCopyright("")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -43,4 +43,5 @@ using Autodesk.AutoCAD.Runtime;
 [assembly: CommandClass(typeof(PipingSpecPlugin.Commands.ToSolidCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Tracing.TracingCommand))]
 [assembly: CommandClass(typeof(PipingSpecPlugin.Mcp.McpCommand))]
+[assembly: CommandClass(typeof(PipingSpecPlugin.Commands.IsometricCommand))]
 [assembly: ExtensionApplication(typeof(PipingSpecPlugin.PluginBootstrap))]

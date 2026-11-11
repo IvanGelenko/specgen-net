@@ -14,3 +14,8 @@ VERSION text eol=lf
 *.png  binary
 *.dll  binary
 *.exe  binary
+
+# Preserve byte-for-byte vendor mapping/license files, including their whitespace.
+iso/assets/IsoSkeyAcadBlockMap.xml -whitespace
+iso/data/IsoSkeyAcadBlockMap.xml -whitespace
+iso/assets/PDFsharp-LICENSE.txt -whitespace

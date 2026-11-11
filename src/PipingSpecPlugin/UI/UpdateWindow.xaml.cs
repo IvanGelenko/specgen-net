@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Windows;
 using PipingSpecPlugin.Update;
 
@@ -13,6 +13,7 @@ namespace PipingSpecPlugin.UI
     public partial class UpdateWindow : Window
     {
         readonly UpdateInfo _info;
+        System.Threading.CancellationTokenSource _downloadCancellation;
 
         public UpdateWindow(UpdateInfo info)
         {
@@ -37,11 +38,13 @@ namespace PipingSpecPlugin.UI
         async void UpdateButton_Click(object sender, RoutedEventArgs e)
         {
             UpdateButton.IsEnabled = false;
-            LaterButton.IsEnabled = false;
+            LaterButton.IsEnabled = true;
+            using var cancellation=_downloadCancellation=new System.Threading.CancellationTokenSource();
             StatusText.Text = "Загрузка установщика…";
             try
             {
-                bool ok = await UpdateService.DownloadAndLaunchInstallerAsync(_info);
+                var progress=new Progress<int>(value=>StatusText.Text=value>=0?$"Загрузка установщика: {value}%":"Загрузка установщика…");
+                bool ok = await UpdateService.DownloadAndLaunchInstallerAsync(_info,progress,cancellation.Token);
                 if (ok)
                 {
                     MessageBox.Show(
@@ -61,13 +64,17 @@ namespace PipingSpecPlugin.UI
                     UpdateButton.IsEnabled = true;
                 }
             }
+            catch (OperationCanceledException) { StatusText.Text="Загрузка отменена."; }
             catch (Exception ex)
             {
                 StatusText.Text = "Ошибка загрузки: " + ex.Message;
                 LaterButton.IsEnabled = true;
                 UpdateButton.IsEnabled = true;
             }
+            finally{_downloadCancellation=null;LaterButton.IsEnabled=true;if(IsVisible)UpdateButton.IsEnabled=true;}
         }
+
+        protected override void OnClosed(EventArgs e){_downloadCancellation?.Cancel();base.OnClosed(e);}
 
         void ReleasePageButton_Click(object sender, RoutedEventArgs e)
         {

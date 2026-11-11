@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <ApplicationPackage SchemaVersion="1.0"
                     AutodeskProduct="AutoCAD"
                     ProductType="Application"
@@ -20,7 +20,7 @@
     <RuntimeRequirements OS="Win64"
                          Platform="AutoCAD*"
                          SeriesMin="R25.0"
-                         SeriesMax="R30.0"
+                         SeriesMax="R25.1"
                          SupportPath="./Contents/Windows/"/>
     <ComponentEntry AppName="PipingSpecPlugin"
                     ModuleName="./Contents/Windows/PipingSpecPlugin.dll"

@@ -1,4 +1,4 @@
-# PipingSpecPlugin (.NET)
+﻿# PipingSpecPlugin (.NET)
 
 Version 1.3.5: see [the accuracy verification report](ACCURACY-REPORT.md) for
 the fixes, checks against project 0873-000-ТХМ, and remaining data limitations.
@@ -298,3 +298,11 @@ tools\NavisAuditPreview → renders the window from such a JSON report
 With the bundle installed, Navisworks loads the bundle's DLL (same plug-in id)
 even when the smoke tool is given another one. Copy a fresh build into
 `%APPDATA%\Autodesk\ApplicationPlugins\NavisAudit.bundle\Contents\<year>\`.
+
+## Изометрии SpecGen (1.3.35)
+
+`PSISOMETRIC` / кнопка «Изометрии» на вкладке «Спецификация»: выбор линии, локальной копии шаблона А2, ручного общего масштаба и папки выпуска. DWG по листам и один объединённый PDF. Учёт точек разрыва, размеров, отметок, обозначений и категорий спецификации выполняется программно, без ИИ и без MCP в рабочем процессе. Подробности: [iso/README.md](iso/README.md).
+
+Установщик рассчитан на Plant 3D 2025/2026 x64, проверяет .NET 8 Desktop Runtime, нативные библиотеки Plant, шрифт GOST_B.TTF и целостность своего комплекта. SDK и исходный код на клиентском ПК не требуются.
+
+Обновление ищет именно опубликованный GitHub Release с файлом `PipingSpecPlugin-Setup.exe`, а не новые коммиты в `main`. При ручной проверке сетевой сбой показывается отдельно от отсутствия новой версии; журнал — `%LOCALAPPDATA%\PipingSpecPlugin\update.log`. Загрузка показывает прогресс, поддерживает отмену и проверяет размер/SHA-256. Автоматическая проверка при запуске остаётся ненавязчивой.

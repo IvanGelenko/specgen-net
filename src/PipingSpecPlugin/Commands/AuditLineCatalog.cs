@@ -78,6 +78,7 @@ namespace PipingSpecPlugin.Commands
                                 ClassName = record.PnPClassName,
                                 // Blank, not only null, falls back — as in the live read.
                                 Description = string.IsNullOrWhiteSpace(record.PartSizeLongDesc) ? record.PartFamilyLongDesc : record.PartSizeLongDesc,
+                                InsulationThickness = record.InsulationThickness,
                                 Diameter = record.NominalDiameter, WallRaw = record.WallThickness, LengthUnit = record.LengthUnit,
                                 Material = record.Material, MaterialCode = record.MaterialCode,
                                 Tag = record.EquipTag, Status = record.Status, Spec = record.Spec };

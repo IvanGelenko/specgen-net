@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <IsPackable>false</IsPackable>
@@ -55,6 +55,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\PluginSettings.cs" Link="Settings\PluginSettings.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\PickerSelectionMemory.cs" Link="Settings\PickerSelectionMemory.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\RunLogger.cs" Link="Settings\RunLogger.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateService.cs" Link="Update\UpdateService.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateInfo.cs" Link="Update\UpdateInfo.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateChecker.cs" Link="Update\UpdateChecker.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Layers\TagLayerMover.cs" Link="Layers\TagLayerMover.cs" />

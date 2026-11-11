@@ -281,6 +281,11 @@ namespace PipingSpecPlugin
             //     "icon32.png"));
             // tab.Panels.Add(new RibbonPanel { Source = toolsSource });
 
+            var isoSource = new RibbonPanelSource { Title = "Изометрии" };
+            isoSource.Items.Add(MakeButton("Изометрия", "PSISOMETRIC",
+                "Создать изометрию выбранной линии Plant 3D: размеры, позиции и спецификация. "
+                + "Результат — DWG и PDF. Исходная модель не изменяется."));
+            tab.Panels.Add(new RibbonPanel { Source = isoSource });
             var helpSource = new RibbonPanelSource { Title = "Справка" };
             var auditSource = new RibbonPanelSource { Title = "Проверка модели" };
             auditSource.Items.Add(MakeButton("Аудит", "PSAUDIT",

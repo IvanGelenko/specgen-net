@@ -53,6 +53,12 @@ jobs:
         shell: powershell
         run: dotnet test test/PipingSpecPlugin.Tests/PipingSpecPlugin.Tests.csproj -c Release --nologo
 
+      - name: Check isometric planning
+        shell: powershell
+        run: |
+          dotnet run --project iso/tests/IsoGenerator.Core.Checks -c Release
+          if ($LASTEXITCODE -ne 0) { throw "Isometric checks failed" }
+
       - name: Build plugin + installer
         shell: cmd
         run: build.cmd

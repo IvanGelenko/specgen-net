@@ -61,7 +61,7 @@ namespace Plant3dMcp
                     list.Add(new { name = p.Name, position = Arr(p.Position), direction = Arr(p.Direction), endType = p.EndType });
                 }
                 tr.Commit();
-                return new { handle = id.Handle.ToString(), cls = id.ObjectClass.Name, position = Arr(part.Position), ports = list };
+                return new { handle = id.Handle.ToString(), cls = id.ObjectClass.Name, position = Arr(part.Position), operatorDirection = part is InlineAsset asset ? Arr(asset.ZAxis) : null, ports = list };
             }
         }
 

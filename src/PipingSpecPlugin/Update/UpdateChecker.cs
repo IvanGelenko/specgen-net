@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Text.Json;
 
@@ -32,7 +32,7 @@ namespace PipingSpecPlugin.Update
         public static UpdateInfo Evaluate(string releaseJson, string currentVersion)
         {
             var none = UpdateInfo.None(currentVersion);
-            if (string.IsNullOrWhiteSpace(releaseJson)) return none;
+            if (string.IsNullOrWhiteSpace(releaseJson)) return UpdateInfo.Failed(currentVersion,"GitHub вернул пустой ответ.");
 
             try
             {
@@ -46,11 +46,11 @@ namespace PipingSpecPlugin.Update
 
                 string tag = root.TryGetProperty("tag_name", out var t)
                     ? t.GetString() : null;
-                if (string.IsNullOrWhiteSpace(tag)) return none;
+                if (string.IsNullOrWhiteSpace(tag)) return UpdateInfo.Failed(currentVersion,"В ответе GitHub отсутствует версия релиза.");
 
                 var latest = NormalizeVersion(tag);
                 var current = NormalizeVersion(currentVersion);
-                if (latest == null) return none;
+                if (latest == null) return UpdateInfo.Failed(currentVersion,"Некорректный номер версии релиза GitHub.");
 
                 string installerUrl = null;
                 string installerSha256 = null;
@@ -97,7 +97,7 @@ namespace PipingSpecPlugin.Update
             }
             catch
             {
-                return none;
+                return UpdateInfo.Failed(currentVersion,"Не удалось прочитать ответ GitHub о последней версии.");
             }
         }
 

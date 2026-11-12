@@ -85,6 +85,12 @@ public static class DimensionChainPlanner
             }
             else if(ends.Length==2)EdgeBetween(Id(ends[0]),Id(ends[1]),p.Handle,kind);
         }
+        foreach(var reference in snapshot.BoundaryTapAxes??Array.Empty<BoundaryTapAxis>())
+            if(keys.TryGetValue(reference.Handle+":"+reference.Port,out int surface))
+            {
+                int axis=NodeAt(reference.Axis,"TapAxis",reference.Handle);
+                EdgeBetween(axis,surface,reference.Handle,"TapOffset");
+            }
         foreach(var c in snapshot.Connections)
             if(keys.TryGetValue(c.FirstHandle+":"+c.FirstPort,out int a)&&keys.TryGetValue(c.SecondHandle+":"+c.SecondPort,out int b))sets.Join(a,b);
         return new(nodes,edges,sets);
@@ -132,7 +138,8 @@ public static class DimensionChainPlanner
                 var tags=rootNodes[root].Select(i=>nodes[i].Tag).ToHashSet();
                 bool anchor=degree!=2||tags.Contains("Axis")||tags.Contains("TapAxis")||tags.Contains("ValvePort")||tags.Contains("FlangePort")||(!tags.Contains("ElbowPort")&&!tags.Contains("TeePort")&&tags.Contains("PipePort"));
                 if(rootNodes[root].Any(n=>includedPorts.Contains(nodes[n].Source+":"+nodes[n].PortName)))anchor=false;
-                bool tapSurface=rootNodes[root].Any(n=>snapshot.Parts.Any(p=>p.Handle==nodes[n].Source&&p.Ports.Any(port=>port.Name==nodes[n].PortName&&port.EndCondition=="TAP")));
+                bool boundaryTapSurface=(snapshot.BoundaryTapAxes??Array.Empty<BoundaryTapAxis>()).Any(r=>rootNodes[root].Any(n=>nodes[n].Source.Equals(r.Handle,StringComparison.OrdinalIgnoreCase)&&nodes[n].PortName==r.Port));
+                bool tapSurface=boundaryTapSurface||rootNodes[root].Any(n=>snapshot.Parts.Any(p=>p.Handle==nodes[n].Source&&p.Ports.Any(port=>port.Name==nodes[n].PortName&&port.EndCondition=="TAP")));
                 if(degree==2&&tapSurface&&!tags.Contains("TapAxis"))anchor=false;
                 if(!anchor)continue;
                 double t=Dot(Sub(nodes[root].Point,origin),direction);
@@ -141,6 +148,19 @@ public static class DimensionChainPlanner
             }
             var ordered=stations.OrderBy(s=>s.T).ToList();
             for(int i=ordered.Count-1;i>0;i--)if(Math.Abs(ordered[i].T-ordered[i-1].T)<.01)ordered.RemoveAt(i);
+            // A flange/joint interval must contribute to a labelled chain dimension.
+            // Merge it into its neighbour instead of silently skipping its installation length
+            // or forcing a separate number over a narrow library symbol.
+            for(int i=1;i<ordered.Count&&ordered.Count>2;i++)
+            {
+                var intervalKinds=indices.Select(index=>edges[index]).Where(edge=>
+                {
+                    double ta=Dot(Sub(nodes[edge.A].Point,origin),direction),tb=Dot(Sub(nodes[edge.B].Point,origin),direction);
+                    return Math.Max(ta,tb)>ordered[i-1].T+.001&&Math.Min(ta,tb)<ordered[i].T-.001;
+                }).Select(edge=>edge.Kind).ToArray();
+                if(!intervalKinds.Contains("Flange")||!intervalKinds.All(kind=>kind is "Flange" or "Joint"))continue;
+                ordered.RemoveAt(i==1?i:i-1);i=Math.Max(0,i-2);
+            }
             if(ordered.Count<2)continue;
             string chainId=$"chain-{++chainNumber:D3}";
             var a2=ProjectNode(ordered[0].Root);var b2=ProjectNode(ordered[^1].Root);double dx=b2.X-a2.X,dy=b2.Y-a2.Y,screenLength=Math.Sqrt(dx*dx+dy*dy);
@@ -242,7 +262,9 @@ public static class DimensionChainPlanner
                     double ta=Dot(Sub(nodes[edge.A].Point,origin),direction),tb=Dot(Sub(nodes[edge.B].Point,origin),direction);
                     return Math.Max(ta,tb)>ordered[i-1].T+.001&&Math.Min(ta,tb)<ordered[i].T-.001;
                 }).Select(edge=>edge.Kind).ToArray();
-                if(kinds.Length>0&&kinds.All(kind=>kind is "Flange" or "Joint" or "Tee" or "Elbow"))continue;
+                // Flange-only intervals still have a real installation length. Omitting
+                // them leaves a hole between pipe dimensions even when hardware is hidden in BOM.
+                if(kinds.Length>0&&kinds.All(kind=>kind is "Joint" or "Tee" or "Elbow"))continue;
                 dimensions.Add(Dimension(i-1,i,"chain",firstOffset));
             }
             dimensions.Add(Dimension(0,ordered.Count-1,"overall",ordered.Count>2?firstOffset+7:firstOffset));

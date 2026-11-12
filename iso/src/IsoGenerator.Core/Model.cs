@@ -1,4 +1,4 @@
-namespace IsoGenerator.Core;
+﻿namespace IsoGenerator.Core;
 
 // Model coordinates remain in millimeters. Drawing layout must never change them.
 public readonly record struct ModelPoint(double X, double Y, double Z)
@@ -10,10 +10,11 @@ public sealed record Port(string Name, ModelPoint Position, ModelPoint Direction
 public sealed record Part(string SourceDrawing, string Handle, string Kind, string Line,
     IReadOnlyList<Port> Ports, IReadOnlyDictionary<string,string> Properties, ModelPoint? OperatorDirection = null);
 public sealed record ModelIsoMarker(string Handle,string HostHandle,string HostPort,ModelPoint Position,int InformationType);
+public sealed record BoundaryTapAxis(string Handle,string Port,ModelPoint Axis);
 // Connections come from Plant topology; proximity alone is not a connection.
 public sealed record Connection(string FirstHandle, string FirstPort, string SecondHandle, string SecondPort);
 public sealed record PipelineSnapshot(int SchemaVersion, string SourceDrawing,
-    IReadOnlyList<Part> Parts, IReadOnlyList<Connection> Connections, IReadOnlyList<string> Warnings,IReadOnlyList<Part>? Accessories=null,IReadOnlyList<ModelIsoMarker>? IsoMarkers=null,IReadOnlyList<Connection>? RequiredCuts=null);
+    IReadOnlyList<Part> Parts, IReadOnlyList<Connection> Connections, IReadOnlyList<string> Warnings,IReadOnlyList<Part>? Accessories=null,IReadOnlyList<ModelIsoMarker>? IsoMarkers=null,IReadOnlyList<Connection>? RequiredCuts=null,IReadOnlyList<BoundaryTapAxis>? BoundaryTapAxes=null);
 
 public static class IsometricProjection
 {

@@ -49,7 +49,10 @@ public sealed class GenerateCommand
             var snapshot=Capture(doc.Database,doc.Name,ObjectId.Null,line,handles,propertyHints,cancellationToken:token,report:count=>view.Report("Этап 1 из 6 — чтение модели",$"Прочитано объектов: {count}"));
             token.ThrowIfCancellationRequested();
             if(string.IsNullOrWhiteSpace(projectIsoDirectory))throw new InvalidOperationException("Не определена папка Isometric активного проекта.");
-            string folder=Path.GetFullPath(outputDirectory);job=Path.Combine(folder,".iso-jobs",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(job);
+            string folder=Path.GetFullPath(outputDirectory);
+            // Core Console rejects untrusted SCR files on network shares before any script command runs.
+            // Keep the complete working set local; publish only the finished DWG/PDF to the chosen folder.
+            job=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"IsoGenerator","Jobs",Guid.NewGuid().ToString("N"));Directory.CreateDirectory(job);
             string library=Path.Combine(job,"IsoSymbolStyles.dwg"),mapping=Path.Combine(job,"IsoSkeyAcadBlockMap.xml");
             File.Copy(Path.Combine(projectIsoDirectory,"IsoSymbolStyles.dwg"),library);File.Copy(Path.Combine(projectIsoDirectory,"IsoSkeyAcadBlockMap.xml"),mapping);
             File.WriteAllText(Path.Combine(job,"snapshot.json"),JsonSerializer.Serialize(snapshot,new JsonSerializerOptions{WriteIndented=true}));
@@ -110,7 +113,11 @@ public sealed class GenerateCommand
                         }
                         await File.WriteAllTextAsync(Path.Combine(work,"console.log"),(await stdout)+"\n"+(await stderr));
                         token.ThrowIfCancellationRequested();
-                        if(process.ExitCode!=0||!File.Exists(drawing)||!File.Exists(pdf))throw new IOException($"Не выпущен лист {i+1}.");
+                        if(process.ExitCode!=0||!File.Exists(drawing)||!File.Exists(pdf))
+                        {
+                            string missing=string.Join(", ",new[]{drawing,pdf}.Where(path=>!File.Exists(path)).Select(Path.GetFileName));
+                            throw new IOException($"Не выпущен лист {i+1}. Код завершения Core Console: {process.ExitCode}."+(missing.Length>0?$" Не созданы: {missing}.":"")+$" Журнал: {Path.Combine(work,"console.log")}");
+                        }
                         progress.Report("Этап 4 из 6 — выпуск листов",$"Готово листов: {i+1} из {sheets.Count}",i+1,sheets.Count);
                     }
                     token.ThrowIfCancellationRequested();progress.Report("Этап 5 из 6 — общий PDF",$"Объединение {pages.Count} страниц…");

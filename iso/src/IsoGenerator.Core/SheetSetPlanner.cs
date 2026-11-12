@@ -101,13 +101,15 @@ public static class SheetSetPlanner
         var mandatory=(source.RequiredCuts??Array.Empty<Connection>()).Select(CutPreferences.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool CanCut(Connection c)=>!cutPolicy.Protected.Contains(CutPreferences.Key(c))||mandatory.Contains(CutPreferences.Key(c));
         var all=source.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
+        var runContinuity=new SheetRunContinuity(source);
+        bool HasInteriorGap(IEnumerable<string> handles)=>mandatory.Count==0&&runContinuity.HasInteriorGap(handles);
         var leaves=new List<PipelineSnapshot>();
-        PipelineSnapshot Subset(HashSet<string> handles)=>source with
+        PipelineSnapshot Subset(HashSet<string> handles)=>TapDimensionReferences.Apply(source,source with
         {
             Parts=source.Parts.Where(p=>handles.Contains(p.Handle)).ToArray(),
             Accessories=source.Accessories?.Where(p=>handles.Contains(p.Properties.GetValueOrDefault("ConnectorHandle",""))).ToArray(),
             Connections=source.Connections.Where(c=>handles.Contains(c.FirstHandle)&&handles.Contains(c.SecondHandle)).ToArray()
-        };
+        });
         bool Fits(PipelineSnapshot snapshot)
         {
             try{Plan(snapshot);return true;}
@@ -201,15 +203,15 @@ public static class SheetSetPlanner
             var paired=candidates.Skip(singleCount).ToArray();
             // Rank ring and bridge cuts together. Trying every small side branch first
             // consumes the search before any balanced ring split is considered.
-            ordered=ordered.Concat(paired).OrderBy(c=>c.Balance).ThenBy(c=>PreferredRank(c.A)).ThenBy(c=>c.ValveDistance).ToArray();
+            ordered=ordered.Concat(paired).Where(c=>!HasInteriorGap(c.A)&&!HasInteriorGap(c.B)).OrderBy(c=>c.Balance).ThenBy(c=>PreferredRank(c.A)).ThenBy(c=>c.ValveDistance).ToArray();
             foreach(var c in ordered.Take(4))if(Fits(Subset(c.A))&&Fits(Subset(c.B))&&FitsPair(snapshot,Subset(c.A),Subset(c.B))){leaves.Add(Subset(c.A));leaves.Add(Subset(c.B));return;}
             if(ordered.Length==0)throw new SheetCapacityException("Не удалось разделить линию по соединениям труб. Требуется ручное указание границы листов.");
             // Avoid peeling off single components when more than two sheets are required.
             var balanced=ordered.Where(c=>c.Balance<=Physical(handles)*.6).ToArray();
             var pool=balanced.Length>0?balanced:ordered;
-            // Compare a valve-preferred cut with a balanced cut by the resulting sheet count.
+            // Try alternative boundaries when the most balanced cut cannot be laid out.
             // Memoized subproblems keep the search bounded and independent of line identifiers.
-            var options=new[]{pool[0],pool.OrderBy(c=>c.Balance).ThenBy(c=>c.ValveDistance).First()}
+            var options=pool.Concat(ordered).Take(12)
                 .DistinctBy(c=>string.Join("|",c.A.OrderBy(h=>h,StringComparer.Ordinal))).ToArray();
             PipelineSnapshot[]? best=null;
             foreach(var option in options)
@@ -257,7 +259,7 @@ public static class SheetSetPlanner
             foreach(var pair in neighbours)
             {
                 var combined=Subset(leaves[pair.A].Parts.Concat(leaves[pair.B].Parts).Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase));
-                if(rejectedMerges.Contains(Key(combined))||!Fits(combined))continue;
+                if(rejectedMerges.Contains(Key(combined))||HasInteriorGap(combined.Parts.Select(p=>p.Handle))||!Fits(combined))continue;
                 leaves[pair.A]=combined;leaves.RemoveAt(pair.B);merged=true;break;
             }
         }while(merged);

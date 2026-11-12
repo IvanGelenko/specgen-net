@@ -448,6 +448,13 @@ var weldFlangeDefinition=new IsoBlockDefinition("LibraryFlange",new Dictionary<s
 var weldFlangeMap=new IsoSymbolMap("<Map><SkeyMap SKEY='FLWN' AcadBlock='LibraryFlange'/></Map>",new IsoBlockCatalog(new[]{weldFlangeDefinition}));
 var weldFlangeSnapshot=Snapshot(new[]{weldFlange,weldPipe},new[]{new Connection("weld-flange","S2","weld-pipe","S1")});
 var weldFlangeScene=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap);
+Assert(weldFlangeScene.Dimensions.Any(d=>Math.Abs(d.Millimeters-1050)<.001),"A flange-only interval is included in the installation dimension chain");
+var flangeDimensionsHiddenBom=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap,excludeFlangeHardware:true);
+Assert(flangeDimensionsHiddenBom.Dimensions.Any(d=>Math.Abs(d.Millimeters-1050)<.001),"Hiding a flange from BOM preserves its installation length");
+var flangeBetweenPipes=Snapshot(new[]{Pipe("flange-upstream",new(-1000,0,0),new(0,0,0)),weldFlange,weldPipe},new[]{new Connection("flange-upstream","S2","weld-flange","S1"),new Connection("weld-flange","S2","weld-pipe","S1")});
+var completeFlangeChain=DimensionChainPlanner.Build(flangeBetweenPipes,Plain);
+Near(completeFlangeChain.Where(d=>d.Role=="chain").Sum(d=>d.Millimeters),2050);
+Assert(completeFlangeChain.Any(d=>d.Role=="chain"&&Math.Abs(d.Millimeters-1050)<.001),"Flange length is merged into an adjacent labelled interval, never omitted between two pipe dimensions");
 var weldFlangeGlyph=weldFlangeScene.Symbols!.Single(g=>g.SourceId=="weld-flange");
 var flangeWeld=weldFlangeScene.Welds!.Single();
 Near(weldFlangeGlyph.Origin.X+weldFlangeGlyph.XAxis.X*.15625,flangeWeld.Position.X);
@@ -550,6 +557,25 @@ var coupledLoops=LoopFixture(new ModelPoint[]{new(0,0,0),new(1000,0,0),new(1000,
 Assert(new SchematicLayout(coupledLoops).ClosedLoops==2,"Coupled cycles with a shared pipe are solved together");
 var boundaryTall=tallSnapshot with{Connections=tallSnapshot.Connections.Append(new Connection("T00","S1","outside-line","S2")).ToArray()};
 Assert(SheetSetPlanner.Build(boundaryTall).Count==2,"A boundary object outside the selected line does not break adjacent-sheet context");
+var continuity=new SheetRunContinuity(Snapshot(new[]{
+    Pipe("run-left",new(0,0,0),new(100,0,0)),Pipe("run-middle",new(100,0,0),new(200,0,0)),Pipe("run-right",new(200,0,0),new(300,0,0)),
+    Pipe("parallel",new(0,50,0),new(300,50,0))},Array.Empty<Connection>()));
+Assert(continuity.HasInteriorGap(new[]{"run-left","run-right","parallel"}),"A connected bypass must not hide an omitted middle of a straight run");
+Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle"}),"A sheet boundary at the end of a straight run is allowed");
+Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle","run-right"}),"The complete run has no interior gap");
+var tapHost=Pipe("tap-host",new(0,0,1000),new(1000,0,1000));
+tapHost=tapHost with{Ports=tapHost.Ports.Append(new Port("D1",new(500,0,900),new(0,0,-1),"TAP")).ToArray()};
+var tapBranch=Pipe("tap-branch",new(500,0,0),new(500,0,900));
+var wholeTap=Snapshot(new[]{tapHost,tapBranch},new[]{new Connection("tap-host","D1","tap-branch","S2")});
+var tapFragment=TapDimensionReferences.Apply(wholeTap,wholeTap with{Parts=new[]{tapBranch},Connections=Array.Empty<Connection>()});
+Assert(tapFragment.Parts.Count==1&&tapFragment.BoundaryTapAxes!.Count==1,"Receiving pipe axis survives on the branch sheet without duplicating its physical part");
+foreach(int turn in Enumerable.Range(0,4))
+{
+    var tapLayout=new SchematicLayout(tapFragment,quarterTurns:turn);
+    var tapDimensions=DimensionChainPlanner.Build(tapFragment,p=>IsometricProjection.Project(p,quarterTurns:turn),quarterTurns:turn,projectSource:tapLayout.Project);
+    Assert(tapDimensions.Any(d=>Math.Abs(d.Millimeters-1000)<.001&&(d.ModelStart!.Value.Z==1000||d.ModelEnd!.Value.Z==1000)),"Branch dimension terminates at receiving pipe axis on another sheet");
+    Assert(!tapDimensions.Any(d=>Math.Abs(d.Millimeters-900)<.001),"Branch surface is not a dimension endpoint");
+}
 var ringNodes=Enumerable.Range(0,120).Select(i=>{int side=i/30,k=i%30;return side switch{0=>new ModelPoint(k*100,0,0),1=>new(3000,k*100,0),2=>new(3000-k*100,3000,0),_=>new(0,3000-k*100,0)};}).ToArray();
 var ringSnapshot=LoopFixture(ringNodes,Enumerable.Range(0,120).Select(i=>(i,(i+1)%120)).ToArray());
 var ringSheets=SheetSetPlanner.Build(ringSnapshot);

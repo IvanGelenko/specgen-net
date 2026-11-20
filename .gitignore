@@ -23,6 +23,9 @@ dist_installer/
 dist/
 artifacts/
 specgen-backup-*/
+.agents/
+.claude/
+.codex/
 
 # Local tool settings of other assistants
 .codex/

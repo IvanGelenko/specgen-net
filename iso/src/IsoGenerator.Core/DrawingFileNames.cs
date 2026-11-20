@@ -12,10 +12,10 @@ public static class DrawingFileNames
         if(first is "CON" or "PRN" or "AUX" or "NUL"||System.Text.RegularExpressions.Regex.IsMatch(first,"^(COM|LPT)[1-9]$"))stem="_"+stem;
         return stem;
     }
-    public static string Dwg(string folder,string line,int number,int total)
+    public static string Dwg(string folder,string line,int number,int total,bool alwaysNumber=false)
     {
         if(number<1||total<1||number>total)throw new ArgumentOutOfRangeException(nameof(number));
-        return Path.Combine(folder,LineStem(line)+(total>1?$"(L{number})":"")+".dwg");
+        return Path.Combine(folder,LineStem(line)+(alwaysNumber||total>1?$"(L{number})":"")+".dwg");
     }
     public static (string[] Drawings,string Pdf) OutputSet(string folder,string line,int total,int index=0)
     {
@@ -23,9 +23,36 @@ public static class DrawingFileNames
         string stem=LineStem(line)+(index>0?$" ({index})":"");
         return (Enumerable.Range(1,total).Select(number=>Dwg(folder,stem,number,total)).ToArray(),Path.Combine(folder,stem+".pdf"));
     }
-    public static string[] ObsoleteDrawings(string pdf,IReadOnlyCollection<string> currentDrawings)
+    public static string DocumentStem(string document)
     {
-        string folder=Path.GetDirectoryName(Path.GetFullPath(pdf))!,stem=Path.GetFileNameWithoutExtension(pdf);
+        string name=document.Trim();
+        if(name.EndsWith(".pdf",StringComparison.OrdinalIgnoreCase))name=name[..^4];
+        return LineStem(name);
+    }
+
+    public static (string[] Drawings,string Pdf) DocumentOutputSet(string folder,
+        IReadOnlyList<(string Line,int Sheets)> lines,string pdfStem,int index=0)
+    {
+        if(lines.Count==0||index<0)throw new ArgumentException("Неверный состав выпуска.");
+        string suffix=index>0?$" ({index})":"";
+        var drawings=lines.SelectMany(line=>Enumerable.Range(1,line.Sheets)
+            .Select(number=>Dwg(folder,LineStem(line.Line)+suffix,number,line.Sheets,alwaysNumber:lines.Count>1))).ToArray();
+        if(drawings.Distinct(StringComparer.OrdinalIgnoreCase).Count()!=drawings.Length)
+            throw new InvalidDataException("Номера выбранных линий образуют одинаковые имена DWG.");
+        return (drawings,Path.Combine(folder,pdfStem+suffix+".pdf"));
+    }
+
+    public static string[] ReportDocuments(string pdf)
+    {
+        string stem=Path.ChangeExtension(pdf,null);
+        return new[]{stem+" — Титульный лист.docx",stem+" — Содержание.docx"};
+    }
+
+    public static string[] ObsoleteDrawings(string pdf,IReadOnlyCollection<string> currentDrawings)=>
+        ObsoleteLineDrawings(Path.GetDirectoryName(Path.GetFullPath(pdf))!,Path.GetFileNameWithoutExtension(pdf),currentDrawings);
+
+    public static string[] ObsoleteLineDrawings(string folder,string stem,IReadOnlyCollection<string> currentDrawings)
+    {
         var current=currentDrawings.Select(Path.GetFullPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
         string pattern="^"+System.Text.RegularExpressions.Regex.Escape(stem)+@"(?:\(L[1-9]\d*\))?\.dwg$";
         return Directory.EnumerateFiles(folder).Where(p=>!current.Contains(Path.GetFullPath(p))&&System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(p),pattern,System.Text.RegularExpressions.RegexOptions.IgnoreCase|System.Text.RegularExpressions.RegexOptions.CultureInvariant)).ToArray();

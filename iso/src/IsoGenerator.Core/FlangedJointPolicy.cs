@@ -15,18 +15,18 @@ internal static class FlangedJointPolicy
         }
         // A boundary gasket still belongs to the adjacent assembly even when its other
         // flange belongs to a different line and is absent from this snapshot.
-        foreach(var joint in snapshot.Parts.Where(p=>p.Kind=="AcPpDb3dConnector"))
+        foreach(var joint in snapshot.Parts.Where(p=>p.IsConnector))
         foreach(var connection in snapshot.Connections.Where(c=>c.FirstHandle==joint.Handle||c.SecondHandle==joint.Handle))
         {
             string handle=connection.FirstHandle==joint.Handle?connection.SecondHandle:connection.FirstHandle;
             string portName=connection.FirstHandle==joint.Handle?connection.SecondPort:connection.FirstPort;
-            if(parts.TryGetValue(handle,out var component)&&component.Kind!="AcPpDb3dConnector"&&component.Ports.Any(p=>p.Name==portName&&p.EndCondition.Trim().Equals("FL",StringComparison.OrdinalIgnoreCase)))hidden.Add(handle+":"+portName);
+            if(parts.TryGetValue(handle,out var component)&&!component.IsConnector&&component.Ports.Any(p=>p.Name==portName&&p.EndCondition.Trim().Equals("FL",StringComparison.OrdinalIgnoreCase)))hidden.Add(handle+":"+portName);
         }
         // Direct flange/valve connections without an explicit gasket connector.
         foreach(var c in snapshot.Connections)
         {
             if(!parts.TryGetValue(c.FirstHandle,out var a)||!parts.TryGetValue(c.SecondHandle,out var b))continue;
-            bool Pair(Part f,string fp,Part v,string vp)=>f.Properties.GetValueOrDefault("PnPClassName")=="Flange"&&v.Properties.GetValueOrDefault("PnPClassName")=="Valve"&&f.Ports.Any(p=>p.Name==fp&&p.EndCondition=="FL")&&v.Ports.Any(p=>p.Name==vp&&p.EndCondition=="FL");
+            bool Pair(Part f,string fp,Part v,string vp)=>f.Component==ComponentKind.Flange&&v.Component==ComponentKind.Valve&&f.Ports.Any(p=>p.Name==fp&&p.EndCondition=="FL")&&v.Ports.Any(p=>p.Name==vp&&p.EndCondition=="FL");
             if(Pair(a,c.FirstPort,b,c.SecondPort)||Pair(b,c.SecondPort,a,c.FirstPort))
             {hidden.Add(a.Handle+":"+c.FirstPort);hidden.Add(b.Handle+":"+c.SecondPort);}
         }
@@ -36,13 +36,13 @@ internal static class FlangedJointPolicy
     public static IReadOnlyList<FlangedJoint> Find(PipelineSnapshot snapshot)
     {
         var parts=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);var result=new List<FlangedJoint>();
-        foreach(var joint in snapshot.Parts.Where(p=>p.Kind=="AcPpDb3dConnector"))
+        foreach(var joint in snapshot.Parts.Where(p=>p.IsConnector))
         {
             var ends=snapshot.Connections.SelectMany(c=>c.FirstHandle==joint.Handle?new[]{(Handle:c.SecondHandle,Port:c.SecondPort)}:c.SecondHandle==joint.Handle?new[]{(Handle:c.FirstHandle,Port:c.FirstPort)}:Array.Empty<(string Handle,string Port)>())
-                .Distinct().Where(e=>parts.TryGetValue(e.Handle,out var p)&&p.Kind!="AcPpDb3dConnector").ToArray();
+                .Distinct().Where(e=>parts.TryGetValue(e.Handle,out var p)&&!p.IsConnector).ToArray();
             if(ends.Length!=2)continue;
             if(ends.Any(e=>parts[e.Handle].Ports.FirstOrDefault(p=>p.Name==e.Port)?.EndCondition.Trim().ToUpperInvariant()!="FL"))continue;
-            var ordered=ends.OrderBy(e=>parts[e.Handle].Properties.GetValueOrDefault("PnPClassName")=="Flange"?0:1).ThenBy(e=>e.Handle,StringComparer.Ordinal).ToArray();
+            var ordered=ends.OrderBy(e=>parts[e.Handle].Component==ComponentKind.Flange?0:1).ThenBy(e=>e.Handle,StringComparer.Ordinal).ToArray();
             result.Add(new(joint.Handle,ordered[0].Handle,ordered[0].Port,ordered[1].Handle,ordered[1].Port));
         }
         return result;

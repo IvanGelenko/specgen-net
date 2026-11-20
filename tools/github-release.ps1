@@ -31,15 +31,16 @@ try{$release=Request GET "$api/releases/tags/$Tag"}catch{if([int]$_.Exception.Re
 if($release -and !$release.draft){throw 'This release is already published; refusing to replace it'}
 $notes=Get-Content -LiteralPath $NotesFile -Raw -Encoding utf8
 if(!$release){$release=Request POST "$api/releases" @{tag_name=$Tag;target_commitish=$Commit;name="SpecGen $($Tag.TrimStart('v'))";body=$notes;draft=$true;prerelease=$false}}
-$asset=@($release.assets|Where-Object name -eq 'PipingSpecPlugin-Setup.exe')|Select-Object -First 1
-if($asset -and ($asset.size -ne $localSize -or $asset.digest -ne ('sha256:'+$localHash))){
- # Only replace our installer asset on an unpublished draft.
- Request DELETE "$api/releases/assets/$($asset.id)"|Out-Null;$asset=$null
+$checksumPath=$Installer+'.sha256';[IO.File]::WriteAllText($checksumPath,$localHash+'  PipingSpecPlugin-Setup.exe'+"`n",[Text.Encoding]::ASCII)
+foreach($file in @(@{Path=$Installer;Name='PipingSpecPlugin-Setup.exe'},@{Path=$checksumPath;Name='PipingSpecPlugin-Setup.exe.sha256'})){
+ $expectedHash=(Get-FileHash -LiteralPath $file.Path -Algorithm SHA256).Hash.ToLowerInvariant();$expectedSize=(Get-Item -LiteralPath $file.Path).Length
+ $asset=@($release.assets|Where-Object name -eq $file.Name)|Select-Object -First 1
+ if($asset -and ($asset.size -ne $expectedSize -or $asset.digest -ne ('sha256:'+$expectedHash))){Request DELETE "$api/releases/assets/$($asset.id)"|Out-Null;$asset=$null}
+ if(!$asset){$asset=Invoke-RestMethod -Uri "https://uploads.github.com/repos/$Owner/$Repository/releases/$($release.id)/assets?name=$($file.Name)" -Method Post -Headers $headers -ContentType 'application/octet-stream' -InFile $file.Path -TimeoutSec 300}
+ if($asset.size -ne $expectedSize -or $asset.digest -ne ('sha256:'+$expectedHash)){throw 'Uploaded asset size or SHA-256 mismatch; release remains a draft'}
 }
-if(!$asset){$asset=Invoke-RestMethod -Uri "https://uploads.github.com/repos/$Owner/$Repository/releases/$($release.id)/assets?name=PipingSpecPlugin-Setup.exe" -Method Post -Headers $headers -ContentType 'application/octet-stream' -InFile $Installer -TimeoutSec 300}
-if($asset.size -ne $localSize -or $asset.digest -ne ('sha256:'+$localHash)){throw 'Uploaded installer size or SHA-256 mismatch; release remains a draft'}
 $published=Request PATCH "$api/releases/$($release.id)" @{draft=$false;prerelease=$false;make_latest='true';body=$notes}
 Write-Output "Published: $($published.html_url)"
 Write-Output "Installer SHA256: $localHash"
-Write-Output "Download: $($asset.browser_download_url)"
+Write-Output "Download: $((@($published.assets|Where-Object name -eq 'PipingSpecPlugin-Setup.exe')|Select-Object -First 1).browser_download_url)"
 $credentials.Clear();$headers.Clear()

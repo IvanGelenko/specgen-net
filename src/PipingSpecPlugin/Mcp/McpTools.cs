@@ -39,6 +39,8 @@ namespace Plant3dMcp
                     return PlantTools.ProjectInfo();
                 case "list_plant_parts":
                     return PlantTools.ListParts(args);
+                case "capture_iso_snapshot":
+                    return CaptureIsoSnapshot(args);
                 case "get_part_properties":
                     return PlantTools.PartProperties(args);
                 case "create_pipe":
@@ -90,6 +92,24 @@ namespace Plant3dMcp
                 default:
                     throw new ArgumentException("Unknown tool: " + tool);
             }
+        }
+
+        static object CaptureIsoSnapshot(JsonElement args)
+        {
+            string line = args.GetProperty("line").GetString()?.Trim();
+            string drawing = args.GetProperty("drawing").GetString();
+            if (string.IsNullOrWhiteSpace(line) || string.IsNullOrWhiteSpace(drawing))
+                throw new ArgumentException("Specify the line tag and the drawing path returned by document_info.");
+
+            var document = ActiveDoc();
+            if (!string.Equals(document.Database.Filename, drawing, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("The active drawing changed. Check document_info before capturing.");
+            using var documentLock = document.LockDocument();
+            var snapshot = IsoGenerator.AutoCAD.PlantSnapshotReader.Capture(
+                document.Database, document.Database.Filename, ObjectId.Null, line);
+            if (snapshot.Parts.Count == 0)
+                throw new InvalidOperationException("The requested line is not present in the active drawing.");
+            return snapshot;
         }
 
         // Arbitrary command/LISP execution is off unless the user opts in via environment variable;

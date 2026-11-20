@@ -2,34 +2,52 @@ using System.Globalization;
 namespace IsoGenerator.Core;
 internal static class InsulationPlanner
 {
-    const double Offset=3;
+    static double Offset=>IsoAdvancedSettings.Current.InsulationOffset;
+    static double Dot(ModelPoint a,ModelPoint b)=>a.X*b.X+a.Y*b.Y+a.Z*b.Z;
     static double? Thickness(Part part)=>double.TryParse(part.Properties.GetValueOrDefault("InsulationThickness","").Trim().Replace(',','.'),NumberStyles.Float,CultureInfo.InvariantCulture,out double n)&&double.IsFinite(n)?n:null;
     public static void Add(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,IReadOnlyList<SymbolGlyph> symbols,List<Stroke> strokes,Func<ModelPoint,string,SheetPoint>? projectSource=null)
     {
         double inherited=snapshot.Parts.Select(Thickness).Where(n=>n>0).Select(n=>n!.Value).DefaultIfEmpty(0).Max();
+        var axes=new List<(string Source,SheetPoint A,SheetPoint B)>();
         foreach(var part in snapshot.Parts)
         {
             SheetPoint At(ModelPoint point)=>projectSource is null?project(point):projectSource(point,part.Handle);
-            string kind=part.Properties.GetValueOrDefault("PnPClassName","");
+            string kind=part.CatalogClass;
             if(kind is not ("Pipe" or "Elbow" or "Tee")||(Thickness(part)??inherited)<=0)continue;
             var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();if(ends.Length<2)continue;
             var bendGlyph=kind=="Elbow"?symbols.FirstOrDefault(g=>g.SourceId==part.Handle&&g.Variant.Length==0):null;
             var paths=new List<SheetPoint[]>();
             if(kind=="Pipe")paths.Add(new[]{At(ends[0].Position),At(ends[1].Position)});
+            else if(kind=="Elbow")
+            {
+                // Library ports are not necessarily at +/-0.5. Use the same model
+                // port axes as the schematic, so offsets join the neighbouring pipe.
+                var a=ends[0];var b=ends[1];
+                double wx=a.Position.X-b.Position.X,wy=a.Position.Y-b.Position.Y,wz=a.Position.Z-b.Position.Z;
+                double aa=Dot(a.Direction,a.Direction),bb=Dot(a.Direction,b.Direction),cc=Dot(b.Direction,b.Direction);
+                double dd=a.Direction.X*wx+a.Direction.Y*wy+a.Direction.Z*wz,ee=b.Direction.X*wx+b.Direction.Y*wy+b.Direction.Z*wz,den=aa*cc-bb*bb;
+                if(Math.Abs(den)<1e-10)throw new InvalidDataException($"{part.Handle}: не определён угол отвода для изоляции");
+                double t=(bb*ee-cc*dd)/den;
+                var corner=new ModelPoint(a.Position.X+a.Direction.X*t,a.Position.Y+a.Direction.Y*t,a.Position.Z+a.Direction.Z*t);
+                paths.Add(new[]{At(a.Position),At(corner),At(b.Position)});
+            }
             else
             {
-                var glyph=symbols.FirstOrDefault(g=>g.SourceId==part.Handle&&g.Variant.Length==0);
-                if(glyph is not null)
+                var pair=(from i in Enumerable.Range(0,ends.Length) from j in Enumerable.Range(i+1,ends.Length-i-1)
+                          where Dot(ends[i].Direction,ends[j].Direction)<-.999 select(i,j)).FirstOrDefault((-1,-1));
+                if(pair.Item1<0)throw new InvalidDataException($"{part.Handle}: не определена ось тройника для изоляции");
+                var a=ends[pair.Item1];var b=ends[pair.Item2];
+                paths.Add(new[]{At(a.Position),At(b.Position)});
+                var axis=new ModelPoint(b.Position.X-a.Position.X,b.Position.Y-a.Position.Y,b.Position.Z-a.Position.Z);
+                foreach(var branch in ends.Where((_,i)=>i!=pair.Item1&&i!=pair.Item2))
                 {
-                    if(kind=="Elbow")paths.Add(new[]{new SheetPoint(glyph.Origin.X-glyph.XAxis.X*.5,glyph.Origin.Y-glyph.XAxis.Y*.5),glyph.Origin,new SheetPoint(glyph.Origin.X+glyph.YAxis.X*.5,glyph.Origin.Y+glyph.YAxis.Y*.5)});
-                    else
-                    {
-                        paths.Add(new[]{new SheetPoint(glyph.Origin.X-glyph.XAxis.X*.5,glyph.Origin.Y-glyph.XAxis.Y*.5),new SheetPoint(glyph.Origin.X+glyph.XAxis.X*.5,glyph.Origin.Y+glyph.XAxis.Y*.5)});
-                        paths.Add(new[]{glyph.Origin,new SheetPoint(glyph.Origin.X+glyph.YAxis.X*.5,glyph.Origin.Y+glyph.YAxis.Y*.5)});
-                    }
+                    var delta=new ModelPoint(branch.Position.X-a.Position.X,branch.Position.Y-a.Position.Y,branch.Position.Z-a.Position.Z);
+                    double t=Dot(delta,axis)/Dot(axis,axis);
+                    var center=new ModelPoint(a.Position.X+axis.X*t,a.Position.Y+axis.Y*t,a.Position.Z+axis.Z*t);
+                    paths.Add(new[]{At(center),At(branch.Position)});
                 }
-                else paths.AddRange(strokes.Where(s=>s.SourceId==part.Handle&&s.Role is "elbow" or "branch" or "component").Select(s=>s.Points.ToArray()).ToArray());
             }
+            foreach(var path in paths)axes.AddRange(path.Zip(path.Skip(1),(a,b)=>(part.Handle,a,b)));
             foreach(var path in paths)foreach(double side in new[]{-1.0,1.0})
             {
                 var result=new List<SheetPoint>();
@@ -83,5 +101,6 @@ internal static class InsulationPlanner
                 if(result.Count>1)strokes.Add(new(part.Handle,"insulation",result));
             }
         }
+        InsulationJunctions.Trim(snapshot,strokes,axes,Offset);
     }
 }

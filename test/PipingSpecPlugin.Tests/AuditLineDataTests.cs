@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using PipingSpecPlugin.Audit;
@@ -56,6 +57,24 @@ public class AuditLineDataTests
         var issue = Assert.Single(Run(Of(Pipe("A", 3), Pipe("B", 3), Pipe("C", 5)), "slope"));
         Assert.Equal(new[] { "C" }, issue.Keys);
         Assert.Contains("i = 0,005", issue.Message);
+    }
+
+    [Fact] public void UniformSlopeDifferingFromStandard2MmPerMeterIsReported()
+    {
+        var issue = Assert.Single(Run(Of(Pipe("A", 5), Pipe("B", 5), Pipe("C", 5)), "slope"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "A", "B", "C" }, issue.Keys);
+        Assert.Contains("0,005", issue.Message);
+        Assert.Contains("0,002", issue.Message);
+    }
+
+    [Fact] public void SlopeOnPartOfLineReportsAllLevelPipes()
+    {
+        var issue = Assert.Single(Run(Of(Pipe("S", 2), Pipe("L1", 0), Pipe("L2", 0), Pipe("L3", 0)), "slope"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "L1", "L2", "L3" }, issue.Keys.OrderBy(k => k).ToArray());
+        Assert.Contains("без уклона", issue.Message);
+        Assert.Contains("0,002", issue.Message);
     }
 
     [Fact] public void VerticalPipesStepRunsAndOtherLinesAreLeftOut()
@@ -123,6 +142,72 @@ public class AuditLineDataTests
         Assert.Equal("Не проверено", Assert.Single(Run(snapshot, "pipelength")).Severity);
         var inches = Of(Straight("B", 3)); inches.DrawingMmPerUnit = 25.4;   // 76.2 mm
         Assert.Single(Run(inches, "pipelength"));
+    }
+
+    // ---- pipe XY offset (multiples of 15 degrees) ---------------------------
+
+    static AuditPart PipeAt(string key, double[] p1, double[] p2, string line = "L1")
+    {
+        var pipe = Part(key, "Pipe", line);
+        pipe.Axis = new List<double[]> { p1, p2 };
+        return pipe;
+    }
+
+    [Fact] public void PipeOffsetStandardAnglesAndOrthogonalPass()
+    {
+        double Rad(double deg) => deg * Math.PI / 180.0;
+        var pX = PipeAt("X", new[] { 0.0, 0, 0 }, new[] { 2000.0, 0, 0 });
+        var pY = PipeAt("Y", new[] { 0.0, 0, 0 }, new[] { 0.0, 3000, 0 });
+        var pZ = PipeAt("Z", new[] { 0.0, 0, 0 }, new[] { 0.0, 0, 2500 });
+        var p15 = PipeAt("P15", new[] { 0.0, 0, 0 }, new[] { 1000 * Math.Cos(Rad(15)), 1000 * Math.Sin(Rad(15)), 0 });
+        var p30 = PipeAt("P30", new[] { 0.0, 0, 0 }, new[] { 1000 * Math.Cos(Rad(30)), 1000 * Math.Sin(Rad(30)), 0 });
+        var p45 = PipeAt("P45", new[] { 0.0, 0, 0 }, new[] { 1000.0, 1000, 0 });
+        var p60 = PipeAt("P60", new[] { 0.0, 0, 0 }, new[] { 1000 * Math.Cos(Rad(60)), 1000 * Math.Sin(Rad(60)), 0 });
+        var p75 = PipeAt("P75", new[] { 0.0, 0, 0 }, new[] { 1000 * Math.Cos(Rad(75)), 1000 * Math.Sin(Rad(75)), 0 });
+        var pSlope = PipeAt("SLOPE", new[] { 0.0, 0, 0 }, new[] { 5000.0, 0, -10 }); // horizontal in plan, sloped in Z
+        Assert.Empty(Run(Mm(pX, pY, pZ, p15, p30, p45, p60, p75, pSlope), "pipeoffset"));
+    }
+
+    [Fact] public void PipeOffsetHorizontalSkewIsReported()
+    {
+        var skewed = PipeAt("SKEW", new[] { 0.0, 0, 0 }, new[] { 3000.0, 3, 0 });
+        var issue = Assert.Single(Run(Mm(skewed), "pipeoffset"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "SKEW" }, issue.Keys);
+        Assert.True(issue.Magnitude >= 2.99 && issue.Magnitude <= 3.01);
+        Assert.Contains("смещение по XY", issue.Message);
+    }
+
+    [Fact] public void PipeOffsetVerticalRiserSkewIsReported()
+    {
+        var riserSkew = PipeAt("RISER", new[] { 0.0, 0, 0 }, new[] { 2.0, 1, 3000 });
+        var issue = Assert.Single(Run(Mm(riserSkew), "pipeoffset"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "RISER" }, issue.Keys);
+        Assert.True(issue.Magnitude >= 2.23 && issue.Magnitude <= 2.25);
+        Assert.Contains("стояк смещён в плане XY", issue.Message);
+    }
+
+    [Fact] public void PipeOffsetArbitraryAngleIsReported()
+    {
+        double rad = 12.0 * Math.PI / 180.0;
+        var p12 = PipeAt("P12", new[] { 0.0, 0, 0 }, new[] { 1000 * Math.Cos(rad), 1000 * Math.Sin(rad), 0 });
+        var issue = Assert.Single(Run(Mm(p12), "pipeoffset"));
+        Assert.Equal("Несоответствие", issue.Severity);
+        Assert.Equal(new[] { "P12" }, issue.Keys);
+        Assert.Contains("12", issue.Message);
+    }
+
+    [Fact] public void PipeOffsetFloatingPointNoiseIsIgnored()
+    {
+        var noise = PipeAt("NOISE", new[] { 0.0, 0, 0 }, new[] { 3000.0, 1e-6, 0 });
+        Assert.Empty(Run(Mm(noise), "pipeoffset"));
+    }
+
+    [Fact] public void PipeOffsetNeedsDrawingUnits()
+    {
+        var uncalibrated = Of(PipeAt("A", new[] { 0.0, 0, 0 }, new[] { 3000.0, 5, 0 }));
+        Assert.Equal("Не проверено", Assert.Single(Run(uncalibrated, "pipeoffset")).Severity);
     }
 
     // ---- weld spacing ------------------------------------------------------

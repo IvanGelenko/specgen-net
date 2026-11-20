@@ -8,7 +8,7 @@ public static class TapDimensionReferences
     {
         var included=fragment.Parts.Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var references=(source.BoundaryTapAxes??Array.Empty<BoundaryTapAxis>()).Where(r=>included.Contains(r.Handle)).ToList();
-        foreach(var pipe in source.Parts.Where(p=>!included.Contains(p.Handle)&&p.Properties.GetValueOrDefault("PnPClassName")=="Pipe"))
+        foreach(var pipe in source.Parts.Where(p=>!included.Contains(p.Handle)&&p.Component==ComponentKind.Pipe))
         {
             var ends=pipe.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();if(ends.Length!=2)continue;
             var a=ends[0].Position;var b=ends[1].Position;double dx=b.X-a.X,dy=b.Y-a.Y,dz=b.Z-a.Z,l2=dx*dx+dy*dy+dz*dz;if(l2<1e-10)continue;

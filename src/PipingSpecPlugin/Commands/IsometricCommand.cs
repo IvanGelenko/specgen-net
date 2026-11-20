@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -32,22 +32,54 @@ public sealed class IsometricCommand
             string outputFolder=Directory.Exists(settings.LastIsoOutputDirectory)?settings.LastIsoOutputDirectory:Path.Combine(Path.GetDirectoryName(doc.Name)!,"Изометрии");
             string defaultTemplate=Path.Combine(Path.GetDirectoryName(typeof(IsoGenerator.AutoCAD.GenerateCommand).Assembly.Location)!,"iso_template.dwg");
             string template=File.Exists(settings.LastIsoTemplatePath)?settings.LastIsoTemplatePath:defaultTemplate;
-            using var dialog=new IsometricDialog(choices,doc.Name,outputFolder,template,settings.LastIsoSymbolScale);
-            if(App.ShowModalDialog(dialog)!=System.Windows.Forms.DialogResult.OK)return;
-            string selectedTemplate=dialog.TemplatePath;double selectedScale=dialog.SymbolScale;
-            settings.LastIsoTemplatePath=selectedTemplate;settings.LastIsoSymbolScale=selectedScale;
-            if(!settings.LoadFailed)try{settings.Save();}catch(System.Exception ex){logger.Log("Не удалось сохранить параметры изометрии: "+ex.Message);}
-            var selected=catalog.Parts.Values.Where(p=>p.LineKey==dialog.SelectedLine).ToArray();
-            var hints=selected.ToDictionary(p=>p.Key,p=>(IReadOnlyDictionary<string,string>)new Dictionary<string,string>{{"Tag",p.Tag??""},{"InsulationThickness",p.InsulationThickness??""}},StringComparer.OrdinalIgnoreCase);
-            new IsoGenerator.AutoCAD.GenerateCommand().GenerateForLine(dialog.SelectedLine,selected.Select(p=>p.Key).ToArray(),dialog.OutputDirectory,hints,projectIso,savedFolder=>
+            string drawingKey=Path.GetFullPath(doc.Name).ToUpperInvariant();
+            var selections=settings.IsoSelectedLinesByDrawing??=new();
+            selections.TryGetValue(drawingKey,out var previousSelection);
+            using var dialog=new IsometricDialog(choices,doc.Name,outputFolder,template,settings.LastIsoSymbolScale,settings.LastIsoMinimumPipeLength,settings.IsoAdvanced,
+                new IsoDocumentDetails(settings.LastIsoValvesDocument??"",settings.LastIsoSupportsDocument??"",
+                    settings.LastIsoTitleTemplate??"",settings.LastIsoContentsTemplate??""),previousSelection);
+            var initialSelection=dialog.SelectedLines;
+            var dialogResult=App.ShowModalDialog(dialog);
+            var selectedLines=dialog.SelectedLines.ToArray();
+            if(dialogResult!=System.Windows.Forms.DialogResult.OK)
+            {
+                if(!initialSelection.SequenceEqual(selectedLines,StringComparer.OrdinalIgnoreCase))
+                {
+                    selections[drawingKey]=selectedLines;
+                    SaveSettings();
+                }
+                return;
+            }
+            selections[drawingKey]=selectedLines;
+            string selectedTemplate=dialog.TemplatePath;double selectedScale=dialog.SymbolScale;double selectedMinimum=dialog.MinimumPipeLength;
+            var documents=dialog.Documents;
+            settings.LastIsoTemplatePath=selectedTemplate;settings.LastIsoSymbolScale=selectedScale;settings.LastIsoMinimumPipeLength=selectedMinimum;settings.IsoAdvanced=dialog.AdvancedSettings;
+            settings.LastIsoValvesDocument=documents.Valves;settings.LastIsoSupportsDocument=documents.Supports;
+            settings.LastIsoTitleTemplate=documents.TitlePath;settings.LastIsoContentsTemplate=documents.ContentsPath;
+            SaveSettings();
+            void SaveSettings()
+            {
+                if(!settings.LoadFailed)try{settings.Save();}catch(System.Exception ex){logger.Log("Не удалось сохранить параметры изометрии: "+ex.Message);}
+            }
+            var partsByLine=catalog.Parts.Values.ToLookup(part=>part.LineKey,StringComparer.OrdinalIgnoreCase);
+            var requests=selectedLines.Select(line=>
+            {
+                var selected=partsByLine[line];
+                var hints=selected.ToDictionary(p=>p.Key,p=>(IReadOnlyDictionary<string,string>)new Dictionary<string,string>
+                    {{"Tag",p.Tag??""},{"InsulationThickness",p.InsulationThickness??""}},StringComparer.OrdinalIgnoreCase);
+                return new IsoGenerator.AutoCAD.GenerateCommand.LineRequest(line,selected.Select(p=>p.Key).ToArray(),hints,dialog.RememberLayout(line));
+            }).ToArray();
+            string contentsTemplate=string.IsNullOrWhiteSpace(documents.ContentsPath)?IsometricDialog.DefaultContentsTemplate:documents.ContentsPath;
+            var report=new IsoGenerator.Publishing.IsometricReportDetails(documents.TitlePath,contentsTemplate,dialog.TitleDetails);
+            new IsoGenerator.AutoCAD.GenerateCommand().GenerateForLines(requests,dialog.OutputDirectory,projectIso,savedFolder=>
             {
                 try
                 {
                     var latest=PluginSettings.Load();if(latest.LoadFailed)return;
-                    latest.LastIsoOutputDirectory=savedFolder;latest.LastIsoTemplatePath=selectedTemplate;latest.LastIsoSymbolScale=selectedScale;latest.Save();
+                    latest.LastIsoOutputDirectory=savedFolder;latest.Save();
                 }
                 catch(System.Exception ex){doc.Editor.WriteMessage("\n[Изометрия] Не удалось запомнить папку: "+ex.Message);}
-            },dialog.QuarterTurns,dialog.ExcludeFlangeHardware,dialog.IgnoreBreakPoints,selectedTemplate,selectedScale);
+            },dialog.QuarterTurns,dialog.ExcludeFlangeHardware,dialog.IgnoreBreakPoints,selectedTemplate,selectedScale,dialog.InstrumentCalloutsOnly,dialog.AutomaticView,documents.Valves,documents.Supports,dialog.TitleDetails.DocumentNumber,dialog.RecalculateLine,selectedMinimum,dialog.AdvancedSettings,report);
         }
         catch(System.Exception ex){logger.Error(ex.ToString());doc.Editor.WriteMessage("\n[Изометрия] "+ex.Message);System.Windows.Forms.MessageBox.Show(ex.Message,"Изометрии");}
     }

@@ -61,9 +61,14 @@ Source: "{#SourceStage}\Contents\Windows\DocumentFormat.OpenXml.dll"; DestDir: "
 Source: "{#SourceStage}\Contents\Windows\IsoGenerator.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\IsoGenerator.Core.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\iso_template.dwg"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
+Source: "{#SourceStage}\Contents\Windows\assets\iso-title-template.docx"; DestDir: "{app}\Contents\Windows\assets"; Flags: ignoreversion
+Source: "{#SourceStage}\Contents\Windows\assets\iso-contents-template.docx"; DestDir: "{app}\Contents\Windows\assets"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\assets\IsoSymbolStyles.dwg"; DestDir: "{app}\Contents\Windows\assets"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\assets\IsoSkeyAcadBlockMap.xml"; DestDir: "{app}\Contents\Windows\assets"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\IsoGenerator.Publishing.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
+Source: "{#SourceStage}\Contents\Windows\IsoWordWorker.exe"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
+Source: "{#SourceStage}\Contents\Windows\IsoWordWorker.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
+Source: "{#SourceStage}\Contents\Windows\IsoWordWorker.runtimeconfig.json"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\PdfSharp*.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\Microsoft.Extensions.DependencyInjection.Abstractions.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion
 Source: "{#SourceStage}\Contents\Windows\Microsoft.Extensions.Logging.Abstractions.dll"; DestDir: "{app}\Contents\Windows"; Flags: ignoreversion

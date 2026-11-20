@@ -13,8 +13,9 @@ public readonly record struct DrawingBounds(double Left,double Bottom,double Rig
 // Center in the rectangular diagram field to the left of the title block and BOM.
 public static class SheetComposition
 {
-    public static readonly DrawingBounds Paper=new(25,25,393,370);
-    public static IReadOnlyList<DrawingBounds> Reserved(double bomRows)=>new[]{new DrawingBounds(398,Math.Max(60,399-14*bomRows-6),590,420),new DrawingBounds(398,0,590,60)};
+    public static DrawingBounds Paper=>new(IsoAdvancedSettings.Current.PaperLeft,IsoAdvancedSettings.Current.PaperBottom,
+        IsoAdvancedSettings.Current.PaperRight,IsoAdvancedSettings.Current.PaperTop);
+    public static IReadOnlyList<DrawingBounds> Reserved(double bomRows)=>new[]{new DrawingBounds(398,Math.Max(60,399-IsoAdvancedSettings.Current.BomRowHeight*bomRows-6),590,420),new DrawingBounds(398,0,590,60)};
     static DrawingBounds Box(IEnumerable<SheetPoint> points,double pad=0)
     {
         var p=points.ToArray();return new(p.Min(v=>v.X)-pad,p.Min(v=>v.Y)-pad,p.Max(v=>v.X)+pad,p.Max(v=>v.Y)+pad);
@@ -26,7 +27,7 @@ public static class SheetComposition
             foreach(var (a,b) in stroke.Points.Zip(stroke.Points.Skip(1)))pieces.Add(Box(new[]{a,b},.3));
         foreach(var symbol in scene.Symbols??Array.Empty<SymbolGlyph>())pieces.Add(Box(SymbolFootprint.Corners(symbol),.3));
         foreach(var label in scene.Annotations.Where(a=>a.Role is not ("title" or "status")))
-            pieces.Add(new(label.Position.X-.8,label.Position.Y-.6,label.Position.X+label.Text.Length*2.1+1.5,label.Position.Y+4.6));
+            {var box=AnnotationPlacement.Bounds(label);pieces.Add(new(box.Left,box.Bottom,box.Right,box.Top));}
         foreach(var d in scene.Dimensions)
         {
             double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,l=Math.Sqrt(dx*dx+dy*dy);if(l<.001)continue;
@@ -41,17 +42,53 @@ public static class SheetComposition
         foreach(var weld in scene.Welds??Array.Empty<WeldMarker>())pieces.Add(new(weld.Position.X-.9,weld.Position.Y-.9,weld.Position.X+.9,weld.Position.Y+.9));
         return pieces;
     }
-    public static DrawingBounds Bounds(SheetScene scene)
+    // Clear only hatch ink behind text. Geometry and dimensions remain above the hatch.
+    public static IEnumerable<Stroke> DrawStrokes(SheetScene scene)
     {
-        var pieces=Pieces(scene);return new(pieces.Min(p=>p.Left),pieces.Min(p=>p.Bottom),pieces.Max(p=>p.Right),pieces.Max(p=>p.Top));
+        var hatch=scene.Strokes.Where(stroke=>stroke.Role=="slope-hatch").ToArray();
+        if(hatch.Length>0)
+        {
+            var masks=scene.Annotations.Where(label=>label.Role is not ("title" or "status"))
+                .Select(AnnotationPlacement.Bounds)
+                .Concat(scene.Dimensions.Where(dimension=>dimension.TextPosition.HasValue)
+                    .Select(AnnotationPlacement.DimensionBox)).ToArray();
+            const double padding=1.2;
+            foreach(var stroke in hatch)
+            {
+                double y=stroke.Points[0].Y;
+                double start=stroke.Points.Min(point=>point.X),end=stroke.Points.Max(point=>point.X);
+                foreach(var mask in masks.Where(box=>y>=box.Bottom-padding&&y<=box.Top+padding&&
+                    box.Right+padding>start&&box.Left-padding<end).OrderBy(box=>box.Left))
+                {
+                    double left=Math.Max(start,mask.Left-padding);
+                    if(left-start>.05)yield return stroke with{Points=new SheetPoint[]{new(start,y),new(left,y)}};
+                    start=Math.Max(start,mask.Right+padding);
+                    if(start>=end)break;
+                }
+                if(end-start>.05)yield return stroke with{Points=new SheetPoint[]{new(start,y),new(end,y)}};
+            }
+        }
+        foreach(var stroke in scene.Strokes)
+            if(stroke.Role!="slope-hatch")yield return stroke;
     }
+
+    public static DrawingBounds Bounds(SheetScene scene)=>TryBounds(scene)??throw new InvalidOperationException("На листе нет графики.");
+
+    internal static DrawingBounds? TryBounds(SheetScene scene)
+    {
+        var pieces=Pieces(scene);
+        return pieces.Count==0?null:Bounds(pieces);
+    }
+
+    static DrawingBounds Bounds(IReadOnlyList<DrawingBounds> pieces)=>
+        new(pieces.Min(p=>p.Left),pieces.Min(p=>p.Bottom),pieces.Max(p=>p.Right),pieces.Max(p=>p.Top));
     public static SheetScene Center(SheetScene scene)
     {
         var pieces=Pieces(scene);if(pieces.Count==0)return scene;
-        var bounds=Bounds(scene);double minX=Paper.Left-bounds.Left,maxX=Paper.Right-bounds.Right,minY=Paper.Bottom-bounds.Bottom,maxY=Paper.Top-bounds.Top;
-        if(minX>maxX||minY>maxY)throw new SheetCapacityException($"Чертёж с размерами и выносками {bounds.Width:F1} x {bounds.Height:F1} мм не помещается в рабочую область A2 {Paper.Width:F1} x {Paper.Height:F1} мм.");
+        var bounds=Bounds(pieces);double minX=Paper.Left-bounds.Left,maxX=Paper.Right-bounds.Right,minY=Paper.Bottom-bounds.Bottom,maxY=Paper.Top-bounds.Top;
+        if(minX>maxX||minY>maxY)throw new SheetCapacityException($"Чертёж с размерами и выносками {bounds.Width:F1} x {bounds.Height:F1} мм не помещается в рабочую область A2 {Paper.Width:F1} x {Paper.Height:F1} мм.",paperWidthOverflow:Math.Max(0,bounds.Width-Paper.Width),paperHeightOverflow:Math.Max(0,bounds.Height-Paper.Height),conflict:LayoutConflict.PaperBounds);
         double desiredX=Paper.Center.X-bounds.Center.X,desiredY=Paper.Center.Y-bounds.Center.Y;
-        var reserved=Reserved(BomCategories.BodyHeight(scene.BillOfMaterials)/14);
+        var reserved=Reserved(BomCategories.BodyHeight(scene.BillOfMaterials)/IsoAdvancedSettings.Current.BomRowHeight);
         var forbidden=(from box in pieces from block in reserved select new DrawingBounds(block.Left-box.Right,block.Bottom-box.Top,block.Right-box.Left,block.Top-box.Bottom)).ToArray();
         var ys=new[]{Math.Clamp(desiredY,minY,maxY),minY,maxY}.Concat(forbidden.SelectMany(f=>new[]{f.Bottom-.01,f.Top+.01}).Where(y=>y>=minY&&y<=maxY)).Distinct().ToArray();
         SheetPoint? best=null;double bestScore=double.MaxValue;

@@ -1,4 +1,4 @@
-﻿namespace IsoGenerator.Core;
+namespace IsoGenerator.Core;
 // A second layout pass: dimension baselines are fixed; text centers avoid all extension
 // lines and other text. This is intentionally separate from baseline side/offset selection.
 internal static class DimensionTextPlacement
@@ -28,16 +28,23 @@ internal static class DimensionTextPlacement
     static Ink Box(PipeDimension d)
     {
         double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,len=Math.Sqrt(dx*dx+dy*dy);
-        return new(d.TextPosition!.Value,new(dx/len,dy/len),d.Label.Length*1.05+.2,1.77);
+        double ratio=IsoAdvancedSettings.Current.DimensionTextHeight/3.5;
+        return new(d.TextPosition!.Value,new(dx/len,dy/len),d.Label.Length*1.05*ratio+.2,1.77*ratio);
     }
-    internal static int CollisionCount(IReadOnlyList<PipeDimension> rows,IReadOnlyList<Stroke> strokes)
-    {PlaceText(rows,strokes,out var blocked);return blocked.Length;}
-    public static IReadOnlyList<PipeDimension> Place(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke> strokes)
+    internal static (SheetPoint A,SheetPoint B)[] ObstacleSegments(IReadOnlyList<Stroke> strokes)=>
+        strokes.Where(stroke=>stroke.Role is not ("insulation" or "slope-hatch"))
+            .SelectMany(stroke=>stroke.Points.Zip(stroke.Points.Skip(1),(a,b)=>(a,b))).ToArray();
+
+    internal static int CollisionCount(IReadOnlyList<PipeDimension> rows,IReadOnlyList<Stroke> strokes,
+        (SheetPoint A,SheetPoint B)[]? obstacles=null)
+    {PlaceText(rows,strokes,out var blocked,obstacles:obstacles);return blocked.Length;}
+    public static IReadOnlyList<PipeDimension> Place(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke> strokes,PlanningExecution? execution=null)
     {
-        var rows=input.ToArray();int[] blocked=Array.Empty<int>();
+        var rows=DimensionRowAlignment.EnforceChainOrder(input).ToArray();int[] blocked=Array.Empty<int>();
         for(int attempt=0;attempt<=40;attempt++)
         {
-            PlanningExecution.Check();
+            execution?.Check();
+            rows=DimensionRowAlignment.EnforceChainOrder(rows).ToArray();
             var placed=PlaceText(rows,strokes,out blocked);
             if(blocked.Length==0)return placed;
             if(attempt==40)break;
@@ -67,12 +74,14 @@ internal static class DimensionTextPlacement
                 if(placed[i].ChainId==placed[j].ChainId&&placed[i].Role=="chain"&&placed[j].Role=="chain"&&Box(placed[i]).Overlaps(Box(placed[j])))
                 {
                     var shortRow=placed[i].Millimeters<=placed[j].Millimeters?placed[i]:placed[j];
-                    throw new SheetCapacityException("Недостаточно места между соседними размерными числами; требуется увеличить участок трубы.",shortRow.SourceId,shortRow.ModelStart,shortRow.ModelEnd);
+                    throw new SheetCapacityException("Недостаточно места между соседними размерными числами; требуется увеличить участок трубы.",shortRow.SourceId,shortRow.ModelStart,shortRow.ModelEnd,conflict:LayoutConflict.DimensionText);
                 }
             var offending=blocked.Select(i=>rows[i]).OrderBy(d=>d.Role=="overall"?0:1).First();
             double dx=offending.End.X-offending.Start.X,dy=offending.End.Y-offending.Start.Y,l=Math.Sqrt(dx*dx+dy*dy);
             var normal=new SheetPoint(-dy/l,dx/l);var ex=offending.ExtensionDirection!.Value;
-            double step=1/Math.Abs(ex.X*normal.X+ex.Y*normal.Y);
+            var point=offending.DimensionLinePoint!.Value;
+            double side=Math.Sign((point.X-offending.Start.X)*normal.X+(point.Y-offending.Start.Y)*normal.Y);
+            double step=(side==0?1:side)/(ex.X*normal.X+ex.Y*normal.Y);
             var shift=new SheetPoint(ex.X*step,ex.Y*step);
             // Move the chain row only when necessary, retaining at least 7 mm to its overall row.
             for(int i=0;i<rows.Length;i++)if(rows[i].ChainId==offending.ChainId&&(offending.Role=="chain"||rows[i].Role==offending.Role))
@@ -81,12 +90,17 @@ internal static class DimensionTextPlacement
                 rows[i]=d with{DimensionLinePoint=new(line.X+shift.X,line.Y+shift.Y),TextPosition=new(text.X+shift.X,text.Y+shift.Y)};
             }
         }
-        throw new SheetCapacityException("Не удалось разместить размерные подписи без пересечений: "+string.Join(", ",blocked.Select(i=>rows[i].ChainId+":"+rows[i].Label)),blocked.Length>0?rows[blocked[0]].SourceId:null,blocked.Length>0?rows[blocked[0]].ModelStart:null,blocked.Length>0?rows[blocked[0]].ModelEnd:null);
+        throw new SheetCapacityException("Не удалось разместить размерные подписи без пересечений: "+string.Join(", ",blocked.Select(i=>rows[i].ChainId+":"+rows[i].Label)),blocked.Length>0?rows[blocked[0]].SourceId:null,blocked.Length>0?rows[blocked[0]].ModelStart:null,blocked.Length>0?rows[blocked[0]].ModelEnd:null,conflict:LayoutConflict.DimensionText);
     }
-    static IReadOnlyList<PipeDimension> PlaceText(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke> strokes,out int[] blocked)
+    internal static int[] FinalCollisions(IReadOnlyList<PipeDimension> rows,IReadOnlyList<Stroke> strokes)
+    {
+        PlaceText(rows,strokes,out var blocked,measureOnly:true);
+        return blocked;
+    }
+    static IReadOnlyList<PipeDimension> PlaceText(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke> strokes,out int[] blocked,bool measureOnly=false,(SheetPoint A,SheetPoint B)[]? obstacles=null)
     {
         var result=input.ToArray();
-        var segments=strokes.Where(s=>s.Role!="insulation").SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>(A:a,B:b))).ToList();
+        var segments=new List<(SheetPoint A,SheetPoint B)>(obstacles??ObstacleSegments(strokes));
         foreach(var d in input)
         {
             double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,len=Math.Sqrt(dx*dx+dy*dy),nx=-dy/len,ny=dx/len;
@@ -97,21 +111,59 @@ internal static class DimensionTextPlacement
             var along=new SheetPoint(dx/len,dy/len);
             foreach(var (tip,sign) in new[]{(a,1.0),(b,-1.0)})
                 foreach(double side in new[]{-.7,0,.7})
-                    segments.Add((new(tip.X+nx*side,tip.Y+ny*side),new(tip.X+along.X*sign*3.5+nx*side,tip.Y+along.Y*sign*3.5+ny*side)));
+                    segments.Add((new(tip.X+nx*side,tip.Y+ny*side),new(tip.X+along.X*sign*(IsoAdvancedSettings.Current.ArrowSize+1)+nx*side,tip.Y+along.Y*sign*(IsoAdvancedSettings.Current.ArrowSize+1)+ny*side)));
         }
         // Text is centered above its own baseline. Resolve congestion by moving rows or
         // changing pipe spacing, never by sliding a number along/away from that baseline.
-        for(int i=0;i<result.Length;i++)
+        for(int i=0;!measureOnly&&i<result.Length;i++)
         {
             var d=result[i];double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,l=Math.Sqrt(dx*dx+dy*dy);
-            var n=new SheetPoint(-dy/l,dx/l);if(dx<-.0001||(Math.Abs(dx)<.0001&&dy<0))n=new(-n.X,-n.Y);
+            var n=new SheetPoint(-dy/l,dx/l);if(PipeDimension.ReverseTextAxis(dx,dy))n=new(-n.X,-n.Y);
             var ex=d.ExtensionDirection!.Value;var p=d.DimensionLinePoint!.Value;var mid=new SheetPoint((d.Start.X+d.End.X)/2,(d.Start.Y+d.End.Y)/2);
             double t=((p.X-mid.X)*n.X+(p.Y-mid.Y)*n.Y)/(ex.X*n.X+ex.Y*n.Y);
-            result[i]=d with{TextPosition=new(mid.X+ex.X*t+n.X*2.8,mid.Y+ex.Y*t+n.Y*2.8)};
+            result[i]=d with{TextPosition=new(mid.X+ex.X*t+n.X*IsoAdvancedSettings.Current.TextLift,mid.Y+ex.Y*t+n.Y*IsoAdvancedSettings.Current.TextLift)};
         }
-        var bad=Enumerable.Range(0,result.Length).Where(i=>segments.Any(s=>Box(result[i]).Hits(s.A,s.B))).ToHashSet();
-        for(int i=0;i<result.Length;i++)for(int j=i+1;j<result.Length;j++)if(Box(result[i]).Overlaps(Box(result[j]))){bad.Add(i);bad.Add(j);}
+        var boxes=result.Select(Box).ToArray();
+        HashSet<int> FindConflicts()
+        {
+            var conflicts=Enumerable.Range(0,result.Length).Where(i=>segments.Any(s=>boxes[i].Hits(s.A,s.B))).ToHashSet();
+            for(int i=0;i<result.Length;i++)
+                for(int j=i+1;j<result.Length;j++)
+                    if(boxes[i].Overlaps(boxes[j])){conflicts.Add(i);conflicts.Add(j);}
+            return conflicts;
+        }
+        var bad=FindConflicts();
+        if(!measureOnly&&bad.Count>0)
+        {
+            foreach(int i in bad.ToArray())
+            {
+                var d=result[i];double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,l=Math.Sqrt(dx*dx+dy*dy);
+                var along=new SheetPoint(dx/l,dy/l);var orig=d.TextPosition!.Value;
+                foreach(double slide in new[]{2.0,-2.0,3.5,-3.5,5.0,-5.0,7.0,-7.0})
+                {
+                    var cand=d with{TextPosition=new(orig.X+along.X*slide,orig.Y+along.Y*slide)};
+                    var box=Box(cand);
+                    if(segments.Any(s=>box.Hits(s.A,s.B)))continue;
+                    bool overlap=false;
+                    for(int j=0;j<result.Length;j++)if(i!=j&&box.Overlaps(boxes[j])){overlap=true;break;}
+                    if(!overlap){result[i]=cand;boxes[i]=box;bad.Remove(i);break;}
+                }
+            }
+            bad=FindConflicts();
+        }
         blocked=bad.OrderBy(i=>i).ToArray();
+        if(Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1"&&blocked.Length>0)
+        {
+            foreach(int bi in blocked)
+            {
+                var box=Box(result[bi]);
+                Console.Error.WriteLine($"[TRACE-BAD] {result[bi].ChainId}:{result[bi].Label} (source={result[bi].SourceId}) center=({box.Center.X:F1},{box.Center.Y:F1})");
+                foreach(var s in segments)
+                    if(box.Hits(s.A,s.B)) Console.Error.WriteLine($"    hits segment ({s.A.X:F1},{s.A.Y:F1})-({s.B.X:F1},{s.B.Y:F1})");
+                for(int bj=0;bj<result.Length;bj++)
+                    if(bi!=bj&&box.Overlaps(Box(result[bj]))) Console.Error.WriteLine($"    overlaps {result[bj].ChainId}:{result[bj].Label}");
+            }
+        }
         return result;
     }
 }

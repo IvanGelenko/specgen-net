@@ -46,14 +46,45 @@ namespace PipingSpecPlugin.Update
                         404=>"На GitHub пока нет опубликованного релиза с обновлением.",
                         _=>$"GitHub вернул HTTP {(int)response.StatusCode}."
                     };
-                    Log(reason);return UpdateInfo.Failed(current,reason);
+                    Log(reason);return await WebsiteFallbackAsync(client,current,reason,cancellationToken).ConfigureAwait(false);
                 }
                 var result=UpdateChecker.Evaluate(await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false),current);
+                if(!result.CheckSucceeded)return await WebsiteFallbackAsync(client,current,result.CheckError,cancellationToken).ConfigureAwait(false);
                 Log(result.CheckSucceeded?$"Проверка: установлена {current}, опубликована {result.LatestVersion}.":result.CheckError);
                 return result;
             }
-            catch(OperationCanceledException){const string error="Проверка обновлений отменена или превышено время ожидания GitHub.";Log(error);return UpdateInfo.Failed(current,error);}
-            catch(Exception ex){string error="Не удалось подключиться к GitHub: "+ex.Message;Log(error);return UpdateInfo.Failed(current,error);}
+            catch(OperationCanceledException){const string error="Проверка обновлений отменена или превышено время ожидания GitHub.";Log(error);return cancellationToken.IsCancellationRequested?UpdateInfo.Failed(current,error):await WebsiteFallbackAsync(client,current,error,cancellationToken).ConfigureAwait(false);}
+            catch(Exception ex){string error="Не удалось подключиться к GitHub: "+ex.Message;Log(error);return await WebsiteFallbackAsync(client,current,error,cancellationToken).ConfigureAwait(false);}
+        }
+        const string Releases="https://github.com/IvanGelenko/specgen-net/releases";
+        // Public website redirects are independent of the unauthenticated API quota.
+        // The sidecar checksum retains integrity verification without client credentials.
+        internal static async Task<UpdateInfo> WebsiteFallbackAsync(HttpClient client,string current,string originalError,CancellationToken token=default)
+        {
+            try
+            {
+                using var request=new HttpRequestMessage(HttpMethod.Head,Releases+"/latest");
+                request.Headers.UserAgent.ParseAdd(UserAgent);request.Headers.CacheControl=new CacheControlHeaderValue{NoCache=true};
+                using var response=await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token).ConfigureAwait(false);
+                response.EnsureSuccessStatusCode();
+                var location=response.RequestMessage?.RequestUri;const string prefix="/IvanGelenko/specgen-net/releases/tag/";
+                if(location==null||!location.Host.Equals("github.com",StringComparison.OrdinalIgnoreCase)||!location.AbsolutePath.StartsWith(prefix,StringComparison.OrdinalIgnoreCase))throw new IOException("Не удалось определить опубликованную версию по странице релиза.");
+                string tag=Uri.UnescapeDataString(location.AbsolutePath.Substring(prefix.Length));
+                if(!System.Text.RegularExpressions.Regex.IsMatch(tag,@"^v?[0-9]+\.[0-9]+\.[0-9]+(?:\.[0-9]+)?$"))throw new IOException("Некорректный номер опубликованной версии.");
+                var latest=UpdateChecker.NormalizeVersion(tag);bool newer=UpdateChecker.Compare(latest,UpdateChecker.NormalizeVersion(current))>0;
+                var info=new UpdateInfo{CurrentVersion=current,LatestVersion=string.Join(".",latest),ReleaseTag=tag,UpdateAvailable=newer,ReleaseUrl=Releases+"/tag/"+Uri.EscapeDataString(tag),ReleaseNotes="Описание изменений доступно на странице релиза."};
+                if(newer)
+                {
+                    info.InstallerUrl=Releases+"/download/"+Uri.EscapeDataString(tag)+"/"+UpdateChecker.InstallerAssetName;
+                    using var checksumResponse=await client.GetAsync(info.InstallerUrl+".sha256",token).ConfigureAwait(false);checksumResponse.EnsureSuccessStatusCode();
+                    string checksum=await checksumResponse.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+                    var match=System.Text.RegularExpressions.Regex.Match(checksum,@"\A\s*([a-fA-F0-9]{64})(?:\s|$)");
+                    if(!match.Success)throw new IOException("Не найден допустимый SHA-256 установщика.");
+                    info.InstallerSha256=match.Groups[1].Value.ToLowerInvariant();
+                }
+                Log($"Резервная проверка: установлена {current}, опубликована {info.LatestVersion}.");return info;
+            }
+            catch(Exception ex){string error=originalError+" Резервная проверка также не завершена: "+ex.Message;Log(error);return UpdateInfo.Failed(current,error);}
         }
         public static async Task<bool> DownloadAndLaunchInstallerAsync(UpdateInfo info,IProgress<int> progress=null,CancellationToken cancellationToken=default)
         {

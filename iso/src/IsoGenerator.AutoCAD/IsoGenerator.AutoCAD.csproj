@@ -9,6 +9,9 @@
     <AssemblyName>IsoGenerator</AssemblyName>
     <AcadInstallDir Condition="'$(AcadInstallDir)' == ''">C:\Program Files\Autodesk\AutoCAD 2025</AcadInstallDir>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="PipingSpecPlugin" />
+  </ItemGroup>
   <ItemGroup><ProjectReference Include="../IsoGenerator.Core/IsoGenerator.Core.csproj" /><ProjectReference Include="../IsoGenerator.Publishing/IsoGenerator.Publishing.csproj" />
     <Reference Include="AcCoreMgd"><HintPath>$(AcadInstallDir)\AcCoreMgd.dll</HintPath><Private>false</Private></Reference>
     <Reference Include="AcDbMgd"><HintPath>$(AcadInstallDir)\AcDbMgd.dll</HintPath><Private>false</Private></Reference>

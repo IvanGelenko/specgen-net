@@ -1,4 +1,4 @@
-﻿namespace IsoGenerator.Core;
+namespace IsoGenerator.Core;
 public sealed record WeldMarker(string SourceId, SheetPoint Position, string FirstHandle,string FirstPort,
     string SecondHandle,string SecondPort,string FirstEndCondition,string SecondEndCondition,string JointType,ModelPoint? ModelPosition=null);
 public sealed record WeldPlan(IReadOnlyList<WeldMarker> Markers,IReadOnlyList<string> Warnings);
@@ -9,11 +9,12 @@ public static class WeldPlanner
     {
         var parts=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
         var markers=new List<WeldMarker>();var warnings=new List<string>();var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        bool IsJoint(Part p)=>p.Kind=="AcPpDb3dConnector";
+        bool IsJoint(Part p)=>p.IsConnector;
         void Candidate(string source,string ah,string ap,string bh,string bp)
         {
             if(!parts.TryGetValue(ah,out var a)||!parts.TryGetValue(bh,out var b))return;
             if(BomCategories.Classify(a)==BomCategory.Supports||BomCategories.Classify(b)==BomCategory.Supports)return;
+            if(a.Properties.ContainsKey("IsoCalloutHost")||b.Properties.ContainsKey("IsoCalloutHost"))return;
             var pa=a.Ports.FirstOrDefault(p=>p.Name==ap);var pb=b.Ports.FirstOrDefault(p=>p.Name==bp);
             if(pa is null||pb is null){warnings.Add($"{source}: cannot read weld endpoints");return;}
             string ea=pa.EndCondition.Trim().ToUpperInvariant(),eb=pb.EndCondition.Trim().ToUpperInvariant();
@@ -56,6 +57,19 @@ public static class WeldPlanner
         foreach(var link in snapshot.Connections)
             if(parts.TryGetValue(link.FirstHandle,out var a)&&parts.TryGetValue(link.SecondHandle,out var b)&&!IsJoint(a)&&!IsJoint(b))
                 Candidate(a.Handle,link.FirstHandle,link.FirstPort,link.SecondHandle,link.SecondPort);
+        foreach(var context in snapshot.ExternalLineContexts??Array.Empty<ExternalLineContext>())
+        {
+            var entry=context.Parts.FirstOrDefault(p=>p.Handle==context.EntryHandle);
+            if(entry is null||IsJoint(entry))continue;
+            parts.TryAdd(entry.Handle,entry);
+            foreach(var connection in snapshot.Connections.Where(c=>c.FirstHandle==context.OwnerHandle||c.SecondHandle==context.OwnerHandle))
+            {
+                string handle=connection.FirstHandle==context.OwnerHandle?connection.SecondHandle:connection.FirstHandle;
+                string port=connection.FirstHandle==context.OwnerHandle?connection.SecondPort:connection.FirstPort;
+                if(!parts.TryGetValue(handle,out var run)||run.Component!=ComponentKind.Pipe||!run.Ports.Any(p=>p.Name==port&&p.EndCondition.Trim().Equals("TAP",StringComparison.OrdinalIgnoreCase)))continue;
+                Candidate(context.OwnerHandle,handle,port,entry.Handle,context.EntryPort);
+            }
+        }
         return new(markers,warnings);
     }
 }

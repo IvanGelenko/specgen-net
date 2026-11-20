@@ -22,8 +22,8 @@ internal static class ContinuationContextPlanner
             while(queue.Count>0&&selected.Count<3)
             {
                 string h=queue.Dequeue();if(!visited.Add(h)||!owner.TryGetValue(h,out var assigned)||assigned!=other)continue;
-                var part=parts[h];string kind=part.Properties.GetValueOrDefault("PnPClassName","");
-                if(part.Kind!="AcPpDb3dConnector")
+                var part=parts[h];string kind=part.CatalogClass;
+                if(!part.IsConnector)
                 {
                     if(kind=="Pipe"&&selected.Count>0)continue;
                     if(kind=="Pipe"){selected.Add(h);break;}
@@ -52,7 +52,7 @@ internal static class ContinuationContextPlanner
                     foreach(var endpoint in new[]{start,end})
                     {
                         double ex=endpoint.X-at.X,ey=endpoint.Y-at.Y,length=Math.Sqrt(ex*ex+ey*ey);if(length<.001)continue;
-                        double fraction=Math.Min(1,12/length);var segment=new[]{at,new SheetPoint(at.X+ex*fraction,at.Y+ey*fraction)};
+                        double fraction=Math.Min(1,IsoAdvancedSettings.Current.ContinuationPipeLength/length);var segment=new[]{at,new SheetPoint(at.X+ex*fraction,at.Y+ey*fraction)};
                         strokes.Add(new(stroke.SourceId,"context-pipe",segment.Select(Move).ToArray()));
                     }
                     continue;

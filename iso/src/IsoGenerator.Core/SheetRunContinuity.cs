@@ -7,7 +7,7 @@ public sealed class SheetRunContinuity
     readonly List<string[]> runs=new();
     public SheetRunContinuity(PipelineSnapshot source)
     {
-        var pipes=source.Parts.Where(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Pipe")
+        var pipes=source.Parts.Where(p=>p.Component==ComponentKind.Pipe)
             .Select(p=>(Part:p,Ends:p.Ports.Where(q=>q.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray()))
             .Where(p=>p.Ends.Length==2&&p.Ends[0].Position.DistanceTo(p.Ends[1].Position)>1).ToArray();
         var keys=new HashSet<string>(StringComparer.Ordinal);

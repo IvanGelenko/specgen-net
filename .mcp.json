@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "plant3d": {
+      "command": "node",
+      "args": ["C:\\specgen\\mcp\\bridge\\server.mjs"]
+    }
+  }
+}

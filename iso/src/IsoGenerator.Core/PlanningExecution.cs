@@ -1,30 +1,80 @@
-﻿namespace IsoGenerator.Core;
+namespace IsoGenerator.Core;
 
 public sealed class PlanningLimitException(string message) : IOException(message);
 
-public sealed record PlanningProgress(string Detail,int Variants);
-
-// Per-operation state follows the async execution context, never AutoCAD global state.
-internal sealed class PlanningExecution : IDisposable
+public sealed record PlanningProgress(string Detail,int Variants)
 {
-    static readonly AsyncLocal<PlanningExecution?> current=new();
-    readonly PlanningExecution? previous;readonly CancellationToken token;readonly IProgress<PlanningProgress>? progress;
-    readonly System.Diagnostics.Stopwatch clock=System.Diagnostics.Stopwatch.StartNew();long last=-1000;int variants;
-    public PlanningExecution(CancellationToken token,IProgress<PlanningProgress>? progress)
-    {previous=current.Value;this.token=token;this.progress=progress;token.ThrowIfCancellationRequested();current.Value=this;}
-    public static void Check()
+    public PlanningRejection? Rejection {get;init;}
+}
+
+public sealed record PlanningRejection(
+    [property:System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<LayoutConflict>))]
+    LayoutConflict Conflict,string? SourceId,int Parts,int Density,
+    double Margin,IReadOnlyDictionary<string,double>? Extensions,double? Scale,
+    double PaperWidthOverflow,double PaperHeightOverflow);
+
+internal sealed class PlanningExecution
+{
+    readonly CancellationToken token;
+    readonly IProgress<PlanningProgress>? progress;
+    readonly TimeSpan timeLimit;
+    readonly int variantLimit;
+    readonly System.Diagnostics.Stopwatch clock=System.Diagnostics.Stopwatch.StartNew();
+    long last=-1000;
+    int variants;
+
+    public double MinimumPipeLength {get;}
+
+    public PlanningExecution(CancellationToken token,IProgress<PlanningProgress>? progress,TimeSpan timeLimit,
+        int variantLimit,double minimumPipeLength)
     {
-        var scope=current.Value;if(scope is null)return;
-        scope.token.ThrowIfCancellationRequested();
-        // This is not a capacity failure: candidate-search catch blocks must not swallow it.
-        if(scope.clock.Elapsed>TimeSpan.FromSeconds(120)||scope.variants>=512)
-            throw new PlanningLimitException($"Расчёт компоновки остановлен: достигнут предел поиска (120 с или 512 вариантов). Проверено вариантов: {scope.variants}. Попробуйте другой ракурс или задайте точки разрыва. Итоговые файлы не изменены.");
+        if(!double.IsFinite(minimumPipeLength)||minimumPipeLength<1||minimumPipeLength>100000)
+            throw new ArgumentOutOfRangeException(nameof(minimumPipeLength));
+        token.ThrowIfCancellationRequested();
+        this.token=token;
+        this.progress=progress;
+        this.timeLimit=timeLimit;
+        this.variantLimit=variantLimit;
+        MinimumPipeLength=minimumPipeLength;
     }
-    public static void Report(string detail,bool variant=false)
+
+    public bool CanTryOptionalVariant()
     {
-        Check();var scope=current.Value;if(scope is null)return;if(variant)scope.variants++;
-        if(scope.clock.ElapsedMilliseconds-scope.last<250)return;scope.last=scope.clock.ElapsedMilliseconds;
-        scope.progress?.Report(new(detail,scope.variants));
+        token.ThrowIfCancellationRequested();
+        var reserve=TimeSpan.FromSeconds(Math.Min(15,timeLimit.TotalSeconds*.25));
+        return clock.Elapsed<timeLimit-reserve&&variants<Math.Max(1,variantLimit-12);
     }
-    public void Dispose()=>current.Value=previous;
+
+    public void Check()
+    {
+        token.ThrowIfCancellationRequested();
+        if(clock.Elapsed>timeLimit)throw Limit();
+    }
+
+    public void Report(string detail,bool variant=false)
+    {
+        Check();
+        if(variant)
+        {
+            if(variants>=variantLimit)throw Limit();
+            variants++;
+        }
+        if(clock.ElapsedMilliseconds-last<250)return;
+        last=clock.ElapsedMilliseconds;
+        progress?.Report(new(detail,variants));
+    }
+
+    public void Reject(SheetCapacityException failure,int parts,int density,double margin,
+        IReadOnlyDictionary<string,double>? extensions,double? scale=null)
+    {
+        if(progress is null)return;
+        progress.Report(new(failure.Message,variants)
+        {
+            Rejection=new(failure.Conflict,failure.SourceId,parts,density,margin,
+                extensions?.ToDictionary(entry=>entry.Key,entry=>entry.Value),scale,
+                failure.PaperWidthOverflow,failure.PaperHeightOverflow)
+        });
+    }
+
+    PlanningLimitException Limit()=>new($"Расчёт компоновки остановлен: достигнут предел поиска ({timeLimit.TotalSeconds:0} с или {variantLimit} вариантов). Проверено вариантов: {variants}. Попробуйте другой ракурс или задайте точки разрыва. Итоговые файлы не изменены.");
 }

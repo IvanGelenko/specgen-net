@@ -5,18 +5,18 @@ internal sealed class CycleLengthSolver
     readonly List<double[]> cycles=new();readonly int[] variables;readonly SheetPoint[] directions;
     public bool HasCycles=>cycles.Count>0;
     public int Count=>cycles.Count/2;
-    public CycleLengthSolver(DimensionChainPlanner.Graph graph,int turns)
+    public CycleLengthSolver(PipelineTopology graph,int turns)
     {
-        int count=graph.Edges.Count;directions=new SheetPoint[count];variables=Enumerable.Range(0,count).Where(i=>graph.Edges[i].Kind=="Pipe").ToArray();
+        int count=graph.Edges.Count;directions=new SheetPoint[count];variables=Enumerable.Range(0,count).Where(i=>graph.Edges[i].Kind==ComponentKind.Pipe).ToArray();
         var parent=new Dictionary<int,int>();var tree=new Dictionary<int,List<(int Node,int Edge)>>();
         int Find(int n){if(!parent.ContainsKey(n))parent[n]=n;int root=n;while(parent[root]!=root)root=parent[root];while(parent[n]!=n){int next=parent[n];parent[n]=root;n=next;}return root;}
         for(int i=0;i<count;i++)
         {
-            var edge=graph.Edges[i];int a=graph.Sets.Find(edge.A),b=graph.Sets.Find(edge.B);
+            var edge=graph.Edges[i];int a=graph.Root(edge.A),b=graph.Root(edge.B);
             if(a==b)continue; // A topology-collapsed edge is not an independent cycle.
             var p=IsometricProjection.Project(graph.Nodes[a].Point,quarterTurns:turns);var q=IsometricProjection.Project(graph.Nodes[b].Point,quarterTurns:turns);
             double dx=q.X-p.X,dy=q.Y-p.Y,length=Math.Sqrt(dx*dx+dy*dy);
-            if(length<.001)throw new InvalidDataException($"{edge.Source}: участок вырождается в выбранном ракурсе; выберите другое направление севера.");
+            if(length<.001)throw new LayoutProjectionException($"{edge.Source}: участок вырождается в выбранном ракурсе; выберите другое направление севера.");
             directions[i]=new(dx/length,dy/length);
             if(Find(a)!=Find(b))
             {parent[Find(a)]=Find(b);if(!tree.ContainsKey(a))tree[a]=new();if(!tree.ContainsKey(b))tree[b]=new();tree[a].Add((b,i));tree[b].Add((a,i));continue;}
@@ -24,11 +24,11 @@ internal sealed class CycleLengthSolver
             while(queue.Count>0&&!previous.ContainsKey(b)){int node=queue.Dequeue();foreach(var next in tree[node])if(previous.TryAdd(next.Node,(node,next.Edge)))queue.Enqueue(next.Node);}
             var x=new double[count];var y=new double[count];x[i]=directions[i].X;y[i]=directions[i].Y;
             for(int node=b;node!=a;)
-            {var step=previous[node];double sign=graph.Sets.Find(graph.Edges[step.Edge].A)==step.Node?1:-1;x[step.Edge]-=sign*directions[step.Edge].X;y[step.Edge]-=sign*directions[step.Edge].Y;node=step.Node;}
+            {var step=previous[node];double sign=graph.Root(graph.Edges[step.Edge].A)==step.Node?1:-1;x[step.Edge]-=sign*directions[step.Edge].X;y[step.Edge]-=sign*directions[step.Edge].Y;node=step.Node;}
             cycles.Add(x);cycles.Add(y);
         }
     }
-    public double[] Constrain(double[] preferred,double minimum,IReadOnlyList<double>? lowerBounds=null)
+    public double[] Constrain(double[] preferred,double minimum,IReadOnlyList<double>? lowerBounds=null,PlanningExecution? execution=null)
     {
         if(!HasCycles)return preferred;
         int m=cycles.Count,n=variables.Length;var variableSet=variables.ToHashSet();var weights=variables.Select(i=>Math.Max(lowerBounds?[i]??minimum,preferred[i])).ToArray();
@@ -57,8 +57,8 @@ internal sealed class CycleLengthSolver
         // Dykstra projection onto the affine closure space and positive pipe-length bounds.
         for(int iteration=0;iteration<6000;iteration++)
         {
-            if(iteration%32==0)PlanningExecution.Check();
-            if(iteration%128==0)PlanningExecution.Report("Замыкание контуров");
+            if(iteration%32==0)execution?.Check();
+            if(iteration%128==0)execution?.Report("Замыкание контуров");
             var trial=new double[n];for(int i=0;i<n;i++)trial[i]=value[i]+affine[i];
             var rhs=new double[m];for(int r=0;r<m;r++){rhs[r]=-b[r];for(int i=0;i<n;i++)rhs[r]+=a[r,i]*trial[i];}
             var lambda=Multipliers(rhs);var next=new double[n];
@@ -67,6 +67,47 @@ internal sealed class CycleLengthSolver
             if(error<1e-6)break;
         }
         if(error>.01)throw new SheetCapacityException($"Не удалось совместить замкнутые контуры с минимальной длиной труб; невязка {error:F3} мм.");
-        var lengths=preferred.ToArray();for(int i=0;i<n;i++)lengths[variables[i]]=value[i]*weights[i];return lengths;
+        var lengths=preferred.ToArray();
+        for(int i=0;i<n;i++)lengths[variables[i]]=value[i]*weights[i];
+        if(TryGrid(lengths,minimum,lowerBounds) is {} onGrid)return onGrid;
+        return lengths;
+    }
+
+    double[]? TryGrid(double[] closed,double step,IReadOnlyList<double>? lowerBounds)
+    {
+        // Rigid symbol lengths can make an exact grid closure impossible.
+        // Try both adjacent grid values only on the few pipes adjusted by closure.
+        const double tolerance=.001;
+        var snapped=(double[])closed.Clone();
+        var adjustable=new List<(int Edge,double Other)>();
+        foreach(int edge in variables)
+        {
+            double near=Math.Max(lowerBounds?[edge]??step,Math.Round(closed[edge]/step)*step);
+            double far=Math.Max(lowerBounds?[edge]??step,closed[edge]>near?near+step:near-step);
+            snapped[edge]=near;
+            if(Math.Abs(near-closed[edge])>.01&&Math.Abs(far-near)>.01)
+                adjustable.Add((edge,far));
+        }
+        var residual=cycles.Select(row=>variables.Sum(edge=>row[edge]*(snapped[edge]-closed[edge]))).ToArray();
+        if(residual.All(value=>Math.Abs(value)<tolerance))return snapped;
+        if(adjustable.Count>7)return null;
+        var deltas=adjustable.Select(option=>cycles.Select(row=>
+            row[option.Edge]*(option.Other-snapped[option.Edge])).ToArray()).ToArray();
+        for(int mask=1;mask<(1<<adjustable.Count);mask++)
+        {
+            bool valid=true;
+            for(int row=0;row<cycles.Count&&valid;row++)
+            {
+                double error=residual[row];
+                for(int i=0;i<adjustable.Count;i++)
+                    if((mask&(1<<i))!=0)error+=deltas[i][row];
+                valid=Math.Abs(error)<tolerance;
+            }
+            if(!valid)continue;
+            for(int i=0;i<adjustable.Count;i++)
+                if((mask&(1<<i))!=0)snapped[adjustable[i].Edge]=adjustable[i].Other;
+            return snapped;
+        }
+        return null;
     }
 }

@@ -1,0 +1,1263 @@
+{
+  "note": "Reference vent assembly built by the user in Plant 3D (temp.dwg, 2026-10-28). Coordinates in mm; decimal separator in this dump is a dot.",
+  "document": "C:\\project for test\\Plant 3D Models\\Трубопроводы\\temp.dwg",
+  "objects": [
+    {
+      "handle": "4F3D",
+      "cls": "AcPpDb3dPipe",
+      "rowId": 165503,
+      "properties": {
+        "PnPID": "165503",
+        "PnPClassName": "Pipe",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "3c46affb-af7a-4eea-a9f2-9d6b38574a11",
+        "PnPTimestamp": "639287764627330914",
+        "AcquisitionProperties": "#ISO_PipeID",
+        "Bolt": "1",
+        "COG X": "1781.754735",
+        "COG Y": "-3.950973",
+        "COG Z": "92.873109",
+        "CompatibleStandard": "ГОСТ 8732-2025",
+        "ComponentDesignation": "",
+        "ConnectionPortCount": "2",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "DesignPressureFactor": "",
+        "DesignStd": "ГОСТ 8732-2025",
+        "EndType": "PL",
+        "EngagementLength": "0",
+        "Facing": "",
+        "FlangeStd": "",
+        "FlangeThickness": "",
+        "GasketStd": "",
+        "ItemCode": "",
+        "LengthUnit": "mm",
+        "Manufacturer": "",
+        "MatchingPipeOd": "159",
+        "Material": "09Г2С",
+        "MaterialCode": "",
+        "NominalDiameter": "150",
+        "NominalUnit": "mm",
+        "PartCategory": "Pipe",
+        "PartFamilyId": "02c07235-3163-4e9c-95c1-d95ea033c8f3",
+        "PartFamilyLongDesc": "Труба ГОСТ 8732-2025, 09Г2С, Основной ряд, s=6 мм",
+        "PartSizeLongDesc": "Труба 159x6п ГОСТ 8732-2025/В 09Г2С ГОСТ 8731-2025",
+        "PortName": "S1",
+        "Position X": "27.291571",
+        "Position Y": "-3.950973",
+        "Position Z": "92.873109",
+        "PressureClass": "",
+        "Schedule": "",
+        "ShortDescription": "Труба",
+        "Size": "150",
+        "SizeRecordId": "27cf1b10-5ce0-4dec-ae17-27f5dfed99ac",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Status": "Новое",
+        "WallThickness": "6",
+        "Weight": "79.438583",
+        "WeightUnit": "KG",
+        "Size2": "",
+        "Pwork1": "",
+        "PressureDesign1": "",
+        "Twork1": "",
+        "Tdesign1": "",
+        "TestD1": "",
+        "Testtype1": "",
+        "TestAdditional1": "",
+        "Env": "",
+        "GostGroup1": "",
+        "TRTSGroup": "",
+        "Corrosion1": "",
+        "CorrosionSpeed1": "",
+        "Thermo1": "Нет",
+        "NDControl1": "",
+        "Additional1": "-",
+        "TestW1": "",
+        "BOP": "13.373109",
+        "InsulationSpec": "",
+        "InsulationThickness": "",
+        "InsulationType": "",
+        "LineNumberTag": "",
+        "Required Spec": "",
+        "Service": "",
+        "Shop_Field": "SHOP",
+        "SpecRecordId": "17053",
+        "SpoolNumber": "",
+        "Tag": "",
+        "TieInNumber": "",
+        "TOP": "172.373109",
+        "TracingSpec": "",
+        "TracingType": "",
+        "Unit": "",
+        "CutLength": "3508.926327",
+        "Length": "3508.926327",
+        "LinearWeight": "22.639",
+        "LinearWeightUnit": "kg/m",
+        "MinCutLength": "",
+        "UseFixedLength": "False",
+        "ISO_PipeID": ""
+      },
+      "ports": {
+        "handle": "4F3D",
+        "cls": "AcPpDb3dPipe",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              27.292,
+              -3.951,
+              92.873
+            ],
+            "direction": [
+              -1,
+              0,
+              0
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              3536.218,
+              -3.951,
+              92.873
+            ],
+            "direction": [
+              1,
+              0,
+              0
+            ],
+            "endType": ""
+          },
+          {
+            "name": "D1",
+            "position": [
+              1781.755,
+              -3.951,
+              170.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": "TAP"
+          }
+        ]
+      }
+    },
+    {
+      "handle": "4F42",
+      "cls": "AcPpDb3dPipe",
+      "rowId": 165505,
+      "properties": {
+        "PnPID": "165505",
+        "PnPClassName": "Pipe",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "8856f6b8-a33e-413b-a224-19b5abdca014",
+        "PnPTimestamp": "639287764796282967",
+        "AcquisitionProperties": "#ISO_PipeID",
+        "Bolt": "1",
+        "COG X": "1781.754735",
+        "COG Y": "-3.950973",
+        "COG Z": "220.746403",
+        "CompatibleStandard": "ГОСТ 8734-75",
+        "ComponentDesignation": "",
+        "ConnectionPortCount": "2",
+        "ContentIsoSymbolDefinition": "TYPE=PIPE",
+        "DesignPressureFactor": "",
+        "DesignStd": "",
+        "EndType": "PL",
+        "EngagementLength": "0",
+        "Facing": "",
+        "FlangeStd": "",
+        "FlangeThickness": "",
+        "GasketStd": "",
+        "ItemCode": "",
+        "LengthUnit": "mm",
+        "Manufacturer": "",
+        "MatchingPipeOd": "32",
+        "Material": "09Г2С",
+        "MaterialCode": "",
+        "NominalDiameter": "25",
+        "NominalUnit": "mm",
+        "PartCategory": "Pipe",
+        "PartFamilyId": "b7d96b84-46a3-47a0-a604-f4bcbfed98ce",
+        "PartFamilyLongDesc": "Труба ГОСТ 8734-75, 09Г2С, Основной ряд, s=3 мм",
+        "PartSizeLongDesc": "Труба 32x3 ГОСТ 8734-75/В 09Г2С ГОСТ 8733-74",
+        "PortName": "S1",
+        "Position X": "1781.754735",
+        "Position Y": "-3.950973",
+        "Position Z": "170.746403",
+        "PressureClass": "",
+        "Schedule": "",
+        "ShortDescription": "Труба",
+        "Size": "25",
+        "SizeRecordId": "862016a5-f82e-45c1-91f5-40a89df942cd",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Status": "Новое",
+        "WallThickness": "3",
+        "Weight": "0.144205",
+        "WeightUnit": "KG",
+        "Size2": "",
+        "Pwork1": "",
+        "PressureDesign1": "",
+        "Twork1": "",
+        "Tdesign1": "",
+        "TestD1": "",
+        "Testtype1": "",
+        "TestAdditional1": "",
+        "Env": "",
+        "GostGroup1": "",
+        "TRTSGroup": "",
+        "Corrosion1": "",
+        "CorrosionSpeed1": "",
+        "Thermo1": "Нет",
+        "NDControl1": "",
+        "Additional1": "-",
+        "TestW1": "",
+        "BOP": "154.746403",
+        "InsulationSpec": "",
+        "InsulationThickness": "",
+        "InsulationType": "",
+        "LineNumberTag": "",
+        "Required Spec": "",
+        "Service": "",
+        "Shop_Field": "SHOP",
+        "SpecRecordId": "17607",
+        "SpoolNumber": "",
+        "Tag": "",
+        "TieInNumber": "",
+        "TOP": "186.746403",
+        "TracingSpec": "",
+        "TracingType": "",
+        "Unit": "",
+        "CutLength": "100",
+        "Length": "100",
+        "LinearWeight": "1.4420481589856131",
+        "LinearWeightUnit": "LB/FT",
+        "MinCutLength": "",
+        "UseFixedLength": "False",
+        "ISO_PipeID": ""
+      },
+      "ports": {
+        "handle": "4F42",
+        "cls": "AcPpDb3dPipe",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              170.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              270.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          }
+        ]
+      }
+    },
+    {
+      "handle": "4F47",
+      "cls": "AcPpDb3dConnector",
+      "rowId": 165509,
+      "properties": {
+        "PnPID": "165509",
+        "PnPClassName": "P3dConnector",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "8e80287c-a856-4fb2-aed6-3882faf040bb",
+        "PnPTimestamp": "639287764713942689",
+        "AcquisitionProperties": "",
+        "JointType": "Tap"
+      },
+      "ports": {
+        "handle": "4F47",
+        "cls": "AcPpDb3dConnector",
+        "position": [
+          1781.755,
+          -3.951,
+          170.746
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              170.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              170.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          }
+        ]
+      },
+      "connector": {
+        "handle": "4F47",
+        "position": [
+          1781.755,
+          -3.951,
+          170.746
+        ],
+        "numSubParts": 1,
+        "xAxis": [
+          0,
+          0,
+          1
+        ],
+        "zAxis": [
+          -1,
+          0,
+          0
+        ],
+        "slopeTolerance": 0.0017453292519943296,
+        "offsetTolerance": 0,
+        "ports": [
+          "S1(1781.8,-4,170.7)/(-0,-0,-1)",
+          "S2(1781.8,-4,170.7)/(0,0,1)"
+        ],
+        "subParts": [
+          {
+            "index": 0,
+            "type": "WeldSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(0,0,0)/(-1,-0,-0)",
+              "S2(0,0,0)/(1,0,0)"
+            ],
+            "weldWidth": 0,
+            "partSizeProperties": {
+              "name": "",
+              "type": "TapWeld",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165507,
+              "guid": "",
+              "nominalDiameter": "0in",
+              "props": {
+                "Bolt": "1",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartSizeLongDesc": "Tapweld",
+                "ShortDescription": "Tapweld",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "SpecRecordId": "-1",
+                "Shop_Field": "SHOP"
+              }
+            }
+          }
+        ],
+        "data": {
+          "JointType": "Tap"
+        }
+      }
+    },
+    {
+      "handle": "4F4B",
+      "cls": "AcPpDb3dPipeInlineAsset",
+      "rowId": 165511,
+      "properties": {
+        "PnPID": "165511",
+        "PnPClassName": "Valve",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "ee83b37e-c49f-49be-a27e-df25b5c0ed6c",
+        "PnPTimestamp": "639287764936557618",
+        "AcquisitionProperties": "",
+        "Bolt": "1",
+        "COG X": "1781.754735",
+        "COG Y": "-3.950973",
+        "COG Z": "397.746403",
+        "CompatibleStandard": "",
+        "ComponentDesignation": "Parametric",
+        "ConnectionPortCount": "2",
+        "ContentIsoSymbolDefinition": "TYPE=VALVE,SKEY=VTFL",
+        "DesignPressureFactor": "1.6",
+        "DesignStd": "",
+        "EndType": "FL",
+        "EngagementLength": "",
+        "Facing": "FL1",
+        "FlangeStd": "",
+        "FlangeThickness": "",
+        "GasketStd": "",
+        "ItemCode": "",
+        "LengthUnit": "mm",
+        "Manufacturer": "",
+        "MatchingPipeOd": "32",
+        "Material": "хладостойкая сталь",
+        "MaterialCode": "09Г2С",
+        "NominalDiameter": "25",
+        "NominalUnit": "mm",
+        "PartCategory": "Valves",
+        "PartFamilyId": "15635f10-7265-477d-b449-4faf3788bd95",
+        "PartFamilyLongDesc": "Задвижка клиновая FL PN16 исп.В хладостойкая сталь",
+        "PartSizeLongDesc": "Задвижка клиновая DN25 FL PN16 исп.В хладостойкая сталь",
+        "PortName": "S1",
+        "Position X": "1781.754735",
+        "Position Y": "-3.950973",
+        "Position Z": "315.246403",
+        "PressureClass": "1.6",
+        "Schedule": "",
+        "ShortDescription": "Задвижка клиновая",
+        "Size": "25",
+        "SizeRecordId": "ff8f61de-9edb-87fd-fd48-4c7c97cd6ecf",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Status": "Новое",
+        "WallThickness": "",
+        "Weight": "6.2",
+        "WeightUnit": "KG",
+        "Size2": "",
+        "Pwork1": "",
+        "PressureDesign1": "",
+        "Twork1": "",
+        "Tdesign1": "",
+        "TestD1": "",
+        "Testtype1": "",
+        "TestAdditional1": "",
+        "Env": "",
+        "GostGroup1": "",
+        "TRTSGroup": "",
+        "Corrosion1": "",
+        "CorrosionSpeed1": "",
+        "Thermo1": "Нет",
+        "NDControl1": "",
+        "Additional1": "-",
+        "TestW1": "",
+        "BOP": "299.246403",
+        "InsulationSpec": "",
+        "InsulationThickness": "",
+        "InsulationType": "",
+        "LineNumberTag": "",
+        "Required Spec": "",
+        "Service": "",
+        "Shop_Field": "SHOP",
+        "SpecRecordId": "16371",
+        "SpoolNumber": "",
+        "Tag": "?-?",
+        "TieInNumber": "",
+        "TOP": "331.246403",
+        "TracingSpec": "",
+        "TracingType": "",
+        "Unit": "",
+        "ActuatorHeight": "",
+        "ActuatorType": "вентиль",
+        "ActuatorWidth": "",
+        "Code": "",
+        "ControlValve": "False",
+        "EndConnections": "",
+        "Failure": "",
+        "FlowDependent": "False",
+        "Length": "165",
+        "Normally": "",
+        "Number": "",
+        "Offset": "False",
+        "OperatorType": "Ручной",
+        "ValveAlignment": "Inline",
+        "ValveBodyType": "Gate",
+        "ValveCode": "",
+        "ValveDetail": "Continuous"
+      },
+      "ports": {
+        "handle": "4F4B",
+        "cls": "AcPpDb3dPipeInlineAsset",
+        "position": [
+          1781.755,
+          -3.951,
+          315.246
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              315.246
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              480.246
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          }
+        ]
+      }
+    },
+    {
+      "handle": "4F50",
+      "cls": "AcPpDb3dConnector",
+      "rowId": 165517,
+      "properties": {
+        "PnPID": "165517",
+        "PnPClassName": "P3dConnector",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "ac5c20dc-a49c-433d-806f-f0dc1eb1281d",
+        "PnPTimestamp": "639287764912317460",
+        "AcquisitionProperties": "",
+        "JointType": "Flanged FL1-FL1 (RUS)"
+      },
+      "ports": {
+        "handle": "4F50",
+        "cls": "AcPpDb3dConnector",
+        "position": [
+          1781.755,
+          -3.951,
+          315.246
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              315.246
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              310.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          }
+        ]
+      },
+      "connector": {
+        "handle": "4F50",
+        "position": [
+          1781.755,
+          -3.951,
+          315.246
+        ],
+        "numSubParts": 2,
+        "xAxis": [
+          0,
+          0,
+          -1
+        ],
+        "zAxis": [
+          1,
+          0,
+          0
+        ],
+        "slopeTolerance": 0.0017453292519943296,
+        "offsetTolerance": 0,
+        "ports": [
+          "S1(1781.8,-4,315.2)/(-0,0,1)",
+          "S2(1781.8,-4,310.7)/(0,-0,-1)"
+        ],
+        "subParts": [
+          {
+            "index": 0,
+            "type": "BlockSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(0,0,0)/(-1,0,0)",
+              "S2(4.5,0,0)/(1,0,0)"
+            ],
+            "symbolId": "4EFE",
+            "partSizeProperties": {
+              "name": "",
+              "type": "Gasket",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165513,
+              "guid": "22b42f5d-6e21-9847-bac5-4902d6704709",
+              "nominalDiameter": "25mm",
+              "props": {
+                "Bolt": "1",
+                "CompatibleStandard": "ОСТ 26.260.454-99",
+                "ConnectionPortCount": "2",
+                "ContentIsoSymbolDefinition": "TYPE=GASKET",
+                "Material": "ПК",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartCategory": "Fasteners",
+                "PartFamilyId": "d532b9a2-62d8-4213-9773-3ca53265638c",
+                "PartFamilyLongDesc": "Прокладка спирально-навитая ОСТ 26.260.454-99, тип Д, вид 2, 1.6 МПа",
+                "PartSizeLongDesc": "Прокладка спирально-навитая СНП Д-2-43-1,6-4,5",
+                "ShortDescription": "Прокладка",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "SpecRecordId": "16616",
+                "Shop_Field": "FIELD"
+              }
+            }
+          },
+          {
+            "index": 1,
+            "type": "BoltSetSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(-0,0,0)/(-1,-0,-0)",
+              "S2(-0,0,0)/(1,0,0)"
+            ],
+            "boltLength": 115,
+            "boltOffset": 0,
+            "partSizeProperties": {
+              "name": "",
+              "type": "BoltSet",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165515,
+              "guid": "0972516c-fca2-4d28-b6ac-6260822cbd8c",
+              "nominalDiameter": "25mm",
+              "props": {
+                "Bolt": "1",
+                "CompatibleStandard": "ОСТ 26-2040-96",
+                "ContentIsoSymbolDefinition": "TYPE=BOLT",
+                "Material": "35Х",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartCategory": "Fasteners",
+                "PartFamilyId": "24dc75b0-f3a2-44eb-a8f4-b87de2f83bc0",
+                "PartFamilyLongDesc": "Крепежный комплект ОСТ 26-2040-96, исполнение 1, тип 1, 1.6 МПа",
+                "PartSizeLongDesc": "Крепежный комплект 1-М12х80",
+                "ShortDescription": "Крепежный комплект",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "Length": "80",
+                "SpecRecordId": "13031",
+                "BoltSize": "М12",
+                "NumberInSet": "4",
+                "Shop_Field": "FIELD"
+              }
+            }
+          }
+        ],
+        "data": {
+          "JointType": "Flanged FL1-FL1 (RUS)"
+        }
+      }
+    },
+    {
+      "handle": "4F53",
+      "cls": "AcPpDb3dPipeInlineAsset",
+      "rowId": 165519,
+      "properties": {
+        "PnPID": "165519",
+        "PnPClassName": "Flange",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "076b67a1-8a97-4391-be19-38b11b53f898",
+        "PnPTimestamp": "639287764912354787",
+        "AcquisitionProperties": "",
+        "Bolt": "1",
+        "COG X": "1781.754735",
+        "COG Y": "-3.950973",
+        "COG Z": "290.746403",
+        "CompatibleStandard": "Исп.B",
+        "ComponentDesignation": "",
+        "ConnectionPortCount": "2",
+        "ContentIsoSymbolDefinition": "SKEY=FLWN,TYPE=FLANGE",
+        "DesignPressureFactor": "",
+        "DesignStd": "ГОСТ 33259-2015",
+        "EndType": "FL",
+        "EngagementLength": "0",
+        "Facing": "FL1",
+        "FlangeStd": "",
+        "FlangeThickness": "14",
+        "GasketStd": "",
+        "ItemCode": "",
+        "LengthUnit": "mm",
+        "Manufacturer": "",
+        "MatchingPipeOd": "32",
+        "Material": "09Г2С",
+        "MaterialCode": "",
+        "NominalDiameter": "25",
+        "NominalUnit": "mm",
+        "PartCategory": "Flanges",
+        "PartFamilyId": "9e8f66b7-f062-4fb7-96df-6f884b38c1f4",
+        "PartFamilyLongDesc": "Фланец -16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PartSizeLongDesc": "Фланец 25-16-11-1-B-09Г2С-IV ГОСТ 33259-2015",
+        "PortName": "S1",
+        "Position X": "1781.754735",
+        "Position Y": "-3.950973",
+        "Position Z": "310.746403",
+        "PressureClass": "1.6",
+        "Schedule": "",
+        "ShortDescription": "Фланец приварной встык",
+        "Size": "25",
+        "SizeRecordId": "0c6c2f00-1a4c-4405-a0d8-7dc9ee2ee200",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Status": "Новое",
+        "WallThickness": "",
+        "Weight": "1.05",
+        "WeightUnit": "KG",
+        "Size2": "",
+        "Pwork1": "",
+        "PressureDesign1": "",
+        "Twork1": "",
+        "Tdesign1": "",
+        "TestD1": "",
+        "Testtype1": "",
+        "TestAdditional1": "",
+        "Env": "",
+        "GostGroup1": "",
+        "TRTSGroup": "",
+        "Corrosion1": "",
+        "CorrosionSpeed1": "",
+        "Thermo1": "Нет",
+        "NDControl1": "",
+        "Additional1": "-",
+        "TestW1": "",
+        "BOP": "294.746403",
+        "InsulationSpec": "",
+        "InsulationThickness": "",
+        "InsulationType": "",
+        "LineNumberTag": "",
+        "Required Spec": "",
+        "Service": "",
+        "Shop_Field": "SHOP",
+        "SpecRecordId": "4794",
+        "SpoolNumber": "",
+        "Tag": "",
+        "TieInNumber": "",
+        "TOP": "326.746403",
+        "TracingSpec": "",
+        "TracingType": "",
+        "Unit": ""
+      },
+      "ports": {
+        "handle": "4F53",
+        "cls": "AcPpDb3dPipeInlineAsset",
+        "position": [
+          1781.755,
+          -3.951,
+          310.746
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              310.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              270.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          }
+        ]
+      }
+    },
+    {
+      "handle": "4F56",
+      "cls": "AcPpDb3dConnector",
+      "rowId": 165523,
+      "properties": {
+        "PnPID": "165523",
+        "PnPClassName": "P3dConnector",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "5a29e3e1-c94d-4e60-8215-a075cbc46bfb",
+        "PnPTimestamp": "639287764912389817",
+        "AcquisitionProperties": "",
+        "JointType": "Buttweld"
+      },
+      "ports": {
+        "handle": "4F56",
+        "cls": "AcPpDb3dConnector",
+        "position": [
+          1781.755,
+          -3.951,
+          270.746
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              270.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              270.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          }
+        ]
+      },
+      "connector": {
+        "handle": "4F56",
+        "position": [
+          1781.755,
+          -3.951,
+          270.746
+        ],
+        "numSubParts": 1,
+        "xAxis": [
+          0,
+          0,
+          -1
+        ],
+        "zAxis": [
+          1,
+          0,
+          0
+        ],
+        "slopeTolerance": 0.05235987755982988,
+        "offsetTolerance": 0,
+        "ports": [
+          "S1(1781.8,-4,270.7)/(-0,0,1)",
+          "S2(1781.8,-4,270.7)/(0,-0,-1)"
+        ],
+        "subParts": [
+          {
+            "index": 0,
+            "type": "WeldSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(0,0,0)/(-1,-0,-0)",
+              "S2(0,0,0)/(1,0,0)"
+            ],
+            "weldWidth": 0,
+            "partSizeProperties": {
+              "name": "",
+              "type": "Buttweld",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165521,
+              "guid": "",
+              "nominalDiameter": "0in",
+              "props": {
+                "Bolt": "1",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartSizeLongDesc": "Buttweld",
+                "ShortDescription": "Buttweld",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "SpecRecordId": "-1",
+                "Shop_Field": "SHOP"
+              }
+            }
+          }
+        ],
+        "data": {
+          "JointType": "Buttweld"
+        }
+      }
+    },
+    {
+      "handle": "4F59",
+      "cls": "AcPpDb3dPipeInlineAsset",
+      "rowId": 165525,
+      "properties": {
+        "PnPID": "165525",
+        "PnPClassName": "BlindFlange",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "7f0578a2-76ae-4eca-9554-b18844e314cd",
+        "PnPTimestamp": "639287765038142187",
+        "AcquisitionProperties": "",
+        "Bolt": "1",
+        "COG X": "1781.754735",
+        "COG Y": "-3.950973",
+        "COG Z": "491.746403",
+        "CompatibleStandard": "Исп.В",
+        "ComponentDesignation": "",
+        "ConnectionPortCount": "1",
+        "ContentIsoSymbolDefinition": "TYPE=FLANGE-BLIND,SKEY=FLBL",
+        "DesignPressureFactor": "",
+        "DesignStd": "ГОСТ 34785-2021",
+        "EndType": "FL",
+        "EngagementLength": "",
+        "Facing": "FL1",
+        "FlangeStd": "",
+        "FlangeThickness": "",
+        "GasketStd": "",
+        "ItemCode": "",
+        "LengthUnit": "mm",
+        "Manufacturer": "",
+        "MatchingPipeOd": "32",
+        "Material": "09Г2С",
+        "MaterialCode": "",
+        "NominalDiameter": "25",
+        "NominalUnit": "mm",
+        "PartCategory": "Flanges",
+        "PartFamilyId": "7e374428-6bb1-416d-9b20-0db6c8f9eedd",
+        "PartFamilyLongDesc": "Заглушка -16-В-1-09Г2С-IV ГОСТ 34785-2021",
+        "PartSizeLongDesc": "Заглушка 25-16-В-1-09Г2С-IV ГОСТ 34785-2021",
+        "PortName": "S1",
+        "Position X": "1781.754735",
+        "Position Y": "-3.950973",
+        "Position Z": "484.746403",
+        "PressureClass": "1.6",
+        "Schedule": "",
+        "ShortDescription": "Заглушка фланцевая",
+        "Size": "25",
+        "SizeRecordId": "02b77bae-9321-524d-9348-d5e0d082b8c5",
+        "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+        "Status": "Новое",
+        "WallThickness": "",
+        "Weight": "0.8",
+        "WeightUnit": "KG",
+        "Size2": "",
+        "Pwork1": "",
+        "PressureDesign1": "",
+        "Twork1": "",
+        "Tdesign1": "",
+        "TestD1": "",
+        "Testtype1": "",
+        "TestAdditional1": "",
+        "Env": "",
+        "GostGroup1": "",
+        "TRTSGroup": "",
+        "Corrosion1": "",
+        "CorrosionSpeed1": "",
+        "Thermo1": "Нет",
+        "NDControl1": "",
+        "Additional1": "-",
+        "TestW1": "",
+        "BOP": "468.746403",
+        "InsulationSpec": "",
+        "InsulationThickness": "",
+        "InsulationType": "",
+        "LineNumberTag": "",
+        "Required Spec": "",
+        "Service": "",
+        "Shop_Field": "SHOP",
+        "SpecRecordId": "3913",
+        "SpoolNumber": "",
+        "Tag": "",
+        "TieInNumber": "",
+        "TOP": "500.746403",
+        "TracingSpec": "",
+        "TracingType": "",
+        "Unit": ""
+      },
+      "ports": {
+        "handle": "4F59",
+        "cls": "AcPpDb3dPipeInlineAsset",
+        "position": [
+          1781.755,
+          -3.951,
+          484.746
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              484.746
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          }
+        ]
+      }
+    },
+    {
+      "handle": "4F5E",
+      "cls": "AcPpDb3dConnector",
+      "rowId": 165531,
+      "properties": {
+        "PnPID": "165531",
+        "PnPClassName": "P3dConnector",
+        "PnPStatus": "0",
+        "PnPRevision": "0",
+        "PnPGuid": "72975659-619a-4f41-be2a-b86db59da6de",
+        "PnPTimestamp": "639287765029465640",
+        "AcquisitionProperties": "",
+        "JointType": "Flanged FL1-FL1 (RUS)"
+      },
+      "ports": {
+        "handle": "4F5E",
+        "cls": "AcPpDb3dConnector",
+        "position": [
+          1781.755,
+          -3.951,
+          484.746
+        ],
+        "ports": [
+          {
+            "name": "S1",
+            "position": [
+              1781.755,
+              -3.951,
+              484.746
+            ],
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "endType": ""
+          },
+          {
+            "name": "S2",
+            "position": [
+              1781.755,
+              -3.951,
+              480.246
+            ],
+            "direction": [
+              0,
+              0,
+              -1
+            ],
+            "endType": ""
+          }
+        ]
+      },
+      "connector": {
+        "handle": "4F5E",
+        "position": [
+          1781.755,
+          -3.951,
+          484.746
+        ],
+        "numSubParts": 2,
+        "xAxis": [
+          0,
+          0,
+          -1
+        ],
+        "zAxis": [
+          1,
+          0,
+          0
+        ],
+        "slopeTolerance": 0.0017453292519943296,
+        "offsetTolerance": 0,
+        "ports": [
+          "S1(1781.8,-4,484.7)/(-0,0,1)",
+          "S2(1781.8,-4,480.2)/(0,-0,-1)"
+        ],
+        "subParts": [
+          {
+            "index": 0,
+            "type": "BlockSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(0,0,0)/(-1,0,0)",
+              "S2(4.5,0,0)/(1,0,0)"
+            ],
+            "symbolId": "4EFE",
+            "partSizeProperties": {
+              "name": "",
+              "type": "Gasket",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165527,
+              "guid": "22b42f5d-6e21-9847-bac5-4902d6704709",
+              "nominalDiameter": "25mm",
+              "props": {
+                "Bolt": "1",
+                "CompatibleStandard": "ОСТ 26.260.454-99",
+                "ConnectionPortCount": "2",
+                "ContentIsoSymbolDefinition": "TYPE=GASKET",
+                "Material": "ПК",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartCategory": "Fasteners",
+                "PartFamilyId": "d532b9a2-62d8-4213-9773-3ca53265638c",
+                "PartFamilyLongDesc": "Прокладка спирально-навитая ОСТ 26.260.454-99, тип Д, вид 2, 1.6 МПа",
+                "PartSizeLongDesc": "Прокладка спирально-навитая СНП Д-2-43-1,6-4,5",
+                "ShortDescription": "Прокладка",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "SpecRecordId": "16616",
+                "Shop_Field": "FIELD"
+              }
+            }
+          },
+          {
+            "index": 1,
+            "type": "BoltSetSubPart",
+            "rotation": 0,
+            "mirror": false,
+            "persistent": false,
+            "ports": [
+              "S1(-0,0,0)/(-1,-0,-0)",
+              "S2(-0,0,0)/(1,0,0)"
+            ],
+            "boltLength": 115,
+            "boltOffset": 0,
+            "partSizeProperties": {
+              "name": "",
+              "type": "BoltSet",
+              "spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+              "domain": "",
+              "partId": 165529,
+              "guid": "0972516c-fca2-4d28-b6ac-6260822cbd8c",
+              "nominalDiameter": "25mm",
+              "props": {
+                "Bolt": "1",
+                "CompatibleStandard": "ОСТ 26-2040-96",
+                "ContentIsoSymbolDefinition": "TYPE=BOLT",
+                "Material": "35Х",
+                "NominalDiameter": "25",
+                "NominalUnit": "mm",
+                "PartCategory": "Fasteners",
+                "PartFamilyId": "24dc75b0-f3a2-44eb-a8f4-b87de2f83bc0",
+                "PartFamilyLongDesc": "Крепежный комплект ОСТ 26-2040-96, исполнение 1, тип 1, 1.6 МПа",
+                "PartSizeLongDesc": "Крепежный комплект 1-М12х80",
+                "ShortDescription": "Крепежный комплект",
+                "Size": "25",
+                "Spec": "!_Rus-PipeAndFittings_09Г2С_PN16",
+                "Status": "New",
+                "WeightUnit": "KG",
+                "Thermo1": "Нет",
+                "Additional1": "-",
+                "Length": "80",
+                "SpecRecordId": "13031",
+                "BoltSize": "М12",
+                "NumberInSet": "4",
+                "Shop_Field": "FIELD"
+              }
+            }
+          }
+        ],
+        "data": {
+          "JointType": "Flanged FL1-FL1 (RUS)"
+        }
+      }
+    }
+  ]
+}

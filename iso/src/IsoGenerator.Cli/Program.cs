@@ -1,4 +1,4 @@
-﻿using System.Text.Json;
+using System.Text.Json;
 using IsoGenerator.Core;
 try {
 if(args.Length<2||args.Length>4)throw new ArgumentException("Usage: snapshot.json scene.json [symbol-map.xml] [--sheets]");
@@ -16,7 +16,7 @@ int quarterTurns=int.TryParse(Environment.GetEnvironmentVariable("ISO_QUARTER_TU
 if(args.Length==4)
 {
     if(args[3]!="--sheets")throw new ArgumentException("Unknown option "+args[3]);
-    var sheets=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1");
+    var sheets=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1",instrumentCalloutsOnly:Environment.GetEnvironmentVariable("ISO_INSTRUMENT_CALLOUTS_ONLY")!="0");
     foreach(var sheet in sheets)
     {
         var target=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,Path.GetFileNameWithoutExtension(args[1])+$"-sheet-{sheet.Number:00}.json");
@@ -25,7 +25,7 @@ if(args.Length==4)
     }
     return;
 }
-var plans=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1");
+var plans=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1",instrumentCalloutsOnly:Environment.GetEnvironmentVariable("ISO_INSTRUMENT_CALLOUTS_ONLY")!="0");
 if(plans.Count!=1)throw new SheetCapacityException("Линии требуется несколько листов. Используйте --sheets.");
 var scene=plans[0].Scene;
 File.WriteAllText(args[1],JsonSerializer.Serialize(scene,new JsonSerializerOptions{WriteIndented=true}));

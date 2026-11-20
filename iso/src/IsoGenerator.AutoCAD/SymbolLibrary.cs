@@ -29,7 +29,7 @@ internal sealed class SymbolLibrary : IDisposable
                     if(!double.IsFinite(point.X)||!double.IsFinite(point.Y))throw new InvalidDataException($"{glyph.Block}: non-finite library contour");
                     polyline.AddVertexAt(vertex++,new Point2d(glyph.XAxis.X*point.X+glyph.YAxis.X*point.Y,glyph.XAxis.Y*point.X+glyph.YAxis.Y*point.Y),0,0,0);
                 }
-                polyline.Layer="0";polyline.ColorIndex=0;polyline.LineWeight=LineWeight.ByBlock;polyline.Linetype="ByBlock";
+                polyline.Layer="0";polyline.ColorIndex=0;polyline.LineWeight=LineWeight.ByBlock;polyline.Linetype="ByBlock";polyline.Plinegen=true;polyline.LinetypeScale=1;
                 output.AppendEntity(polyline);transaction.AddNewlyCreatedDBObject(polyline,true);
             }
             return id;
@@ -61,7 +61,7 @@ internal sealed class SymbolLibrary : IDisposable
                 int steps=curve is Circle?96:48;
                 for(int i=0;i<=steps;i++)Vertex(curve.GetPointAtParameter(curve.StartParam+(curve.EndParam-curve.StartParam)*i/steps));
             }
-            result.Layer="0";result.ColorIndex=0;result.LineWeight=LineWeight.ByBlock;result.Linetype="ByBlock";
+            result.Layer="0";result.ColorIndex=0;result.LineWeight=LineWeight.ByBlock;result.Linetype="ByBlock";result.Plinegen=true;result.LinetypeScale=1;
             output.AppendEntity(result);transaction.AddNewlyCreatedDBObject(result,true);count++;
         }
         if(count==0)throw new InvalidDataException($"Empty symbol block {glyph.Block}");

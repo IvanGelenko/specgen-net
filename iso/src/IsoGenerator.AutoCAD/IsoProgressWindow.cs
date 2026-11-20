@@ -29,7 +29,7 @@ internal sealed class IsoProgressWindow
         var done=new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         try{form.BeginInvoke(new Action(()=>{try{done.SetResult(action());}catch(Exception ex){done.SetException(ex);}}));}catch(Exception ex){done.SetException(ex);}return done.Task;
     }
-    public Task<DialogResult> ChooseOutput(string folder)=>Invoke(()=>OutputConflictDialog.Choose(folder,form));
+    public Task<DialogResult> ChooseOutput(string folder,bool allowAppend=false)=>Invoke(()=>OutputConflictDialog.Choose(folder,form,allowAppend));
     public Task<bool> BeginPublication()=>Invoke(()=>{Token.ThrowIfCancellationRequested();form.Publishing();return true;});
     sealed class Owner(IntPtr handle):IWin32Window {public IntPtr Handle=>handle;}
     sealed class ProgressForm:Form
@@ -58,7 +58,7 @@ internal sealed class IsoProgressWindow
             bar.Style=total>0?ProgressBarStyle.Continuous:ProgressBarStyle.Marquee;
             if(total>0){bar.Maximum=total;bar.Value=Math.Clamp(completed,0,total);}
         }
-        public void Publishing(){canCancel=false;cancel.Enabled=false;stage.Text="Этап 6 из 6 — сохранение комплекта";detail.Text="Сохраняем DWG и общий PDF…";bar.Style=ProgressBarStyle.Marquee;}
+        public void Publishing(){canCancel=false;cancel.Enabled=false;stage.Text="Этап 6 из 6 — сохранение комплекта";detail.Text="Сохраняем файлы выпуска…";bar.Style=ProgressBarStyle.Marquee;}
         public void Finish(string title,string text,bool success,string? outputFolder)
         {
             running=false;canCancel=false;clock.Stop();timer.Stop();stage.Text=title;detail.Text=text;bar.Style=ProgressBarStyle.Continuous;bar.Maximum=100;bar.Value=success?100:0;

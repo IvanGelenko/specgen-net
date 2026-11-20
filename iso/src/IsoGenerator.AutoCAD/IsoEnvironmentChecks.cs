@@ -1,4 +1,4 @@
-﻿using Autodesk.AutoCAD.DatabaseServices;
+using Autodesk.AutoCAD.DatabaseServices;
 namespace IsoGenerator.AutoCAD;
 internal static class IsoEnvironmentChecks
 {

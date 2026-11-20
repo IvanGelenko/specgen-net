@@ -60,10 +60,12 @@ namespace PipingSpecPlugin.Audit
         public const double MaxSlope = 0.1;
         // Below this a pipe is level; slopes closer than this are one slope.
         public const double Tolerance = 0.0002;
+        // Standard design slope: 2 mm per 1 meter (i = 0.002).
+        public const double StandardSlope = 0.002;
 
         public string Id => "slope";
         public string Title => "Уклон линии";
-        public string Description => "Прямые трубы одной линии — либо все с одинаковым уклоном, либо все без уклона. Уклон — перепад высот концов трубы к её длине в плане; вертикальные трубы и участки круче 1:10 не учитываются. Допуск 0,0002.";
+        public string Description => "Предусмотренный уклон прямых труб — 2 мм на 1 м (i = 0,002) либо без уклона. Если на линии есть уклон, он должен быть на всей линии. Уклон — перепад высот концов трубы к её длине в плане; вертикальные трубы и участки круче 1:10 не учитываются. Выявляются участки, уклон которых отличается от предусмотренного 2 мм/м или различается в пределах линии. Допуск 0,0002.";
 
         public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
         {
@@ -91,11 +93,44 @@ namespace PipingSpecPlugin.Audit
                     if (last != null && Math.Abs(Key(last) - value) <= Tolerance && (Key(last) == 0) == (value == 0)) last.Add((m.Part, value));
                     else clusters.Add(new List<(AuditPart, double)> { (m.Part, value) });
                 }
+                // If any pipe has slope, the whole line is a sloped line.
+                // The reference slope is the standard slope (2 mm/m), or the most common
+                // slope, but never «без уклона» when slope is present on the line.
+                bool hasSlope = clusters.Any(c => Key(c) > Tolerance);
+                int Score(IGrouping<double, AuditPart> g)
+                {
+                    if (!hasSlope) return 0;
+                    if (Math.Abs(g.Key - StandardSlope) <= Tolerance) return 2;
+                    if (g.Key > Tolerance) return 1;
+                    return 0;
+                }
                 var groups = clusters.Select(c => (Slope: Key(c), Parts: c.Select(x => x.Part).ToList()))
                     .SelectMany(c => c.Parts.Select(p => (c.Slope, Part: p)))
-                    .GroupBy(x => x.Slope, x => x.Part).OrderByDescending(g => g.Count()).ThenBy(g => g.Key).ToList();
-                var issue = LineData.Odd(Id, Title, line.Key, groups, g => Label(g.Key), "Уклон", "труб");
-                if (issue != null) yield return issue;
+                    .GroupBy(x => x.Slope, x => x.Part)
+                    .OrderByDescending(Score)
+                    .ThenByDescending(g => g.Count())
+                    .ThenBy(g => g.Key).ToList();
+                if (groups.Count > 1)
+                {
+                    var odd = groups.Skip(1).ToList();
+                    var details = string.Join("; ", odd.Select(g => $"{Label(g.Key)}: " + string.Join(", ", g.Select(AuditRules.NameOf))));
+                    var message = $"Уклон линии — {Label(groups[0].Key)} ({groups[0].Count()} труб); отличается: {details}.";
+                    if (groups[0].Key > Tolerance && Math.Abs(groups[0].Key - StandardSlope) > Tolerance)
+                        message += " Уклон линии отличается от предусмотренного 2 мм на 1 м (i = 0,002).";
+                    var issue = AuditRules.Issue(Id, Title, "Несоответствие", message, odd.SelectMany(g => g));
+                    issue.Magnitude = odd.Sum(g => g.Count());
+                    issue.Line = line.Key;
+                    yield return issue;
+                }
+                else if (groups.Count == 1 && groups[0].Key > Tolerance && Math.Abs(groups[0].Key - StandardSlope) > Tolerance)
+                {
+                    var g = groups[0];
+                    var nonStd = AuditRules.Issue(Id, Title, "Несоответствие",
+                        $"Уклон линии — {Label(g.Key)} ({g.Key * 1000:0.#} мм/м, {g.Count()} труб); отличается от предусмотренного уклона 2 мм на 1 м (i = 0,002).", g);
+                    nonStd.Magnitude = Math.Abs(g.Key - StandardSlope) * 1000;
+                    nonStd.Line = line.Key;
+                    yield return nonStd;
+                }
             }
         }
 
@@ -172,6 +207,93 @@ namespace PipingSpecPlugin.Audit
             if (ends == null || !mmPerUnit.HasValue) return null;
             return Geometry.Distance(ends[0], ends[1]) * mmPerUnit.Value;
         }
+    }
+
+    // Straight pipes and risers: offsets (deviations) in the XY plane whose
+    // direction is not a multiple of 15 degrees. In ideal conditions, deviation is 0.
+    public sealed class PipeOffsetRule : IAuditRule
+    {
+        public const double StepDegrees = 15.0;
+        public const double AngleToleranceDeg = 0.01;
+        public const double DefaultMinOffsetMm = 0.1;
+
+        public string Id => "pipeoffset";
+        public string Title => "Смещение трубы по оси XY";
+        public string Description => "Прямые трубы и стояки: выявляются отклонения (смещения) в плоскости XY, направление которых не кратно 15°. Для стояков смещение концов в плане XY в идеальных условиях равно 0. Для остальных прямых участков угол в плане XY проверяется на кратность 15° (0°, 15°, 30°, 45°, 60°, 75°, 90°). Допуск 0,1 мм.";
+
+        public IEnumerable<AuditIssue> Evaluate(AuditSnapshot snapshot, AuditOptions options)
+        {
+            var pipes = snapshot.Parts.Where(p => string.Equals((p.ClassName ?? "").Trim(), "Pipe", StringComparison.OrdinalIgnoreCase) && options.Includes(p)).ToList();
+            if (pipes.Count == 0) yield break;
+
+            var mm = snapshot.DrawingMmPerUnit;
+            var unknown = new List<AuditPart>();
+
+            foreach (var pipe in pipes)
+            {
+                var ends = SlopeRule.Ends(pipe.Axis ?? pipe.Ports.Where(p => p.Position != null).Select(p => p.Position).ToList());
+                if (ends == null || !mm.HasValue) { unknown.Add(pipe); continue; }
+
+                var p1 = ends[0];
+                var p2 = ends[1];
+                double dx = p2[0] - p1[0];
+                double dy = p2[1] - p1[1];
+                double dz = p2[2] - p1[2];
+
+                double lXy = Math.Sqrt(dx * dx + dy * dy);
+                double l3d = Math.Sqrt(dx * dx + dy * dy + dz * dz);
+                if (l3d < 1e-6) continue;
+
+                // Standing pipe (стояк): angle with vertical < 7.5° (nearest multiple of 15° is 0° = purely vertical)
+                bool isVertical = Math.Abs(dz) / l3d > Math.Cos(7.5 * Math.PI / 180.0);
+                if (isVertical)
+                {
+                    double offsetMm = lXy * mm.Value;
+                    if (offsetMm >= DefaultMinOffsetMm)
+                    {
+                        double angleFromVerticalDeg = Math.Atan2(lXy, Math.Abs(dz)) * (180.0 / Math.PI);
+                        var issue = AuditRules.Issue(Id, Title, "Несоответствие",
+                            $"{AuditRules.NameOf(pipe)}: стояк смещён в плане XY на {offsetMm:0.##} мм (отклонение от вертикали {angleFromVerticalDeg:0.##}°).",
+                            new[] { pipe });
+                        issue.Magnitude = offsetMm;
+                        issue.Line = pipe.LineLabel;
+                        issue.Bounds = Bounds(p1, p2);
+                        yield return issue;
+                    }
+                }
+                else
+                {
+                    if (lXy < 1e-6) continue;
+
+                    // Angle in the horizontal XY plane (0° to 90° across all quadrants)
+                    double angleDeg = Math.Atan2(Math.Abs(dy), Math.Abs(dx)) * (180.0 / Math.PI);
+                    double targetAngleDeg = Math.Round(angleDeg / StepDegrees) * StepDegrees;
+                    double deltaAngleDeg = Math.Abs(angleDeg - targetAngleDeg);
+
+                    double offsetMm = lXy * Math.Sin(deltaAngleDeg * Math.PI / 180.0) * mm.Value;
+                    if (deltaAngleDeg > AngleToleranceDeg && offsetMm >= DefaultMinOffsetMm)
+                    {
+                        var issue = AuditRules.Issue(Id, Title, "Несоответствие",
+                            $"{AuditRules.NameOf(pipe)}: смещение по XY {offsetMm:0.##} мм (угол в плане {angleDeg:0.##}°, отклонение {deltaAngleDeg:0.##}° от {targetAngleDeg:0}°).",
+                            new[] { pipe });
+                        issue.Magnitude = offsetMm;
+                        issue.Line = pipe.LineLabel;
+                        issue.Bounds = Bounds(p1, p2);
+                        yield return issue;
+                    }
+                }
+            }
+
+            foreach (var line in unknown.GroupBy(p => p.LineKey ?? AuditOptions.NoLine, StringComparer.OrdinalIgnoreCase))
+                yield return AuditRules.Issue(Id, Title, "Не проверено", (mm.HasValue ? "Не определены концы труб" : "Единицы чертежа (INSUNITS) не заданы")
+                    + $" — смещение по XY не вычислено ({line.Count()}): " + string.Join(", ", line.Select(AuditRules.NameOf)), line);
+        }
+
+        static double[] Bounds(double[] a, double[] b) => new[]
+        {
+            Math.Min(a[0], b[0]), Math.Min(a[1], b[1]), Math.Min(a[2], b[2]),
+            Math.Max(a[0], b[0]), Math.Max(a[1], b[1]), Math.Max(a[2], b[2])
+        };
     }
 
     // Neighbouring welds are at least 100 mm apart: the welds on one pipe —

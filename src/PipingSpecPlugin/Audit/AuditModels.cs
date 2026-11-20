@@ -223,7 +223,7 @@ namespace PipingSpecPlugin.Audit
     {
         // Add a rule here: the options dialog and report use this same registry.
         public static IReadOnlyList<IAuditRule> All { get; } = new IAuditRule[]
-        { new WallThicknessRule(), new MaterialRule(), new SlopeRule(), new PipeLengthRule(), new WeldSpacingRule(), new StatusRule(), new ValveTagRule(),
+        { new WallThicknessRule(), new MaterialRule(), new SlopeRule(), new PipeLengthRule(), new PipeOffsetRule(), new WeldSpacingRule(), new StatusRule(), new ValveTagRule(),
           new PlaceholderSpecRule(), new ConnectivityRule(), new BoltLengthRule(), new CollisionRule() };
 
         public static List<AuditIssue> Run(AuditSnapshot snapshot, AuditOptions options)
@@ -245,7 +245,7 @@ namespace PipingSpecPlugin.Audit
 
         // The checks in the order of the results (window, JSON, report):
         // physical clashes first, the data that could not be read last.
-        static readonly string[] GroupOrder = { "collisions", "bolts", "welds", "pipelength", "wall", "slope", "material", "status", "placeholder", "tags", "connections", "read" };
+        static readonly string[] GroupOrder = { "collisions", "bolts", "welds", "pipelength", "pipeoffset", "wall", "slope", "material", "status", "placeholder", "tags", "connections", "read" };
 
         public static string GroupTitle(string ruleId) =>
             ruleId == "read" ? "Чтение данных" : All.FirstOrDefault(r => r.Id == ruleId)?.Title ?? ruleId ?? "Прочее";

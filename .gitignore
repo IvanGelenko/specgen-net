@@ -53,6 +53,8 @@ test project/
 # …except the embedded audit report template: the plug-in does not build
 # without it (EmbeddedResource in PipingSpecPlugin.csproj).
 !src/PipingSpecPlugin/Resources/AuditReportTemplate.docx
+!iso/assets/iso-title-template.docx
+!iso/assets/iso-contents-template.docx
 .claude/scheduled_tasks.lock
 
 # Norm PDFs (copyrighted, big): kept locally in docs/norms, not committed

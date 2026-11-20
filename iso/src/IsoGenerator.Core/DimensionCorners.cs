@@ -1,4 +1,4 @@
-﻿namespace IsoGenerator.Core;
+namespace IsoGenerator.Core;
 internal sealed record DimensionRunEnds(int Start,int End,SheetPoint StartPoint,SheetPoint EndPoint);
 internal static class DimensionCorners
 {

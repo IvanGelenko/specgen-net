@@ -97,10 +97,17 @@ namespace PipingSpecPlugin.Settings
         // PSAUDIT: clash structures (members, solids, blocks) with each other.
         public bool AuditStructureCollisions { get; set; } = true;
 
+        public System.Collections.Generic.Dictionary<string,string[]> IsoSelectedLinesByDrawing { get; set; } = new();
         public string LastIsoOutputDirectory { get; set; } = "";
         public string LastIsoStyle { get; set; } = ""; // Legacy setting, no longer used.
         public string LastIsoTemplatePath { get; set; } = "";
         public double LastIsoSymbolScale { get; set; } = 10;
+        public double LastIsoMinimumPipeLength { get; set; } = 10;
+        public string LastIsoValvesDocument { get; set; } = "";
+        public string LastIsoSupportsDocument { get; set; } = "";
+        public string LastIsoTitleTemplate { get; set; } = "";
+        public string LastIsoContentsTemplate { get; set; } = "";
+        public IsoGenerator.Core.IsoAdvancedSettings IsoAdvanced { get; set; } = new();
         public string InsulationScope { get; set; } = "proj";
         public string[] InsulationLines { get; set; } = null;
         public string[] KnownInsulationLines { get; set; } = null;

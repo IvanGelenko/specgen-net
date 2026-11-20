@@ -74,6 +74,12 @@ jobs:
           $v = (Get-Item "src/PipingSpecPlugin/bin/Release-v${{ steps.ver.outputs.version }}/PipingSpecPlugin.dll").VersionInfo.FileVersion
           Write-Host "Built DLL FileVersion: $v"
 
+      - name: Write installer checksum
+        shell: powershell
+        run: |
+          $hash = (Get-FileHash dist_installer/PipingSpecPlugin-Setup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          [IO.File]::WriteAllText((Join-Path (Get-Location) "dist_installer/PipingSpecPlugin-Setup.exe.sha256"), $hash + "  PipingSpecPlugin-Setup.exe`n", [Text.Encoding]::ASCII)
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -85,4 +91,6 @@ jobs:
           # The asset name MUST stay exactly PipingSpecPlugin-Setup.exe —
           # the in-plugin updater (UpdateChecker.InstallerAssetName) matches
           # it by name.
-          files: dist_installer/PipingSpecPlugin-Setup.exe
+          files: |
+            dist_installer/PipingSpecPlugin-Setup.exe
+            dist_installer/PipingSpecPlugin-Setup.exe.sha256

@@ -1,7 +1,7 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Xml.Linq;
 namespace IsoGenerator.Core;
-public sealed record IsoStyleSettings(double SymbolScale,double? SmallBoreDiameter=null,int? VentDrainMaxComponents=null,int? VentDrainMaxPipes=null)
+public sealed record IsoStyleSettings(double SymbolScale,double? SmallBoreDiameter=null,int? VentDrainMaxComponents=null,int? VentDrainMaxPipes=null,double PipeGapLength=6.0)
 {
     // One project-library scale for every component, regardless of diameter or theme.
     public double ScaleFor(Part part)=>SymbolScale;
@@ -14,6 +14,8 @@ public sealed record IsoStyleSettings(double SymbolScale,double? SmallBoreDiamet
         var small=root.Descendants("FieldFilter").FirstOrDefault(e=>(string?)e.Attribute("Name")=="SmallBorePiping");
         double? diameter=double.TryParse((string?)small?.Attribute("Fields"),NumberStyles.Float,CultureInfo.InvariantCulture,out double size)?size:null;
         var branch=root.Descendants("BranchPatternTheme").FirstOrDefault(e=>(string?)e.Attribute("Name")=="Vent/Drain Piping");
-        return new(scale,diameter,(int?)branch?.Attribute("MaxComponentCount"),(int?)branch?.Attribute("MaxPipeCount"));
+        var geometry=root.Descendants("Geometry").FirstOrDefault();
+        double gap=double.TryParse((string?)geometry?.Attribute("PipeGapLength"),NumberStyles.Float,CultureInfo.InvariantCulture,out double g)&&g>0?g:6.0;
+        return new(scale,diameter,(int?)branch?.Attribute("MaxComponentCount"),(int?)branch?.Attribute("MaxPipeCount"),gap);
     }
 }

@@ -19,10 +19,13 @@ public static class BomPagination
     }
     public static IReadOnlyList<PlannedSheet> Apply(IReadOnlyList<PlannedSheet> geometry)
     {
-        var result=new List<PlannedSheet>();var continuation=new List<PlannedSheet>();
-        foreach(var sheet in geometry)
+        var result=new List<PlannedSheet>();
+        var pagesBySheet=geometry.Select(s=>Pages(s.Scene.BillOfMaterials)).ToArray();
+        var numbers=new Dictionary<int,int>();int next=1;
+        for(int i=0;i<geometry.Count;i++){numbers.Add(geometry[i].Number,next);next+=pagesBySheet[i].Count;}
+        for(int sheetIndex=0;sheetIndex<geometry.Count;sheetIndex++)
         {
-            var pages=Pages(sheet.Scene.BillOfMaterials);
+            var sheet=geometry[sheetIndex];var pages=pagesBySheet[sheetIndex];
             var fittings=sheet.Scene.BillOfMaterials.Where(r=>r.Category==BomCategory.Fittings).SelectMany(r=>r.Handles).ToArray();
             result.Add(sheet with{Scene=sheet.Scene with{BillOfMaterials=pages[0],FittingSourceIds=fittings}});
             foreach(var rows in pages.Skip(1))
@@ -31,17 +34,17 @@ public static class BomPagination
                 var scene=sheet.Scene with
                 {
                     Strokes=Array.Empty<Stroke>(),Symbols=Array.Empty<SymbolGlyph>(),Dimensions=Array.Empty<PipeDimension>(),Welds=Array.Empty<WeldMarker>(),
-                    Annotations=new[]{new Annotation("","title",new(75,385),$"{sheet.Scene.Line} — продолжение спецификации листа {sheet.Number}",4)},
+                    Annotations=new[]{new Annotation("","title",new(75,385),$"{sheet.Scene.Line} — продолжение спецификации листа {numbers[sheet.Number]}",4)},
                     BillOfMaterials=rows,SourcePartCount=0,SourceGuids=new Dictionary<string,string>(),BomOnly=true,FittingSourceIds=Array.Empty<string>()
                 };
-                continuation.Add(new(0,0,empty,scene));
+                result.Add(new(0,0,empty,scene));
             }
         }
-        // Append BOM-only sheets so diagram continuation references keep their sheet numbers.
-        result.AddRange(continuation);int total=result.Count;
+        // Continuation labels refer to final diagram numbers after interleaving BOM pages.
+        int total=result.Count;
         return result.Select((s,i)=>s with{Number=i+1,Total=total,Scene=s.Scene with
         {
-            Annotations=s.Scene.Annotations.Select(a=>a.Role=="title"?a with{Text=s.Scene.BomOnly?a.Text+$" — лист {i+1} из {total}":s.Scene.Line+$" — лист {i+1} из {total}"}:a).ToArray()
+            Annotations=s.Scene.Annotations.Select(a=>a.Role=="title"?a with{Text=s.Scene.BomOnly?a.Text+$" — лист {i+1} из {total}":s.Scene.Line+$" — лист {i+1} из {total}"}:a.Role=="continuation"?DocumentSheetReferences.RenumberLocal(a,numbers):a).ToArray()
         }}).ToArray();
     }
 }

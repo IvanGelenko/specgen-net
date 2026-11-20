@@ -1,4 +1,4 @@
-﻿using IsoGenerator.Core;
+using IsoGenerator.Core;
 try
 {
 int checks=0;
@@ -25,14 +25,179 @@ void Assert(bool value,string message){checks++;if(!value)throw new Exception(me
 Part Pipe(string h,ModelPoint a,ModelPoint b)=>new("test.dwg",h,"AcPpDb3dPipe","L1",new[]{new Port("S1",a,new(-1,0,0)),new Port("S2",b,new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Pipe"},{"PartSizeLongDesc","Pipe 100"},{"Length","1000"}});
 var first=Pipe("A",new(0,0,0),new(1000,0,0));var second=Pipe("B",new(1000,0,0),new(2000,0,0));
 PipelineSnapshot Snapshot(Part[] parts,Connection[] links)=>new(1,"test.dwg",parts,links,Array.Empty<string>());
+// Two distinct horizontal runs overlap in view 0 but separate in view 1.
+var viewFixture=Snapshot(new[]{Pipe("view-a",new(0,0,0),new(1000,0,0)),Pipe("view-b",new(100,100,-100),new(1100,100,-100))},Array.Empty<Connection>());
+Assert(AutomaticView.Select(viewFixture)==1,"Automatic view avoids superimposed runs");
+Assert(AutomaticView.Select(viewFixture with{Parts=viewFixture.Parts.Reverse().ToArray()})==1,"View is independent of part enumeration");
+Assert(AutomaticView.Select(Snapshot(new[]{first},Array.Empty<Connection>()))==0,"Symmetric line retains stable default view");
+using(var cancelledView=new CancellationTokenSource())
+{
+    cancelledView.Cancel();bool stopped=false;
+    try{AutomaticView.Select(viewFixture,cancelledView.Token);}catch(OperationCanceledException){stopped=true;}
+    Assert(stopped,"Automatic view supports cancellation");
+}
+// A valve-containing loop between two junctions is an indivisible preferred unit.
+var unitParts=new[]{first with{Handle="uA",Properties=new Dictionary<string,string>{{"PnPClassName","Tee"}}},first with{Handle="uB",Properties=new Dictionary<string,string>{{"PnPClassName","Tee"}}},first with{Handle="uV",Properties=new Dictionary<string,string>{{"PnPClassName","Valve"}}},first with{Handle="uP"},first with{Handle="uIn"},first with{Handle="uOut"}};
+Connection UL(string a,string b)=>new(a,"S1",b,"S2");
+var unitSnapshot=Snapshot(unitParts,new[]{UL("uA","uV"),UL("uV","uB"),UL("uB","uP"),UL("uP","uA"),UL("uIn","uA"),UL("uB","uOut")});
+var unitFound=InstallationUnits.Find(unitSnapshot);
+Assert(unitFound.Count==1&&unitFound[0].Handles.SetEquals(new[]{"uA","uB","uV","uP"}),"Recognise bypass cycle without absorbing adjoining runs");
+Assert(InstallationUnits.SplitCount(unitFound,new HashSet<string>{"uIn"},new HashSet<string>{"uA","uB","uV","uP","uOut"})==0,"External cut preserves bypass");
+Assert(InstallationUnits.SplitCount(unitFound,new HashSet<string>{"uIn","uA","uV"},new HashSet<string>{"uB","uP","uOut"})==1,"Paired cuts through a bypass incur unit penalty");
+Assert(InstallationUnits.Find(unitSnapshot with{Connections=unitSnapshot.Connections.Skip(1).ToArray()}).Count==0,"Open branch is not a bypass");
+Assert(InstallationUnits.Find(unitSnapshot with{Parts=unitParts.Select(p=>p.Handle=="uV"?p with{Properties=new Dictionary<string,string>{{"PnPClassName","Pipe"}}}:p).ToArray()}).Count==0,"Plain pipe ring is not a valve bypass");
+Assert(InstallationUnits.Find(unitSnapshot with{Connections=unitSnapshot.Connections.Concat(unitSnapshot.Connections.Select(c=>new Connection(c.SecondHandle,c.SecondPort,c.FirstHandle,c.FirstPort))).ToArray()}).Count==1,"Reverse duplicate connections do not invent cycles");
 var separated=Snapshot(new[]{first,second},Array.Empty<Connection>());
 Assert(SnapshotValidation.Validate(separated).ConnectedComponents==2,"Coincident ports must not invent a connection");
 var linked=Snapshot(new[]{first,second},new[]{new Connection("A","S2","B","S1")});
 Assert(SnapshotValidation.Validate(linked).ConnectedComponents==1,"Real topology connects components");
+// Preserve a complete published partition while a valve is added inside one sheet.
+var rememberedSource=linked with{RequiredCuts=linked.Connections};
+RememberedLayout savedLayout=null;
+var savedSheets=SheetSetPlanner.Build(rememberedSource,remember:layout=>savedLayout=layout);
+Assert(savedSheets.Count==2&&savedLayout is not null,"Remembered layout retains two manually separated sheets");
+var persisted=System.Text.Json.JsonSerializer.Deserialize<RememberedLayout>(
+    System.Text.Json.JsonSerializer.Serialize(savedLayout))!;
+var identical=SheetSetPlanner.Build(rememberedSource,remembered:persisted);
+Assert(ReferenceEquals(identical,persisted.Sheets),"Unchanged model reuses the complete persisted layout");
+var damaged=persisted with{Sheets=persisted.Sheets.Select((sheet,index)=>index==0
+    ?sheet with{Snapshot=sheet.Snapshot with{Parts=Array.Empty<Part>()}}:sheet).ToArray()};
+var repaired=SheetSetPlanner.Build(rememberedSource,remembered:damaged);
+Assert(repaired.Count==savedSheets.Count&&repaired.Sum(sheet=>sheet.Snapshot.Parts.Count)==linked.Parts.Count,
+    "A damaged remembered partition falls back to a full plan");
+var addedValve=Pipe("new-valve",new(-100,0,0),new(0,0,0)) with
+{
+    Properties=new Dictionary<string,string>{{"PnPClassName","Valve"},{"Tag","GV-N"}, {"PartSizeLongDesc","Valve"}}
+};
+var changedLine=rememberedSource with
+{
+    Parts=rememberedSource.Parts.Append(addedValve).ToArray(),
+    Connections=rememberedSource.Connections.Append(new Connection("new-valve","S2","A","S1")).ToArray()
+};
+var updatedSheets=SheetSetPlanner.Build(changedLine,remembered:persisted);
+var updated=updatedSheets.Single(sheet=>sheet.Snapshot.Parts.Any(part=>part.Handle=="new-valve"));
+Assert(updated.Snapshot.Parts.Any(part=>part.Handle=="A")&&updated.Scene.Annotations.Any(label=>label.Text=="GV-N"),
+    "A new valve is assigned to the changed sheet and appears in that scene");
+var untouched=updatedSheets.Single(sheet=>sheet.Snapshot.Parts.Any(part=>part.Handle=="B"));
+Assert(System.Text.Json.JsonSerializer.Serialize(untouched.Scene)==
+       System.Text.Json.JsonSerializer.Serialize(persisted.Sheets.Single(sheet=>sheet.Number==untouched.Number).Scene),
+       "A valve added away from the transition leaves its neighbor scene byte-identical");
+var alternateView=SheetSetPlanner.Build(rememberedSource,quarterTurns:1,remembered:persisted);
+Assert(alternateView.All(sheet=>sheet.Scene.QuarterTurns==1),"A remembered partition is invalidated when the view changes");
+var extraRows=Enumerable.Range(0,60).Select(i=>
+{
+    var accessory=Accessory("A#row-"+i,"A","Miscellaneous","1");
+    return accessory with{Properties=new Dictionary<string,string>(accessory.Properties){["PartSizeLongDesc"]="Extra entry "+i}};
+}).ToArray();
+RememberedLayout expandedLayout=null;
+var withOverflow=changedLine with{Accessories=extraRows};
+var expandedSheets=SheetSetPlanner.Build(withOverflow,remembered:persisted,remember:layout=>expandedLayout=layout);
+var lastDiagram=expandedSheets.Last();
+Assert(expandedSheets.Count>2&&expandedSheets.Skip(1).SkipLast(1).All(s=>s.Scene.BomOnly)&&
+       expandedSheets[0].Scene.Annotations.Any(a=>a.Role=="continuation"&&a.Text=="П1 / лист "+lastDiagram.Number),
+       "Adding BOM pages keeps them after their geometry and updates the continuation");
+Assert(System.Text.Json.JsonSerializer.Serialize(lastDiagram.Scene.Strokes)==
+       System.Text.Json.JsonSerializer.Serialize(untouched.Scene.Strokes),"BOM renumbering preserves adjacent geometry");
+var collapsedSheets=SheetSetPlanner.Build(changedLine,remembered:expandedLayout);
+Assert(collapsedSheets.Count==2&&collapsedSheets[0].Scene.Annotations.Any(a=>a.Role=="continuation"&&a.Text=="П1 / лист 2"),
+       "Removing BOM overflow restores the original continuation numbering");
+var removedCut=SheetSetPlanner.Build(linked,remembered:persisted);
+Assert(removedCut.Count==1,"Changing the manual boundary triggers a new partition");
+var third=Pipe("C",new(2000,0,0),new(3000,0,0));
+var routeLinks=linked.Connections.Append(new Connection("B","S2","C","S1")).ToArray();
+var reverseOrder=Snapshot(new[]{third,first,second},routeLinks) with
+{
+    RequiredCuts=routeLinks,
+    IsoMarkers=new[]{new ModelIsoMarker("start-C","C","Y1",new(3000,0,0),5)}
+};
+var routeSheets=SheetSetPlanner.Build(reverseOrder);
+Assert(routeSheets.Select(sheet=>sheet.Snapshot.Parts.Single().Handle).SequenceEqual(new[]{"C","B","A"})&&
+       routeSheets[0].Scene.Annotations.Any(label=>label.Role=="continuation"&&label.Text.EndsWith("лист 2")),
+       "Sheet numbering follows connected sections from the start marker, independent of capture order");
+var numberedDocument=new Dictionary<string,(int Offset,IReadOnlyList<PlannedSheet> Sheets)>(StringComparer.OrdinalIgnoreCase)
+{
+    ["150-KSN011-LS025C-HN"]=(2,routeSheets)
+};
+var documentScene=DocumentSheetReferences.Apply(routeSheets[0],"150-KSN011-LS025C-HN",2,numberedDocument);
+Assert(documentScene.Annotations.Any(label=>label.Role=="continuation"&&
+       label.Text.EndsWith("см. 150-KSN011-LS025C-HN(L2) лист 4")),
+       "A continuation names the target drawing and uses the global page number");
+var crossScene=new SheetScene("other",Array.Empty<Stroke>(),new[]{
+    new Annotation("owner","external-line",new(100,100),"см. 150-KSN011-LS025C-HN\nОТМ. +0.000*",Anchor:new SheetPoint(100,100)),
+    new Annotation("owner","external-line",new(200,200),"см. OUTSIDE",Anchor:new SheetPoint(200,200))},
+    Array.Empty<PipeDimension>(),Array.Empty<BomRow>(),Array.Empty<string>(),0);
+var crossSnapshot=linked with{ExternalLineContexts=new[]{
+    new ExternalLineContext("owner","S2","150-KSN011-LS025C-HN","A","S1",new[]{first},Array.Empty<Connection>())}};
+var crossPlan=new PlannedSheet(1,1,crossSnapshot,crossScene);
+var crossNumbered=DocumentSheetReferences.Apply(crossPlan,"other",5,numberedDocument);
+Assert(crossNumbered.Annotations.Any(label=>label.Text=="см. 150-KSN011-LS025C-HN(L3) лист 5\nОТМ. +0.000*")&&
+       crossNumbered.Annotations.Any(label=>label.Text=="см. OUTSIDE"),
+       "An external line reference finds the connected part on a later sheet and leaves outside documents intact");
 var gap=second with{Ports=new[]{new Port("S1",new(1005,0,0),new(-1,0,0)),second.Ports[1]}};
 Assert(SnapshotValidation.Validate(linked with{Parts=new[]{first,gap}}).Errors.Count>0,"Reject inconsistent connected ports");
 Assert(SnapshotValidation.Validate(linked with{Parts=new[]{first,first}}).Errors.Count>0,"Reject duplicate handles");
 var scene=SheetPlanner.Build(linked);
+var flowMarker=new ModelIsoMarker("flow-test",first.Handle,"Y1",new(500,0,0),1,new(1,0,0));
+var splitFlow=BreakPointPreparation.Apply(linked with{IsoMarkers=new[]{flowMarker with{Position=new ModelPoint(750,0,0)},new ModelIsoMarker("break-flow",first.Handle,"Y2",new(500,0,0),4)}},false);
+Assert(splitFlow.IsoMarkers!.Single().HostHandle==first.Handle+"#ISO2","Flow marker follows its actual fragment when the host pipe is split");
+var flowScene=SheetPlanner.Build(linked with{IsoMarkers=new[]{flowMarker}});
+var missingDirection=SheetSetPlanner.Build(linked with{IsoMarkers=new[]{flowMarker with{Direction=null}}});
+Assert(missingDirection.Count==1&&missingDirection[0].Scene.Warnings.Any(w=>w.Contains(flowMarker.Handle))&&
+       missingDirection[0].Scene.Strokes.All(stroke=>stroke.Role!="flow-arrow"),
+       "An incomplete flow marker leaves the sheet available and reports the skipped symbol");
+var forwardArrow=flowScene.Strokes.Single(st=>st.Role=="flow-arrow");
+var arrowTip=forwardArrow.Points[1];
+var arrowBaseLeft=forwardArrow.Points[0];
+var arrowBaseRight=forwardArrow.Points[2];
+double arrowX=arrowTip.X-(arrowBaseLeft.X+arrowBaseRight.X)/2;
+double arrowY=arrowTip.Y-(arrowBaseLeft.Y+arrowBaseRight.Y)/2;
+Near(Math.Sqrt(arrowX*arrowX+arrowY*arrowY),2);
+var backArrow=SheetPlanner.Build(linked with{IsoMarkers=new[]{flowMarker with{Direction=new ModelPoint(-1,0,0)}}}).Strokes.Single(st=>st.Role=="flow-arrow");
+Assert(forwardArrow.Points[0].X<forwardArrow.Points[1].X&&backArrow.Points[0].X>backArrow.Points[1].X,"Flow arrow follows model direction and reverses when the marker reverses");
+Assert(BreakPointPreparation.Apply(linked with{IsoMarkers=new[]{flowMarker}},true).IsoMarkers!.Count==1,"Ignoring break points does not discard flow markers");
+var startTest=linked with{RequiredCuts=linked.Connections} with{IsoMarkers=new[]{new ModelIsoMarker("start-test",second.Handle,"Y1",new(1500,0,0),5)}};
+var startSheets=SheetSetPlanner.Build(startTest);
+Assert(startSheets[0].Snapshot.Parts.Any(p=>p.Handle==second.Handle),"Start marker puts its element on the first diagram sheet");
+var detachedInstrument=new Part("test.dwg","kip-detached","AcPpDb3dPipeInlineAsset","L1",new[]{new Port("S1",new(2000,0,0),new(-1,0,0),"BV")},new Dictionary<string,string>{{"PnPClassName","Instrument"},{"Tag","PI-001"}});
+var kipSource=linked with{Parts=linked.Parts.Append(detachedInstrument).ToArray()};
+var kipPrepared=SheetConnectivity.AttachInstrumentCallouts(kipSource);
+Assert(kipSource.Connections.Count==1&&!detachedInstrument.Properties.ContainsKey("IsoCalloutHost"),"Callout attachment does not mutate source snapshot");
+Assert(kipPrepared.Parts.Single(p=>p.Handle==detachedInstrument.Handle).Properties["IsoCalloutHost"]==second.Handle,"Detached instrument attaches to exact free opposing port");
+Assert(kipPrepared.Warnings.Any(w=>w.Contains("Нет соединения:")),"Missing Plant connection remains visible as a warning");
+var kipSheets=SheetSetPlanner.Build(kipSource);
+Assert(kipSheets.Count==1&&kipSheets[0].Scene.Annotations.Count(a=>a.Role=="instrument-tag")==1,"Detached instrument callout stays with pipeline instead of creating a blank sheet");
+Assert(kipSheets[0].Scene.Welds!.Count==scene.Welds!.Count,"Layout-only callout does not invent a weld even with weldable end condition");
+var ambiguousKip=kipSource with{Parts=kipSource.Parts.Append(second with{Handle="duplicate-host"}).ToArray()};
+bool ambiguousKipRejected=false;try{SheetConnectivity.AttachInstrumentCallouts(ambiguousKip);}catch(InvalidDataException){ambiguousKipRejected=true;}
+Assert(ambiguousKipRejected,"Coincident ambiguous hosts are never guessed for a KIP callout");
+var remoteKip=kipSource with{Parts=linked.Parts.Append(detachedInstrument with{Ports=new[]{new Port("S1",new(2001,0,0),new(-1,0,0))}}).ToArray()};
+bool remoteKipRejected=false;try{SheetConnectivity.AttachInstrumentCallouts(remoteKip);}catch(InvalidDataException){remoteKipRejected=true;}
+Assert(remoteKipRejected,"Nearby noncoincident KIP cannot attach to arbitrary nearest pipe");
+Assert(SheetSetPlanner.Build(kipSource,instrumentCalloutsOnly:false).Count==2,"Physical-instrument mode retains genuine disconnected components");
+var manualLinked=linked with{RequiredCuts=linked.Connections.Select(c=>new Connection(c.SecondHandle,c.SecondPort,c.FirstHandle,c.FirstPort)).ToArray()};
+var manualSheets=SheetSetPlanner.Build(manualLinked);
+Assert(manualSheets.All(sh=>sh.Scene.Strokes.Count(st=>st.Role=="continuation-break")==1),"Each sheet boundary gets a zigzag break sign");
+Assert(scene.Strokes.All(st=>st.Role!="continuation-break"),"Real unconnected endpoints do not receive sheet break signs");Assert(manualSheets.Count==2,"Explicit reversed cut survives splitting and optional merging");
+bool rejectedManualMerge=false;
+try{SheetSetIntegrity.Validate(manualLinked,new[]{new PlannedSheet(1,1,linked,scene)},false);}catch(InvalidDataException){rejectedManualMerge=true;}
+Assert(rejectedManualMerge,"Final validation rejects a sheet set that ignores manual cut");
+var orphanMarker=new ModelIsoMarker("manual-free",first.Handle,"marker",first.Ports[0].Position,BreakPointPreparation.BreakPointInformationType);
+bool rejectedFreeMarker=false;
+try{BreakPointPreparation.Apply(linked with{IsoMarkers=new[]{orphanMarker}},false);}catch(InvalidDataException){rejectedFreeMarker=true;}
+Assert(rejectedFreeMarker,"Unusable endpoint marker cannot be silently ignored");
+var interiorMarker=new ModelIsoMarker("manual-mid",first.Handle,"marker",new(500,0,0),BreakPointPreparation.BreakPointInformationType);
+var preservedCuts=BreakPointPreparation.Apply(manualLinked with{IsoMarkers=new[]{interiorMarker}},false);
+var recoveredBreak=linked with{IsoMarkers=new[]{interiorMarker with{HostHandle="",HostPort=""}}};
+Assert(SheetSetPlanner.Build(recoveredBreak).Count==2,"An orphan break on one pipe axis remains mandatory");
+bool ambiguousBreak=false;
+try
+{
+    BreakPointPreparation.Apply(recoveredBreak with{Parts=linked.Parts.Append(first with{Handle="other-pipe"}).ToArray()},false);
+}
+catch(InvalidDataException error){ambiguousBreak=error.Message.Contains(interiorMarker.Handle);}
+Assert(ambiguousBreak,"An ambiguous orphan break reports its handle instead of choosing an arbitrary pipe");
+Assert(preservedCuts.RequiredCuts!.Count==2,"Native marker preserves existing explicit cut");
+Assert(BreakPointPreparation.Apply(manualLinked with{IsoMarkers=new[]{interiorMarker}},true).RequiredCuts!.Count==0,"Only explicit ignore option disables break points");
 Assert(scene.Dimensions.Count(d=>d.Role=="chain")==2&&scene.Dimensions.Count(d=>d.Role=="overall")==1,"Two chain links plus mandatory overall");
 Assert(scene.Dimensions.Where(d=>d.Role=="chain").All(d=>Math.Abs(d.Millimeters-1000)<1e-8)&&Math.Abs(scene.Dimensions.Single(d=>d.Role=="overall").Millimeters-2000)<1e-8,"Dimensions and overall retain true lengths after fitting to paper");
 Assert(scene.BillOfMaterials.Count==1&&Math.Abs(scene.BillOfMaterials[0].Quantity-2)<1e-8,"BOM sums meters once per source pipe");
@@ -119,7 +284,7 @@ if(File.Exists(file)){
 if(File.Exists(file)){
     var live=System.Text.Json.JsonSerializer.Deserialize<PipelineSnapshot>(File.ReadAllText(file))!;
     foreach(var chain in SheetPlanner.Build(live).Dimensions.GroupBy(d=>d.ChainId))
-        foreach(var d in chain)Near(double.Parse(d.Label,System.Globalization.CultureInfo.InvariantCulture),Math.Ceiling(d.Millimeters-1e-8));
+        foreach(var d in chain)Near(double.Parse(d.Label.TrimEnd('*'),System.Globalization.CultureInfo.InvariantCulture),Math.Ceiling(d.Millimeters-1e-8));
 }
 
 
@@ -182,18 +347,24 @@ var tallParts=Enumerable.Range(0,40).Select(i=>Pipe($"T{i:00}",new(0,0,i*100),ne
 }).ToArray();
 var tallLinks=Enumerable.Range(0,39).Select(i=>new Connection(tallParts[i].Handle,"S2",tallParts[i+1].Handle,"S1")).ToArray();
 var tallSnapshot=Snapshot(tallParts,tallLinks);
-var tallSheets=SheetSetPlanner.Build(tallSnapshot);
-Assert(tallSheets.Count==2,$"Oversize readable route becomes two sheets (actual {tallSheets.Count}: {string.Join(",",tallSheets.Select(s=>s.Snapshot.Parts.Count))})");
+RememberedLayout compactTall=null;
+var defaultTallSheets=SheetSetPlanner.Build(tallSnapshot,remember:layout=>compactTall=layout);
+var tallSheets=SheetSetPlanner.Build(tallSnapshot,remembered:compactTall,minimumPipeLength:20);
+Assert(tallSheets.Count is >=3 and <=4,$"40 intervals of 20 mm fit in three or four A2 sheets (actual {tallSheets.Count})");
+Assert(defaultTallSheets.Count<tallSheets.Count,"A higher manual pipe minimum invalidates the remembered layout and uses more paper");
+Assert(tallSheets.SelectMany(sheet=>sheet.Scene.Strokes).Where(stroke=>stroke.Role=="pipe").All(stroke=>
+    Math.Sqrt(Math.Pow(stroke.Points[1].X-stroke.Points[0].X,2)+Math.Pow(stroke.Points[1].Y-stroke.Points[0].Y,2))>=20-1e-6),
+    "The selected minimum is applied to the paper geometry");
 Assert(tallSheets.SelectMany(s=>s.Snapshot.Parts).Select(p=>p.Handle).Distinct().Count()==40&&tallSheets.Sum(s=>s.Snapshot.Parts.Count)==40,"Every source component belongs to exactly one sheet");
 Assert(tallSheets.Sum(s=>s.Scene.Welds!.Count)==39,"Split boundary welds are retained exactly once");
-Assert(tallSheets.Sum(s=>s.Scene.Annotations.Count(a=>a.Text.Contains("/ лист")))==2,"Both sheets contain reciprocal continuation references");
+Assert(tallSheets.Sum(s=>s.Scene.Annotations.Count(a=>a.Text.Contains("/ лист")))==2*(tallSheets.Count-1),"Each sheet boundary has two reciprocal continuation references");
 Near(tallSheets.Sum(s=>s.Scene.BillOfMaterials.Sum(b=>b.Quantity)),4);
 Near(tallSheets.Sum(s=>s.Scene.Dimensions.Where(d=>d.Role=="chain").Sum(d=>d.Millimeters)),4000);
 Assert(SheetSetPlanner.Build(linked).Count==1,"Small route stays on a single sheet");
 var valveParts=tallParts.Select((p,i)=>i==20?p with{Properties=new Dictionary<string,string>(p.Properties){{"ContentIsoSymbolDefinition","TYPE=VALVE,SKEY=VTFL"}}}:p).ToArray();
 valveParts[20]=valveParts[20] with{Properties=new Dictionary<string,string>(valveParts[20].Properties){["PnPClassName"]="Valve"}};
-var valveSheets=SheetSetPlanner.Build(Snapshot(valveParts,tallLinks));
-Assert(valveSheets.Count==2,"Route with central valve fits two sheets");
+var valveSheets=SheetSetPlanner.Build(Snapshot(valveParts,tallLinks),minimumPipeLength:20);
+Assert(valveSheets.Count is >=3 and <=4,"Route with central valve fits in three or four readable sheets");
 Assert(valveSheets.Any(s=>s.Snapshot.Parts.Any(p=>p.Handle=="T20")&&!s.Snapshot.Parts.Any(p=>p.Handle=="T19"))||valveSheets.Any(s=>s.Snapshot.Parts.Any(p=>p.Handle=="T20")&&!s.Snapshot.Parts.Any(p=>p.Handle=="T21")),"Prefer a split adjacent to the valve");
 // Revised drawing rules: true dimensions remain fractional, displayed lengths round upward.
 Assert(new PipeDimension("x",new(0,0),new(1,0),177.9).Label=="178","Round a pipe length upward");
@@ -268,6 +439,51 @@ Assert(risingSheets.Count==1,"The complete reported route fits one A2 sheet befo
 Assert(risingSheets[0].Scene.Welds!.Count==23,"Single sheet keeps all actual welds");
 Assert(risingSheets[0].Scene.Annotations.Any(a=>a.Role=="slope-angle"&&a.Text=="45°"),"Actual inclined route retains its true rise angle");
 Assert(!risingSheets[0].Scene.Symbols!.Any(g=>g.Context),"One-sheet result has no adjacent-sheet context");
+// Reported KSN010 route: the native marker must produce two readable sheets at scale 10.
+var ksnSnapshot=System.Text.Json.JsonSerializer.Deserialize<PipelineSnapshot>(File.ReadAllText(Path.Combine(testRoot,"tests/fixtures/ksn010-break.json")))!;
+var ksnMap=new IsoSymbolMap(File.ReadAllText(Path.Combine(testRoot,"data/IsoSkeyAcadBlockMap.xml")),fixtureCatalog with{SymbolScale=10,Style=null});
+var missingPlantProperties=ksnSnapshot with{Parts=ksnSnapshot.Parts.Select(p=>p.Handle=="F98"?p with{Properties=new Dictionary<string,string>()}:p).ToArray()};
+bool rejectedMissingPlant=false;
+try{SheetSetPlanner.Build(missingPlantProperties,ksnMap);}catch(InvalidDataException ex){rejectedMissingPlant=ex.Message.Contains("F98")&&ex.Message.Contains("Plant 3D");}
+Assert(rejectedMissingPlant,"Missing Plant data is rejected before sheet splitting with an actionable diagnostic");
+var ksnSheets=SheetSetPlanner.Build(ksnSnapshot,ksnMap,excludeFlangeHardware:true);
+Assert(ksnSheets.Count==2&&!ksnSheets.Any(s=>s.Scene.BomOnly),"KSN010 native break produces exactly two diagram sheets");
+Assert(ksnSheets[0].Scene.LayoutLevel!=3,"KSN010 uses available paper space instead of minimum geometry");
+Assert(ksnSheets.SelectMany(sh=>sh.Scene.Symbols!).Where(g=>g.SourceId is "83E0" or "83EB").All(g=>g.YAxis.Y<0),"Elbow heel base plates extend below their attachment");
+Assert(ksnSheets.All(s=>DimensionTextPlacement.CollisionCount(s.Scene.Dimensions,s.Scene.Strokes)==0),"KSN010 dimension text stays clear; line crossings are handled by native DIMBREAK");
+Assert(ksnSheets.All(s=>!s.Scene.BillOfMaterials.Any(r=>r.Category==BomCategory.Instruments)),"KSN010 default output excludes instrument BOM positions");
+var ksnInstrumentIds=ksnSnapshot.Parts.Where(p=>BomCategories.Classify(p)==BomCategory.Instruments).Select(p=>p.Handle).ToHashSet();
+Assert(ksnSheets.SelectMany(s=>s.Scene.Symbols!).All(g=>!ksnInstrumentIds.Contains(g.SourceId)),"KSN010 default output excludes instrument bodies");
+Assert(ksnSheets.SelectMany(s=>s.Scene.Annotations).Count(a=>a.Role=="instrument-tag")==ksnInstrumentIds.Count,"KSN010 retains one leader per instrument");
+foreach(var sh in ksnSheets)
+{
+ var bounds=SheetComposition.Bounds(sh.Scene);
+ Assert(bounds.Left>=SheetComposition.Paper.Left-1e-6&&bounds.Right<=SheetComposition.Paper.Right+1e-6&&bounds.Bottom>=SheetComposition.Paper.Bottom-1e-6&&bounds.Top<=SheetComposition.Paper.Top+1e-6,"KSN010 complete ink footprint fits A2");
+}
+var externalTapWelds=ksnSheets.SelectMany(sh=>sh.Scene.Welds!).Where(w=>w.JointType=="Tap"&&ksnSnapshot.ExternalLineContexts!.Any(c=>c.OwnerHandle==w.SourceId)).ToArray();
+Assert(externalTapWelds.Length==2,"Both foreign-line tap connections get a weld on the receiving line");
+Assert(externalTapWelds.All(w=>Math.Abs(w.ModelPosition!.Value.Z-820)<.001),"Foreign tap welds sit on the receiving pipe axis, not the surface");var ksnPrepared=BreakPointPreparation.Apply(ksnSnapshot,false);
+var ksnOwner=ksnSheets.SelectMany((sh,i)=>sh.Snapshot.Parts.Select(p=>(p.Handle,Sheet:i))).ToDictionary(p=>p.Handle,p=>p.Sheet);
+Assert(ksnPrepared.RequiredCuts!.All(c=>ksnOwner[c.FirstHandle]!=ksnOwner[c.SecondHandle]),"KSN010 native break remains a sheet boundary");
+
+var externalIds=(ksnSnapshot.ExternalLineContexts??Array.Empty<ExternalLineContext>()).SelectMany(c=>c.Parts).Select(p=>p.Handle).ToHashSet();
+Assert(ksnSheets.SelectMany(sh=>sh.Scene.Annotations).Count(a=>a.Role=="external-line")==2,"KSN010 references both connected HCD003 branches");
+Assert(ksnSheets.SelectMany(sh=>sh.Scene.Annotations).Where(a=>a.Role=="external-line").All(a=>a.Text.StartsWith("см. 050-HCD003-LS016C-HN\nОТМ. ")),"Foreign line references use the actual ID and elevation without an invented sheet number");
+Assert(!ksnSheets.SelectMany(sh=>sh.Scene.BillOfMaterials).SelectMany(row=>row.Handles).Any(externalIds.Contains),"Foreign continuation elements never enter KSN010 BOM quantities");
+Assert(!ksnSheets.SelectMany(sh=>sh.Scene.Dimensions).Any(d=>externalIds.Contains(d.SourceId)),"Foreign continuation elements never acquire KSN010 dimensions");
+Assert(ksnSheets.SelectMany(sh=>sh.Scene.Annotations).Where(a=>a.Role=="external-line").All(a=>a.Text.EndsWith("ОТМ. +0.820*")),"External tapping elevations reference the receiving pipe axis, not the lower surface");
+var shownExternal=ksnSheets.SelectMany(sh=>sh.Scene.Strokes).Where(st=>st.Role.StartsWith("context-external-")).Select(st=>st.SourceId).Concat(ksnSheets.SelectMany(sh=>sh.Scene.Symbols!).Where(g=>g.Context&&externalIds.Contains(g.SourceId)).Select(g=>g.SourceId)).Distinct().ToArray();
+Assert(shownExternal.Length==4,"Two foreign physical elements are shown at each of the two boundaries");
+Assert(!ksnSheets.SelectMany(sh=>sh.Scene.Annotations).Any(a=>a.Role=="slope-value"),"No slope value is invented for the level pipes in KSN010");
+var gentleSlope=first with{Handle="gentle-slope",Ports=new[]{new Port("S1",new(0,0,2),new(-1,0,0)),new Port("S2",new(1000,0,0),new(1,0,0))}};
+var gentleScene=SheetPlanner.Build(Snapshot(new[]{gentleSlope},Array.Empty<Connection>()));
+Assert(gentleScene.Annotations.Single(a=>a.Role=="slope-value").Text=="0,002","A two-mm fall over one metre prints a decimal slope");
+Assert(!gentleScene.Annotations.Any(a=>a.Role=="slope-angle"),"A gentle fall uses a slope indicator instead of an oversized angle triangle");
+var slopeArrow=gentleScene.Strokes.Single(st=>st.Role=="slope-indicator").Points;
+var downhill=IsometricProjection.Project(new(1000,0,-2));
+Assert((slopeArrow[1].X-slopeArrow[0].X)*downhill.X+(slopeArrow[1].Y-slopeArrow[0].Y)*downhill.Y>0,"Slope arrow points downhill irrespective of port ordering");
+
+
 // Paper layout: fixed 5 mm symbols, longer pipes, and collision-aware centering of the complete scene.
 var enlargedRaw=risingSheets[0].Scene;
 var enlarged=SheetComposition.Center(enlargedRaw);
@@ -329,7 +545,39 @@ Assert(taggedSheets.Count==1,"Insulation and a valve identifier stay on one shee
 var identifier=taggedSheets[0].Scene.Annotations.Single(a=>a.Role=="valve-tag");
 Assert(identifier.Text=="BV-001"&&identifier.Anchor is not null&&identifier.LeaderKnee is not null,"Valve identifier has an attached native leader plan");
 Assert(!taggedSheets[0].Scene.Annotations.Any(a=>a.Role=="valve-tag"&&a.Text=="?-?"),"Plant placeholder identifiers are not annotated");
+var hiddenValveTags=SheetSetPlanner.Build(taggedSource,risingMap,
+    advancedSettings:new IsoAdvancedSettings{ShowValveIdentifierLeaders=false});
+Assert(hiddenValveTags.SelectMany(sheet=>sheet.Scene.Annotations).All(label=>label.Role!="valve-tag")&&
+    hiddenValveTags.SelectMany(sheet=>sheet.Scene.BillOfMaterials).Any(row=>row.Identifier=="BV-001"),
+    "Disabling valve identifier leaders leaves the identifier in the BOM");
 Assert(taggedSheets[0].Scene.Strokes.Any(s=>s.Role=="insulation"&&s.SourceId=="17A85"),"Elbows receive an insulation contour too");
+foreach(int view in Enumerable.Range(0,4))
+{
+    var insulationLayout=new SchematicLayout(taggedSource,quarterTurns:view,symbolMap:risingMap);
+    var insulationStrokes=new List<Stroke>();
+    // Keep the real library glyphs: their local port coordinates need not be +/-0.5.
+    var insulationGraph=PipelineTopology.Build(taggedSource);
+    var glyphs=taggedSource.Parts.Where(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Elbow").Select(part=>
+    {
+        var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
+        var corner=insulationGraph.Nodes.First(n=>n.Source==part.Handle&&n.Kind==RouteNodeKind.Axis).Point;
+        var block=risingMap.Resolve(IsoDefinition.Parse(part.Properties["ContentIsoSymbolDefinition"]).Skey)!;
+        return IsoSymbolPlacement.Corner(part,block,fixtureCatalog,insulationLayout.Project(ends[0].Position,part.Handle),insulationLayout.Project(corner,part.Handle),insulationLayout.Project(ends[1].Position,part.Handle));
+    }).ToArray();
+    InsulationPlanner.Add(taggedSource,p=>insulationLayout.Project(p),glyphs,insulationStrokes,(p,h)=>insulationLayout.Project(p,h));
+    foreach(var bendPart in taggedSource.Parts.Where(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Elbow"))
+    {
+        var ends=bendPart.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
+        foreach(var contour in insulationStrokes.Where(st=>st.SourceId==bendPart.Handle))
+        foreach(int endpoint in new[]{0,1})
+        {
+            var actual=endpoint==0?contour.Points[0]:contour.Points[^1];
+            var port=insulationLayout.Project(ends[endpoint].Position,bendPart.Handle);
+            Near(Math.Sqrt(Math.Pow(actual.X-port.X,2)+Math.Pow(actual.Y-port.Y,2)),3);
+        }
+    }
+}
+
 var taggedBom=taggedSheets[0].Scene.BillOfMaterials.Single(b=>b.Handles.Contains("16571"));
 Assert(taggedBom.Identifier=="BV-001"&&taggedBom.Designation=="BV-001","Component identifier populates the designation column");
 Assert(taggedSheets[0].Scene.BillOfMaterials.Where(b=>b.Identifier.Length==0).All(b=>b.Designation==b.Standard),"Components without identifiers retain their standard designation");
@@ -392,6 +640,50 @@ Near(supportGlyph.Origin.Y+supportGlyph.XAxis.Y+2*supportGlyph.YAxis.Y,supportAx
 Assert(supportGlyph.Block=="ProjectSupport","Support symbol follows the project SKEY mapping");
 Assert(supportScene.BillOfMaterials.Single(r=>r.Handles.Contains("support")).Category==BomCategory.Supports,"Support belongs to its BOM category");
 Assert(!supportScene.Strokes.Any(s=>s.SourceId=="support"),"Support has no invented terminal pipe or neck");
+
+// Instruments keep their source topology while their native symbol/BOM position can be hidden.
+var instrumentPart=supportPart with{Handle="instrument",Kind="AcPpDb3dEquipment",Properties=new Dictionary<string,string>{{"PnPClassName","PressureGauge"},{"ContentIsoSymbolDefinition","TYPE=INSTRUMENT-DIAL,SKEY=IDFL"},{"Tag","PG-004"},{"PartSizeLongDesc","Pressure gauge"}}};
+var instrumentSnapshot=Snapshot(new[]{supportPipe,instrumentPart},new[]{new Connection("A","D1","instrument","S1")});
+var instrumentMap=new IsoSymbolMap("<Map><SkeyMap SKEY='IDFL' AcadBlock='ProjectSupport'/></Map>",new IsoBlockCatalog(new[]{supportDefinition}));
+var instrumentHidden=SheetPlanner.Build(instrumentSnapshot,symbolMap:instrumentMap,instrumentCalloutsOnly:true);
+Assert(!instrumentHidden.Symbols!.Any(g=>g.SourceId=="instrument"),"Callout-only instrument has no glyph");
+Assert(!instrumentHidden.BillOfMaterials.Any(r=>r.Handles.Contains("instrument")),"Callout-only instrument has no BOM item");
+var instrumentLabel=instrumentHidden.Annotations.Single(a=>a.SourceId=="instrument"&&a.Role=="instrument-tag");
+Assert(instrumentLabel.Text=="PG-004"&&instrumentLabel.LeaderKnee is not null,"Instrument identifier uses a real leader");
+Near(instrumentLabel.Anchor!.Value.X,supportAxis.X);Near(instrumentLabel.Anchor.Value.Y,supportAxis.Y);
+Assert(instrumentHidden.SourcePartCount==instrumentSnapshot.Parts.Count,"Hidden instrument remains traceable in source inventory");
+var instrumentVisible=SheetPlanner.Build(instrumentSnapshot,symbolMap:instrumentMap,instrumentCalloutsOnly:false);
+Assert(instrumentVisible.Symbols!.Any(g=>g.SourceId=="instrument"),"Disabling callout-only mode restores the instrument glyph");
+Assert(instrumentVisible.BillOfMaterials.Any(r=>r.Handles.Contains("instrument")),"Disabling callout-only mode restores the BOM item");
+var unnamedInstrument=instrumentPart with{Properties=new Dictionary<string,string>(instrumentPart.Properties){["Tag"]="?-?-?"}};
+var unnamedScene=SheetPlanner.Build(instrumentSnapshot with{Parts=new[]{supportPipe,unnamedInstrument}},symbolMap:instrumentMap,instrumentCalloutsOnly:true);
+Assert(unnamedScene.Annotations.Any(a=>a.Role=="instrument-tag"&&a.Text=="КИП: ИД не задан"),"Missing instrument tags are explicit instead of invented");
+Assert(unnamedScene.Warnings.Any(w=>w.Contains("не задан Tag")),"Missing instrument identifier produces a warning");
+// A projected pipe crossing must never erase the symbol of its attached support.
+var gapLower=Pipe("gap-lower",new(0,0,0),new(1000,0,0));
+var gapUpper=Pipe("gap-upper",new(500,-500,1000),new(500,500,1000));
+var crossingStrokes=new[]{new Stroke("gap-lower","pipe",new[]{new SheetPoint(0,0),new SheetPoint(100,0)}),new Stroke("gap-upper","pipe",new[]{new SheetPoint(50,-50),new SheetPoint(50,50)})};
+Assert(PipeCrossingBreaks.Apply(crossingStrokes,new[]{gapLower,gapUpper}).Count(st=>st.SourceId=="gap-lower")==2,"An unobstructed lower crossing gets a normal pipe gap");
+var gapSupport=supportPart with{Handle="gap-support",Ports=new[]{new Port("S1",new(500,0,0),new(0,0,1))}};
+var gapSupportGlyph=new SymbolGlyph("gap-support","","TYPE=SUPPORT,SKEY=SUPD","ProjectSupport",new(50,0),new(4,0),new(0,4),LocalBounds:new[]{new SheetPoint(-.5,-.5),new SheetPoint(.5,-.5),new SheetPoint(.5,.5),new SheetPoint(-.5,.5)});
+bool supportGapRejected=false;
+try{PipeCrossingBreaks.Apply(crossingStrokes,new[]{gapLower,gapUpper,gapSupport},symbols:new[]{gapSupportGlyph});}
+catch(SheetCapacityException ex){supportGapRejected=ex.SourceId=="gap-upper";}
+Assert(supportGapRejected,"A crossing on a support requests spacing repair on the crossing pipe instead of cutting the support");
+
+// A real support port on an elbow is part of that elbow's schematic component.
+var elbowSupportPoint=new ModelPoint(-29.2893,29.2893,0);
+var supportElbow=new Part("test.dwg","support-elbow","Elbow","L1",new[]{new Port("S1",new(-100,0,0),new(1,0,0)),new Port("S2",new(0,100,0),new(0,-1,0)),new Port("D1",elbowSupportPoint,new(0,0,-1))},new Dictionary<string,string>{{"PnPClassName","Elbow"}});
+var elbowSupport=supportPart with{Ports=new[]{new Port("S1",elbowSupportPoint,new(0,0,1))}};
+var elbowSupportSnapshot=Snapshot(new[]{supportElbow,elbowSupport},new[]{new Connection("support-elbow","D1","support","S1")});
+var elbowSupportLayout=new SchematicLayout(elbowSupportSnapshot);
+var elbowAnchor=elbowSupportLayout.Project(new(0,0,0),"support-elbow");
+var supportAnchor=elbowSupportLayout.Project(elbowSupportPoint,"support");
+Near(supportAnchor.X,elbowAnchor.X);Near(supportAnchor.Y,elbowAnchor.Y);
+var elbowStart=elbowSupportLayout.Project(new(-100,0,0),"support-elbow");
+var projectedAxis=IsometricProjection.Project(new(1,0,0));
+Near((elbowAnchor.X-elbowStart.X)*projectedAxis.Y-(elbowAnchor.Y-elbowStart.Y)*projectedAxis.X,0);
+
 Near(supportScene.Dimensions.Where(d=>d.Role=="chain").Sum(d=>d.Millimeters),1000);
 var supportTyped=supportPart with{Properties=new Dictionary<string,string>(supportPart.Properties){["underSupportType"]="  С21  "}};
 var supportTypedScene=SheetPlanner.Build(supportSnapshot with{Parts=new[]{supportPipe,supportTyped}},symbolMap:supportMap);
@@ -504,9 +796,36 @@ foreach(int turn in Enumerable.Range(0,4))
 }
 var intersectingDimensions=new[]{new PipeDimension("one",new(0,0),new(100,0),100,"overall","one",new(50,10),new(0,1),TextPosition:new(50,12.8)),new PipeDimension("two",new(50,-50),new(50,50),100,"overall","two",new(40,0),new(-1,0),TextPosition:new(37.2,0))};
 Assert(DimensionRouting.CrossingCount(intersectingDimensions)>0,"Regression fixture initially has crossing dimension lines");
+var witnessSize=new PipeDimension("near",new(0,0),new(50,0),50,Role:"overall",ChainId:"witness-test",
+    DimensionLinePoint:new(0,55),ExtensionDirection:new(0,1),TextPosition:new(25,57.8));
+var witnessBase=new[]{new Stroke("neighbor","pipe",new[]{new SheetPoint(-15,20),new SheetPoint(65,20)})};
+Assert(DimensionRouting.LongWitnessThroughParallelRun(new[]{witnessSize},witnessBase) is not null,
+    "A long witness line through a different parallel pipe is rejected");
+var clearWitness=DimensionRouting.Route(new[]{witnessSize},witnessBase,Array.Empty<SymbolGlyph>(),0);
+Assert(DimensionRouting.LongWitnessThroughParallelRun(clearWitness,witnessBase) is null,
+    "Dimension routing can move the chain away from the other pipe");
 var routed=DimensionRouting.Route(intersectingDimensions,Array.Empty<Stroke>(),Array.Empty<SymbolGlyph>(),0);
 Assert(DimensionRouting.CrossingCount(routed)==0,"Whole-chain routing removes proper baseline and extension crossings");
 Assert(routed.Select(d=>d.Millimeters).SequenceEqual(intersectingDimensions.Select(d=>d.Millimeters)),"Dimension routing never changes engineering values");
+var documentNames=DrawingFileNames.DocumentOutputSet("out",
+    new[]{("200-KSN010-LS016C-HN",2),("150-KSN011-LS025C-HN",1)},DrawingFileNames.DocumentStem("873.РД-003-ТХМ1.ИЧ.pdf"));
+Assert(documentNames.Drawings.Select(Path.GetFileName).SequenceEqual(new[]{
+    "200-KSN010-LS016C-HN(L1).dwg","200-KSN010-LS016C-HN(L2).dwg","150-KSN011-LS025C-HN(L1).dwg"})&&
+    Path.GetFileName(documentNames.Pdf)=="873.РД-003-ТХМ1.ИЧ.pdf","A batch uses complete line numbers for DWGs and the document number for its single PDF");
+var indexedWordFiles=DrawingFileNames.ReportDocuments(Path.Combine("out","873.РД-003-ТХМ1.ИЧ (1).pdf"));
+Assert(indexedWordFiles.Select(Path.GetFileName).SequenceEqual(new[]{
+    "873.РД-003-ТХМ1.ИЧ (1) — Титульный лист.docx","873.РД-003-ТХМ1.ИЧ (1) — Содержание.docx"}),
+    "Word documents share the PDF stem and the publication index");
+var fittedRow=new PipeDimension("pipe",new(0,0),new(60,0),750,Role:"chain",ChainId:"fitting-gap",
+    DimensionLinePoint:new(0,10),ExtensionDirection:new(0,1),TextPosition:new(30,12.8));
+var nearFlange=new SymbolGlyph("flange","","TYPE=FLANGE","",new(26,10.4),new(1,0),new(0,1),
+    LocalContours:new[]{(IReadOnlyList<SheetPoint>)new SheetPoint[]{new(0,0),new(8,0)}});
+Assert(!DimensionRouting.FitsFittingClearance(new[]{fittedRow},new[]{nearFlange}),
+    "A parallel symbol contour is an obstacle even when the dimension line does not cross it");
+var clearFitting=DimensionRouting.Route(new[]{fittedRow},Array.Empty<Stroke>(),new[]{nearFlange},0);
+Assert(DimensionRouting.FitsFittingClearance(clearFitting,new[]{nearFlange})&&
+    clearFitting[0].Start==fittedRow.Start&&clearFitting[0].End==fittedRow.End&&clearFitting[0].Millimeters==750,
+    "Moving the row to clear a nearby flange preserves both anchors and the dimension value");
 var setNames=DrawingFileNames.OutputSet("out","LINE",2,1);
 Assert(Path.GetFileName(setNames.Drawings[0])=="LINE (1)(L1).dwg"&&Path.GetFileName(setNames.Pdf)=="LINE (1).pdf","One suffix applies consistently to the whole drawing and PDF set");
 var occupiedNames=DrawingFileNames.OutputSet("out","LINE",2,1).Drawings.Take(1).ToHashSet();
@@ -553,10 +872,14 @@ foreach(int turn in Enumerable.Range(0,4))
         if(part.Properties["PnPClassName"]=="Valve")Near(length,10);else Assert(length>=4.1-1e-7,"Cycle solver preserves space for at least one dimension digit");
     }
 }
+var forcedLoop=valveLoop with{RequiredCuts=new[]{valveLoop.Connections[0]}};
+var forcedLoopSheets=SheetSetPlanner.Build(forcedLoop);
+var forcedLoopOwners=forcedLoopSheets.SelectMany((sheet,index)=>sheet.Snapshot.Parts.Select(p=>(p.Handle,Index:index))).ToDictionary(p=>p.Handle,p=>p.Index);
+Assert(forcedLoopOwners[forcedLoop.RequiredCuts[0].FirstHandle]!=forcedLoopOwners[forcedLoop.RequiredCuts[0].SecondHandle],"A manual cut on a cycle forces another boundary and stays mandatory");
 var coupledLoops=LoopFixture(new ModelPoint[]{new(0,0,0),new(1000,0,0),new(1000,1000,0),new(0,1000,0),new(2000,0,0),new(2000,1000,0)},new[]{(0,1),(1,2),(2,3),(3,0),(1,4),(4,5),(5,2)});
 Assert(new SchematicLayout(coupledLoops).ClosedLoops==2,"Coupled cycles with a shared pipe are solved together");
 var boundaryTall=tallSnapshot with{Connections=tallSnapshot.Connections.Append(new Connection("T00","S1","outside-line","S2")).ToArray()};
-Assert(SheetSetPlanner.Build(boundaryTall).Count==2,"A boundary object outside the selected line does not break adjacent-sheet context");
+Assert(SheetSetPlanner.Build(boundaryTall).Count==defaultTallSheets.Count,"A boundary object outside the selected line does not break adjacent-sheet context");
 var continuity=new SheetRunContinuity(Snapshot(new[]{
     Pipe("run-left",new(0,0,0),new(100,0,0)),Pipe("run-middle",new(100,0,0),new(200,0,0)),Pipe("run-right",new(200,0,0),new(300,0,0)),
     Pipe("parallel",new(0,50,0),new(300,50,0))},Array.Empty<Connection>()));
@@ -582,14 +905,14 @@ var ringSheets=SheetSetPlanner.Build(ringSnapshot);
 Assert(ringSheets.Count>=2,"An oversized ring can be partitioned at two pipe connections");
 Assert(ringSheets.Sum(s=>s.Snapshot.Parts.Count)==120&&ringSheets.SelectMany(s=>s.Snapshot.Parts).Select(p=>p.Handle).Distinct().Count()==120,"Ring partition preserves every component exactly once");
 var slopedSupportPipe=Pipe("support-run",new(0,0,0),new(1000,0,10));slopedSupportPipe=slopedSupportPipe with{Ports=slopedSupportPipe.Ports.Append(new Port("D1",new(500,0,5),new(1,0,0))).ToArray()};
-// Internal support/tap stations share the physical pipe minimum instead of multiplying it.
+// Adjacent internal stations also keep dimension intervals on the paper grid.
 var shortStationPipe=Pipe("short-stations",new(0,0,0),new(1,0,0));
 shortStationPipe=shortStationPipe with{Ports=shortStationPipe.Ports.Concat(new[]{new Port("D1",new(.25,0,0),new(1,0,0)),new Port("D2",new(.75,0,0),new(1,0,0))}).ToArray()};
 var stationLayout=new SchematicLayout(Snapshot(new[]{shortStationPipe},Array.Empty<Connection>()),compactLevel:3);
 var stationStart=stationLayout.Project(new(0,0,0),shortStationPipe.Handle);var stationEnd=stationLayout.Project(new(1,0,0),shortStationPipe.Handle);
-Assert(Math.Sqrt(Math.Pow(stationEnd.X-stationStart.X,2)+Math.Pow(stationEnd.Y-stationStart.Y,2))>=10&&Math.Sqrt(Math.Pow(stationEnd.X-stationStart.X,2)+Math.Pow(stationEnd.Y-stationStart.Y,2))<30,"Internal stations reserve text space without assigning each a physical 10 mm minimum");
+Near(Math.Sqrt(Math.Pow(stationEnd.X-stationStart.X,2)+Math.Pow(stationEnd.Y-stationStart.Y,2)),30);
 var stationMid=stationLayout.Project(new(.25,0,0),shortStationPipe.Handle);
-Assert(Math.Sqrt(Math.Pow(stationMid.X-stationStart.X,2)+Math.Pow(stationMid.Y-stationStart.Y,2))>=4.1-1e-7&&Math.Sqrt(Math.Pow(stationMid.X-stationStart.X,2)+Math.Pow(stationMid.Y-stationStart.Y,2))<10,"A station interval only grows enough to accommodate its dimension label");
+Near(Math.Sqrt(Math.Pow(stationMid.X-stationStart.X,2)+Math.Pow(stationMid.Y-stationStart.Y,2)),10);
 var slopeSupport=supportPart with{Ports=new[]{new Port("S1",new(500,0,5),new(1,0,0))}};
 var supportHeights=SheetPlanner.Build(Snapshot(new[]{slopedSupportPipe,slopeSupport},new[]{new Connection("support-run","D1","support","S1")}),symbolMap:supportMap);
 Assert(!supportHeights.Annotations.Any(a=>a.Role=="elevation"&&a.Text.Contains("0.005")),"Support attachment does not generate an extra intermediate pipe elevation");
@@ -634,7 +957,77 @@ Assert(overflowSheets.Where(s=>s.Scene.BomOnly).All(s=>s.Snapshot.Parts.Count==0
 var overflowRows=overflowSheets.SelectMany(s=>s.Scene.BillOfMaterials).ToArray();
 Assert(overflowRows.Select(r=>r.Position).Distinct().Count()==overflowRows.Length&&overflowRows.SelectMany(r=>r.Handles).Count(h=>h.StartsWith("FGJ#extra-"))==60,"Overflow preserves all row positions and every accessory exactly once");
 Assert(overflowSheets.Select((s,i)=>s.Number==i+1&&s.Total==overflowSheets.Count).All(x=>x),"Geometry and BOM sheets share consecutive total numbering");
-var numericInsulation=new Stroke("insulation-only","insulation",new SheetPoint[]{new(0,0),new(400,400)});
+var paginationFirst=overflowSheets[0] with{Number=1,Scene=overflowSheets[0].Scene with{BillOfMaterials=overflowRows,Annotations=new[]{new Annotation("","title",default,"old title"),new Annotation("A","continuation",default,"П1 / лист 2")}}};
+var paginationSecond=overflowSheets[0] with{Number=2,Scene=overflowSheets[0].Scene with{BillOfMaterials=overflowRows,Annotations=new[]{new Annotation("","title",default,"old title"),new Annotation("B","continuation",default,"П1 / лист 1")}}};
+var interleaved=BomPagination.Apply(new[]{paginationFirst,paginationSecond});
+int secondDiagram=interleaved.ToList().FindIndex(s=>s.Number>1&&!s.Scene.BomOnly);
+Assert(secondDiagram==BomPagination.Pages(overflowRows).Count,"All first diagram BOM pages precede second diagram");
+Assert(interleaved.Skip(1).Take(secondDiagram-1).All(s=>s.Scene.BomOnly)&&interleaved.Skip(secondDiagram+1).All(s=>s.Scene.BomOnly),"Each diagram is followed immediately by its own BOM continuation pages");
+Assert(interleaved[0].Scene.Annotations.Single(a=>a.Role=="continuation").Text=="П1 / лист "+(secondDiagram+1),"Forward diagram reference is renumbered after inserted BOM pages");
+Assert(interleaved[secondDiagram].Scene.Annotations.Single(a=>a.Role=="continuation").Text=="П1 / лист 1","Backward diagram reference retains correct target");
+Assert(interleaved[secondDiagram+1].Scene.Annotations.Single(a=>a.Role=="title").Text.Contains("продолжение спецификации листа "+(secondDiagram+1)+" —"),"BOM continuation names the final owner sheet number");
+Assert(interleaved.Select((s,i)=>s.Number==i+1&&s.Total==interleaved.Count).All(x=>x),"Interleaved set has consecutive final numbering");
+var sideDimension=new PipeDimension("side-test",new(0,0),new(0,100),850,ChainId:"side-test",DimensionLinePoint:new(-10,0),ExtensionDirection:new(-1,0),TextPosition:new(-12.8,50));
+var sideContour=new[]{new SheetPoint(-15,30),new SheetPoint(-5,30),new SheetPoint(-5,70),new SheetPoint(-15,70),new SheetPoint(-15,30)};
+var sideSymbol=new SymbolGlyph("side-valve","","","valve-test",default,new(1,0),new(0,1),LocalBounds:sideContour.Take(4).ToArray(),LocalContours:new[]{(IReadOnlyList<SheetPoint>)sideContour});
+var sideRouted=DimensionRouting.Route(new[]{sideDimension},Array.Empty<Stroke>(),new[]{sideSymbol},0).Single();
+Assert(!DimensionRouting.GetSegments(new[]{sideRouted}).Where(segment=>segment.Baseline).Any(segment=>sideContour.Zip(sideContour.Skip(1),(a,b)=>new DimensionRouting.Segment(a,b,false)).Any(edge=>DimensionRouting.CheckCross(segment,edge))),"Vertical dimension baseline avoids a valve contour even when there is no pipe-axis crossing");
+var planeHost=Pipe("plane-host",new(0,-500,0),new(0,500,0)) with{Properties=new Dictionary<string,string>{{"PnPClassName","Pipe"},{"NominalDiameter","150"}}};
+var planeFlange=Pipe("plane-flange",new(0,0,100),new(0,0,110)) with{Properties=new Dictionary<string,string>{{"PnPClassName","Flange"},{"NominalDiameter","25"}}};
+var planeSnapshot=Snapshot(new[]{planeHost,planeFlange},new[]{new Connection(planeHost.Handle,"S1",planeFlange.Handle,"S1")});
+for(int turn=0;turn<4;turn++)
+{
+ var actual=IsoSymbolPlacement.FlangeTransverse(planeSnapshot,planeFlange,new(0,0,1),turn);var expected=IsometricProjection.Project(new(0,1,0),quarterTurns:turn);
+ Near(actual.X*expected.Y-actual.Y*expected.X,0);
+}
+var remoteLabels=AnnotationPlacement.Place(new[]{new Annotation("remote-valve","valve-tag",new(100,100),"GV-TEST",Anchor:new(100,100)),new Annotation("remote-level","elevation",new(180,100),"ОТМ. +1.055",Anchor:new(180,100))},new List<Stroke>(),Array.Empty<SymbolGlyph>(),Array.Empty<PipeDimension>());
+Assert(remoteLabels.All(a=>a.Anchor is {} anchor&&a.LeaderKnee is {} knee&&Math.Sqrt(Math.Pow(knee.X-anchor.X,2)+Math.Pow(knee.Y-anchor.Y,2))>=9.99),"Valve and elevation shelves are moved away from their geometry");var junctionStrokes=new List<Stroke>{new("A","insulation",new SheetPoint[]{new(-20,3),new(20,3)}),new("B","insulation",new SheetPoint[]{new(3,0),new(3,20)})};
+InsulationJunctions.Trim(linked with{Parts=new[]{first with{Ports=first.Ports.Select(port=>port.Name=="S2"?port with{EndCondition="TAP"}:port).ToArray()},second}},junctionStrokes,new[]{("A",new SheetPoint(-20,0),new SheetPoint(20,0)),("B",new SheetPoint(0,0),new SheetPoint(0,20))},3);
+Assert(junctionStrokes.Count(st=>st.SourceId=="A")==2&&junctionStrokes.Where(st=>st.SourceId=="B").All(st=>st.Points.Min(p=>p.Y)>=2.99),"Connected insulation junction trims crossing internal edges");
+var unconnectedJunctionStrokes=new List<Stroke>{new("A","insulation",new SheetPoint[]{new(-20,3),new(20,3)})};
+InsulationJunctions.Trim(separated,unconnectedJunctionStrokes,new[]{("A",new SheetPoint(-20,0),new SheetPoint(20,0)),("B",new SheetPoint(0,0),new SheetPoint(0,20))},3);
+Assert(unconnectedJunctionStrokes.Count==1&&unconnectedJunctionStrokes[0].Points.Count==2,"Independent projected crossings do not merge insulation");
+var positionLabel=new Annotation("position-test","position",new(102,103),"6",Anchor:new(100,100));
+var positionBefore=AnnotationPlacement.Place(new[]{positionLabel},new List<Stroke>(),Array.Empty<SymbolGlyph>(),Array.Empty<PipeDimension>()).Single();
+var positionBox=AnnotationPlacement.Bounds(positionBefore);double insulationX=(positionBox.Left+positionBox.Right)/2;
+var positionAfter=AnnotationPlacement.Place(new[]{positionLabel},new List<Stroke>{new("position-test","insulation",new SheetPoint[]{new(insulationX,positionBox.Bottom-10),new(insulationX,positionBox.Top+10)})},Array.Empty<SymbolGlyph>(),Array.Empty<PipeDimension>()).Single();
+Assert(positionAfter.Position!=positionBefore.Position,"Position number moves away from insulation line");var alignA=new PipeDimension("align-a",new(0,0),new(50,30),100,ChainId:"align-a",DimensionLinePoint:new(0,12),ExtensionDirection:new(0,1),ModelStart:new(0,0,0),ModelEnd:new(100,0,0));
+var alignB=new PipeDimension("align-b",new(50,30),new(100,0),100,ChainId:"align-b",DimensionLinePoint:new(50,55),ExtensionDirection:new(0,1),ModelStart:new(100,0,0),ModelEnd:new(100,100,0));
+var alignedPair=DimensionRowAlignment.AlignAdjacent(new[]{alignA,alignB});
+Near(alignedPair[0].DimensionLinePoint!.Value.Y-alignedPair[0].Start.Y,alignedPair[1].DimensionLinePoint!.Value.Y-alignedPair[1].Start.Y);
+Assert(alignedPair.All(d=>d.ExtensionDirection==new SheetPoint(0,1)),"Joined rows align without changing isometric extension planes");
+var alignmentWall=new Stroke("alignment-obstacle","pipe",new SheetPoint[]{new(25,35),new(25,45)});
+var guardedPair=DimensionRowAlignment.AlignAdjacent(new[]{alignA,alignB},new[]{alignmentWall},Array.Empty<SymbolGlyph>());
+Assert(guardedPair[0]==alignA&&guardedPair[1]==alignB,"Alignment yields to a clear placement when a common lane would cross a pipe");
+var oppositeA=alignA with{DimensionLinePoint=new(0,-18)};
+var oppositePair=DimensionRowAlignment.AlignAdjacent(new[]{oppositeA,alignB});
+Assert(oppositePair[0]==oppositeA&&oppositePair[1]==alignB,"Adjacent runs retain opposite routing sides instead of pulling a clear lower row through the pipe");
+var lowerB=alignB with{DimensionLinePoint=new(50,5)};
+var lowerPair=DimensionRowAlignment.AlignAdjacent(new[]{oppositeA,lowerB});
+Near(lowerPair[0].DimensionLinePoint!.Value.Y-lowerPair[0].Start.Y,-25);
+Near(lowerPair[1].DimensionLinePoint!.Value.Y-lowerPair[1].Start.Y,-25);
+Assert(lowerPair.All(d=>d.ExtensionDirection==new SheetPoint(0,1)),"Lower adjacent rows align outward within the original dimension plane");
+
+Assert((alignA with{ReferenceOnly=true}).Label=="100*","Reference dimensions display an asterisk");var referenceValve=first with{Properties=new Dictionary<string,string>(first.Properties){["PnPClassName"]="Valve"}};
+var referenceScene=SheetPlanner.Build(linked with{Parts=new[]{referenceValve,second}});
+Assert(referenceScene.Dimensions.Any(d=>d.ReferenceOnly&&d.Role=="chain"),"Valve installation dimension is reference-only");
+Assert(referenceScene.Dimensions.Where(d=>d.Role=="overall").All(d=>d.ReferenceOnly&&d.Label.EndsWith('*')),"Overall dimension inherits reference status from valve interval");
+Near((fixtureCatalog with{SymbolScale=15}).ScaleFor(supportPart),7.5);
+Near((fixtureCatalog with{SymbolScale=10}).ScaleFor(supportPart),5);
+var corridorDimension=new PipeDimension("lower-run",new(0,0),new(100,0),100,ChainId:"lower-run",DimensionLinePoint:new(0,10),ExtensionDirection:new(0,1),TextPosition:new(50,12.8));
+var corridorRows=DimensionRouting.Route(new[]{corridorDimension},new[]{new Stroke("upper-run","pipe",new SheetPoint[]{new(0,20),new(100,20)})},Array.Empty<SymbolGlyph>(),0);
+Assert(corridorRows[0].DimensionLinePoint!.Value.Y<0||corridorRows[0].DimensionLinePoint.Value.Y>23,"Dimension row moves outside the space between parallel runs");var continuationFixture=Snapshot(new[]{first},Array.Empty<Connection>());var continuationLayout=new SchematicLayout(continuationFixture);
+var continuationAt=continuationLayout.Project(first.Ports[1].Position,first.Handle);var continuationEnd=new SheetPoint(continuationAt.X+12,continuationAt.Y);
+var continuationScene=SheetPlanner.Build(continuationFixture,continuations:new[]{new SheetContinuation(first.Handle,"S2","П1",2)},contextStrokes:new[]{new Stroke("next-sheet","context-pipe",new[]{continuationAt,continuationEnd})});
+var continuationBreak=continuationScene.Strokes.Single(st=>st.Role=="continuation-break");
+Near((continuationBreak.Points[0].X+continuationBreak.Points[^1].X)/2,continuationEnd.X);Near((continuationBreak.Points[0].Y+continuationBreak.Points[^1].Y)/2,continuationEnd.Y);
+Assert(flowScene.Strokes.Count(st=>st.Role=="flow-shaft")==1,"Flow arrow includes its bold shaft");var orderChain=new PipeDimension("order",new(0,0),new(50,0),248,Role:"chain",ChainId:"order",DimensionLinePoint:new(0,-15),ExtensionDirection:new(0,1),TextPosition:new(25,-12.2));
+var orderOverall=orderChain with{Role="overall",Millimeters=844,End=new(100,0),DimensionLinePoint=new(0,20),TextPosition=new(50,22.8)};
+var orderedRows=DimensionRowAlignment.EnforceChainOrder(new[]{orderChain,orderOverall});
+Assert(orderedRows[1].DimensionLinePoint!.Value.Y<=-22,"Overall follows a lower chain on its outer side with 7 mm spacing");
+var orderedUpper=DimensionRowAlignment.EnforceChainOrder(new[]{orderChain with{DimensionLinePoint=new(0,15)},orderOverall with{DimensionLinePoint=new(0,-20)}});
+Assert(orderedUpper[1].DimensionLinePoint!.Value.Y>=22,"Overall follows an upper chain on its outer side");
+Assert(orderedRows.All(d=>d.Millimeters is 248 or 844),"Row ordering preserves engineering dimensions");var numericInsulation=new Stroke("insulation-only","insulation",new SheetPoint[]{new(0,0),new(400,400)});
 var noInsulation=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap);
 var withInsulationCrossing=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap,contextStrokes:new[]{numericInsulation});
 Assert(System.Text.Json.JsonSerializer.Serialize(noInsulation.Dimensions)==System.Text.Json.JsonSerializer.Serialize(withInsulationCrossing.Dimensions),"Insulation crossing does not move dimension baselines or text");
@@ -672,14 +1065,14 @@ foreach(var d in tallSheets.SelectMany(s=>s.Scene.Dimensions))
 var nearUnconnected=Snapshot(new[]{Pipe("free-one",new(0,0,0),new(1000,0,0)),Pipe("free-two",new(1000.005,0,0),new(2000,0,0))},Array.Empty<Connection>());
 Assert(SnapshotValidation.Validate(nearUnconnected).Warnings.Any(w=>w.Contains("Нет соединения:")),"Near-coincident unconnected opposing ports are explicitly diagnosed without inventing a connection");
 // Exhausting the search budget must escape capacity-fallback catches and clear per-run state.
-var executionType=typeof(SheetSetPlanner).Assembly.GetType("IsoGenerator.Core.PlanningExecution")!;
-using(var budgetScope=(IDisposable)Activator.CreateInstance(executionType,new object[]{CancellationToken.None,null})!)
-{
-    var reportMethod=executionType.GetMethod("Report")!;bool budgetStopped=false;
-    try{for(int i=0;i<514;i++)reportMethod.Invoke(null,new object[]{"budget regression",true});}
-    catch(System.Reflection.TargetInvocationException ex) when(ex.InnerException is PlanningLimitException){budgetStopped=true;}
-    Assert(budgetStopped,"Variant budget terminates search instead of being swallowed as sheet capacity");
-}
+var budget=new PlanningExecution(CancellationToken.None,null,TimeSpan.FromMinutes(1),2,10);
+budget.Report("first candidate",true);
+budget.Report("last candidate",true);
+budget.Check();
+bool budgetStopped=false;
+try{budget.Report("extra candidate",true);}
+catch(PlanningLimitException){budgetStopped=true;}
+Assert(budgetStopped,"The variant budget admits the last candidate and rejects the next attempt");
 Assert(SheetSetPlanner.Build(linked).Count==1,"Budget exhaustion does not poison the next planning run");
 Assert(SheetSetPlanner.Build(separated).Count==2,"Disconnected pipe pieces never share a drawing sheet");
 var cpOnlySupport=supportPart with{Ports=new[]{new Port("S1",new(500,0,0),new(1,0,0))}};
@@ -712,7 +1105,7 @@ Assert(diameterScene.BillOfMaterials.All(r=>r.QuantityText=="1.4"&&Math.Abs(r.Qu
 var minimalPipe=Pipe("readable-short",new(0,0,0),new(1,0,0));var minimalLayout=new SchematicLayout(Snapshot(new[]{minimalPipe},Array.Empty<Connection>()),compactLevel:3);
 var minimalStart=minimalLayout.Project(minimalPipe.Ports[0].Position,minimalPipe.Handle);var minimalEnd=minimalLayout.Project(minimalPipe.Ports[1].Position,minimalPipe.Handle);
 double minimalPaperLength=Math.Sqrt(Math.Pow(minimalEnd.X-minimalStart.X,2)+Math.Pow(minimalEnd.Y-minimalStart.Y,2));
-Assert(minimalPaperLength>=4.1-1e-8&&minimalPaperLength<10,"A short pipe uses only required text space, not a hard 10 mm minimum");
+Near(minimalPaperLength,10);
 foreach(var label in diameterScene.Annotations.Where(a=>a.LeaderKnee is not null&&a.Anchor is not null))Assert(Math.Sqrt(Math.Pow(label.LeaderKnee!.Value.X-label.Anchor!.Value.X,2)+Math.Pow(label.LeaderKnee.Value.Y-label.Anchor.Value.Y,2))<=30.000001,"Leader reach remains within 30 mm");
 for(int turn=0;turn<4;turn++)
 {
@@ -731,10 +1124,9 @@ for(int turn=0;turn<4;turn++)
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","Elbow"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=BEBW"}}})==BomCategory.Fittings,"A purchased elbow with ISO TYPE=BEND remains a fitting, not a pipe");
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND"}}})==BomCategory.Pipes,"A true bent pipe remains in the pipe category");
 Near((fixtureCatalog with{SymbolScale=7.5,Style=new IsoStyleSettings(99)}).ScaleFor(first),7.5);
-var leaderPlacement=typeof(SheetSetPlanner).Assembly.GetType("IsoGenerator.Core.AnnotationPlacement")!.GetMethod("Place")!;
 var enclosure=new List<Stroke>{new("enclosure","component",new SheetPoint[]{new(89,91),new(111,91),new(111,109),new(89,109),new(89,91)})};
 var enclosureGlyph=new SymbolGlyph("enclosure","","","TestBox",new(100,100),new(20,0),new(0,32));
-var crossingLeader=(IReadOnlyList<Annotation>)leaderPlacement.Invoke(null,new object[]{new[]{new Annotation("leader","valve-tag",new(100,100),"ID",Anchor:new(100,100))},enclosure,new[]{enclosureGlyph},Array.Empty<PipeDimension>()})!;
+var crossingLeader=AnnotationPlacement.Place(new[]{new Annotation("leader","valve-tag",new(100,100),"ID",Anchor:new(100,100))},enclosure,new[]{enclosureGlyph},Array.Empty<PipeDimension>());
 Assert(crossingLeader.Count==1&&crossingLeader[0].LeaderKnee is not null,"A leader may cross the enclosing component outline to reach readable text");
 var knee=crossingLeader[0].LeaderKnee!.Value;
 bool LeaderCross(SheetPoint a,SheetPoint b,SheetPoint c,SheetPoint d)
@@ -749,6 +1141,25 @@ Assert(leaderSegments.Any(l=>wallSegments.Any(w=>LeaderCross(l.a,l.b,w.a,w.b)))&
 Near(BomCategories.TextHeight,3);
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","InlineInstrument"},{"ContentIsoSymbolDefinition","TYPE=INSTRUMENT,SKEY=IIFL"},{"PartFamilyLongDesc","Расходомер электромагнитный"}}})==BomCategory.Valves,"A generic instrument class with flowmeter catalog data belongs to valves");
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","Sensor"},{"ContentIsoSymbolDefinition","TYPE=INSTRUMENT"},{"PartFamilyLongDesc","Датчик расходомера"}}})==BomCategory.Instruments,"An actual sensor remains an instrument, even when fitted to a flowmeter");
+var footprintScene=scene with
+{
+    Strokes=new[]{new Stroke("run","pipe",new SheetPoint[]{new(0,0),new(80,40)})},
+    Symbols=Array.Empty<SymbolGlyph>()
+};
+var longCallout=footprintScene with
+{
+    Strokes=footprintScene.Strokes.Append(new Stroke("tag","elevation-leader",
+        new SheetPoint[]{new(20,10),new(350,300)})).ToArray()
+};
+Near(LayoutQuality.Footprint(footprintScene),LayoutQuality.Footprint(longCallout));
+var expandedRun=footprintScene with
+{
+    Strokes=new[]{new Stroke("run","pipe",new SheetPoint[]{new(0,0),new(100,50)})}
+};
+Assert(LayoutQuality.Footprint(expandedRun)>LayoutQuality.Footprint(footprintScene),
+    "Use of the free field is measured by pipe geometry and fittings, not by a long leader");
+Assert(PipeDimension.IsVerticalTextAxis(-0.2,100)&&!PipeDimension.ReverseTextAxis(-0.2,100)&&
+    PipeDimension.ReverseTextAxis(0.2,-100),"Nearly vertical dimension text reads upward from either endpoint order");
 Console.WriteLine($"Passed {checks} checks.");
 
 

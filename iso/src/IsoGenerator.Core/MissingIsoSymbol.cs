@@ -17,6 +17,6 @@ public static class MissingIsoSymbol
             new SheetPoint[]{new(-5,-5),new(5,-5),new(5,5),new(-5,5),new(-5,-5)},
             new SheetPoint[]{new(-5,-5),new(5,5)},new SheetPoint[]{new(-5,5),new(5,-5)}
         };
-        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition",""),"SpecGenMissingIsoSymbol",center,new(1,0),new(0,1),"missing",LocalBounds:new SheetPoint[]{new(-5,-5),new(5,-5),new(5,5),new(-5,5)},LocalContours:contours);
+        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.SymbolDefinition,"SpecGenMissingIsoSymbol",center,new(1,0),new(0,1),"missing",LocalBounds:new SheetPoint[]{new(-5,-5),new(5,-5),new(5,5),new(-5,5)},LocalContours:contours);
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Globalization;
+using System.Globalization;
 using System.Text.RegularExpressions;
 namespace IsoGenerator.Core;
 public static class PartDiameter
@@ -23,13 +23,13 @@ public sealed record CutPreferences(IReadOnlySet<string> Protected,IReadOnlySet<
         var parts=source.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
         var adjacent=parts.Keys.ToDictionary(h=>h,_=>new List<(string Other,Connection Link)>(),StringComparer.OrdinalIgnoreCase);
         foreach(var c in source.Connections)if(adjacent.ContainsKey(c.FirstHandle)&&adjacent.ContainsKey(c.SecondHandle)){adjacent[c.FirstHandle].Add((c.SecondHandle,c));adjacent[c.SecondHandle].Add((c.FirstHandle,c));}
-        bool Joint(Part p)=>p.Kind=="AcPpDb3dConnector";
-        bool IsSupport(Part p)=>p.Properties.GetValueOrDefault("PnPClassName")=="Support";
+        bool Joint(Part p)=>p.IsConnector;
+        bool IsSupport(Part p)=>p.Component==ComponentKind.Support;
         double Length(Part p){var ports=p.Ports.Where(q=>q.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();return ports.Length==2?ports[0].Position.DistanceTo(ports[1].Position):0;}
         var protectedLinks=new HashSet<string>(StringComparer.OrdinalIgnoreCase);var preferred=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach(var host in source.Parts)
         {
-            string kind=host.Properties.GetValueOrDefault("PnPClassName","");var branchPorts=new List<string>();
+            string kind=host.CatalogClass;var branchPorts=new List<string>();
             if(kind=="Pipe")branchPorts.AddRange(host.Ports.Where(p=>!p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).Select(p=>p.Name));
             if(kind=="Tee")
             {
@@ -56,15 +56,15 @@ public sealed record CutPreferences(IReadOnlySet<string> Protected,IReadOnlySet<
                 var physical=branch.Select(h=>parts[h]).Where(p=>!Joint(p)&&!IsSupport(p)).ToArray();
                 bool service=physical.Any(p=>new[]{"DR","AV","CV","RV"}.Contains(p.Properties.GetValueOrDefault("Service","").Trim().ToUpperInvariant()));
                 double hostDiameter=PartDiameter.Read(host)??0;
-                var branchPipes=physical.Where(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Pipe").ToArray();
+                var branchPipes=physical.Where(p=>p.Component==ComponentKind.Pipe).ToArray();
                 // Identify a short small-bore end branch from its topology and model sizes,
                 // independent of any project IsoConfig theme or named line.
-                bool pattern=branchPipes.Length==1&&physical.Count(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Valve")==1&&hostDiameter>0&&physical.Any(p=>PartDiameter.Read(p) is {} size&&size*2<=hostDiameter)&&physical.All(p=>PartDiameter.Read(p) is not {} size||size*2<=hostDiameter);
+                bool pattern=branchPipes.Length==1&&physical.Count(p=>p.Component==ComponentKind.Valve)==1&&hostDiameter>0&&physical.Any(p=>PartDiameter.Read(p) is {} size&&size*2<=hostDiameter)&&physical.All(p=>PartDiameter.Read(p) is not {} size||size*2<=hostDiameter);
                 if(!service&&!pattern)continue;
                 foreach(var c in source.Connections)if((branch.Contains(c.FirstHandle)&&branch.Contains(c.SecondHandle))||Key(c)==Key(root.Link))protectedLinks.Add(Key(c));
             }
         }
-        foreach(var reducer in source.Parts.Where(p=>p.Properties.GetValueOrDefault("PnPClassName")=="Reducer"))
+        foreach(var reducer in source.Parts.Where(p=>p.Component==ComponentKind.Reducer))
         {
             var sizes=PartDiameter.ReducerSizes(reducer);if(sizes.Length<2)continue;double small=sizes.Min(),large=sizes.Max();if(large/small<2)continue;
             foreach(var start in adjacent[reducer.Handle])
@@ -74,12 +74,12 @@ public sealed record CutPreferences(IReadOnlySet<string> Protected,IReadOnlySet<
                 {
                     var current=pending.Dequeue();if(!visited.Add(current.Handle))continue;var part=parts[current.Handle];
                     if(Joint(part)){foreach(var next in adjacent[current.Handle])if(!visited.Contains(next.Other))pending.Enqueue((next.Other,next.Link));continue;}
-                    if(part.Properties.GetValueOrDefault("PnPClassName")!="Pipe"||PartDiameter.Read(part) is not {} diameter||Math.Abs(diameter-small)>.001)break;
+                    if(part.Component!=ComponentKind.Pipe||PartDiameter.Read(part) is not {} diameter||Math.Abs(diameter-small)>.001)break;
                     if(protectedLinks.Contains(Key(current.Link)))break;
                     var run=new HashSet<string>(StringComparer.OrdinalIgnoreCase){reducer.Handle};var q=new Queue<string>();q.Enqueue(part.Handle);double length=0;
                     while(q.Count>0)
                     {
-                        string h=q.Dequeue();if(!run.Add(h))continue;var p=parts[h];string kind=p.Properties.GetValueOrDefault("PnPClassName","");
+                        string h=q.Dequeue();if(!run.Add(h))continue;var p=parts[h];string kind=p.CatalogClass;
                         if(IsSupport(p)||kind is "Tee" or "Reducer")continue;
                         if(kind=="Pipe"){if(PartDiameter.Read(p) is not {} d||Math.Abs(d-small)>.001)continue;length+=Length(p);}
                         foreach(var next in adjacent[h])if(!run.Contains(next.Other))q.Enqueue(next.Other);
@@ -88,6 +88,8 @@ public sealed record CutPreferences(IReadOnlySet<string> Protected,IReadOnlySet<
                 }
             }
         }
+        foreach(var instrument in source.Parts.Where(p=>p.Properties.ContainsKey("IsoCalloutHost")))
+            foreach(var link in source.Connections.Where(c=>c.FirstHandle==instrument.Handle||c.SecondHandle==instrument.Handle))protectedLinks.Add(Key(link));
         return new(protectedLinks,preferred);
     }
 }

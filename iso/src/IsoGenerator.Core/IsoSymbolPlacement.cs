@@ -8,6 +8,72 @@ internal static class IsoSymbolPlacement
         double dot=axis.X*seed.X+axis.Y*seed.Y+axis.Z*seed.Z;
         var v=Unit(new(seed.X-axis.X*dot,seed.Y-axis.Y*dot,seed.Z-axis.Z*dot));var p=IsometricProjection.Project(v,quarterTurns:turns);double l=Math.Sqrt(p.X*p.X+p.Y*p.Y);return new(p.X/l,p.Y/l);
     }
+    internal static SheetPoint FlangeTransverse(PipelineSnapshot snapshot,Part flange,ModelPoint axis,int turns) => FlangeTransverse(snapshot,flange,axis,turns,out _);
+
+    internal static SheetPoint FlangeTransverse(PipelineSnapshot snapshot,Part flange,ModelPoint axis,int turns,out bool hostFound)
+    {
+        hostFound=false;
+        var fallback=Transverse(axis,turns);
+        if(Math.Abs(Unit(axis).Z)<.99)return fallback;
+        var parts=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
+        var frontier=new[]{(Handle:flange.Handle,Port:"")};
+        var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase){flange.Handle};
+        var inferred=new List<ModelPoint>();
+        while(frontier.Length>0)
+        {
+            var explicitHosts=new List<ModelPoint>();
+            var next=new List<(string Handle,string Port)>();
+            foreach(var entry in frontier)
+            {
+                var part=parts[entry.Handle];
+                var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
+                string kind=part.CatalogClass;
+                if(kind=="Pipe"&&ends.Length==2&&entry.Port.Length>0)
+                {
+                    var run=Unit(new(ends[1].Position.X-ends[0].Position.X,ends[1].Position.Y-ends[0].Position.Y,ends[1].Position.Z-ends[0].Position.Z));
+                    if(Math.Abs(run.Z)<.95)
+                    {
+                        var port=part.Ports.FirstOrDefault(p=>p.Name==entry.Port);
+                        if(port?.EndCondition.Equals("TAP",StringComparison.OrdinalIgnoreCase)==true)
+                            explicitHosts.Add(run);
+                        else if(inferred.Count==0&&PartDiameter.Read(part) is {} hostSize&&PartDiameter.Read(flange) is {} size&&size<hostSize)
+                            inferred.Add(run);
+                        continue;
+                    }
+                }
+                if(kind=="Tee"&&ends.Length==3&&entry.Port.Length>0)
+                {
+                    var run=(from first in ends from second in ends
+                             where first.Name!=second.Name&&first.Name!=entry.Port&&second.Name!=entry.Port&&
+                             first.Direction.X*second.Direction.X+first.Direction.Y*second.Direction.Y+first.Direction.Z*second.Direction.Z<-.99
+                             select first.Direction).FirstOrDefault();
+                    if(run!=default){explicitHosts.Add(Unit(run));continue;}
+                }
+                foreach(var link in snapshot.Connections)
+                {
+                    if(link.FirstHandle==entry.Handle&&parts.ContainsKey(link.SecondHandle)&&seen.Add(link.SecondHandle))
+                        next.Add((link.SecondHandle,link.SecondPort));
+                    else if(link.SecondHandle==entry.Handle&&parts.ContainsKey(link.FirstHandle)&&seen.Add(link.FirstHandle))
+                        next.Add((link.FirstHandle,link.FirstPort));
+                }
+            }
+            if(explicitHosts.Count>0)return ProjectHost(explicitHosts,out hostFound);
+            frontier=next.ToArray();
+        }
+        if(inferred.Count>0)return ProjectHost(inferred,out hostFound);
+        SheetPoint ProjectHost(List<ModelPoint> candidates,out bool found)
+        {
+            found=false;
+            var first=candidates[0];
+            if(candidates.Any(v=>Math.Abs(v.X*first.X+v.Y*first.Y+v.Z*first.Z)<.99))return fallback;
+            if(first.X<-.001||(Math.Abs(first.X)<.001&&first.Y<0))first=new(-first.X,-first.Y,-first.Z);
+            var projected=IsometricProjection.Project(first,quarterTurns:turns);
+            double length=Math.Sqrt(projected.X*projected.X+projected.Y*projected.Y);
+            found=length>1e-8;
+            return found?new(projected.X/length,projected.Y/length):fallback;
+        }
+        return fallback;
+    }
     static SymbolGlyph Fit(Part part,string block,IsoBlockDefinition definition,SheetPoint from,SheetPoint to,SheetPoint transverse,double symbolScale)
     {
         var port1=definition.Ports.GetValueOrDefault("Port1",new(definition.Minimum.X,0));
@@ -20,14 +86,14 @@ internal static class IsoSymbolPlacement
             double width=Math.Max(.001,definition.Maximum.X-definition.Minimum.X),height=Math.Max(.001,definition.Maximum.Y-definition.Minimum.Y);
             var x=new SheetPoint(tx/len*symbolScale,ty/len*symbolScale);var y=new SheetPoint(transverse.X*symbolScale,transverse.Y*symbolScale);
             var mid=new SheetPoint((from.X+to.X)/2,(from.Y+to.Y)/2);
-            return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition",""),block,new(mid.X-x.X*port1.X-y.X*port1.Y,mid.Y-x.Y*port1.X-y.Y*port1.Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
+            return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.SymbolDefinition,block,new(mid.X-x.X*port1.X-y.X*port1.Y,mid.Y-x.Y*port1.X-y.Y*port1.Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
         }
         dx/=span;dy/=span;
         double widthAcross=definition.Corners.Select(p=>-dy*p.X+dx*p.Y).Max()-definition.Corners.Select(p=>-dy*p.X+dx*p.Y).Min();
         double scale=symbolScale;
         var xa=new SheetPoint(tx*dx/span-transverse.X*scale*dy,ty*dx/span-transverse.Y*scale*dy);
         var ya=new SheetPoint(tx*dy/span+transverse.X*scale*dx,ty*dy/span+transverse.Y*scale*dx);
-        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition",""),block,new(from.X-xa.X*port1.X-ya.X*port1.Y,from.Y-xa.Y*port1.X-ya.Y*port1.Y),xa,ya,LocalBounds:definition.Corners,LocalContours:definition.Contours);
+        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.SymbolDefinition,block,new(from.X-xa.X*port1.X-ya.X*port1.Y,from.Y-xa.Y*port1.X-ya.Y*port1.Y),xa,ya,LocalBounds:definition.Corners,LocalContours:definition.Contours);
     }
     public static SymbolGlyph Corner(Part part,string block,IsoBlockCatalog catalog,SheetPoint a,SheetPoint corner,SheetPoint b)
     {
@@ -56,7 +122,7 @@ internal static class IsoSymbolPlacement
         if(Math.Abs(det)<1e-9)throw new InvalidDataException($"{block}: параметры портов не задают плоскость символа");
         var u=new SheetPoint(target[1].X-target[0].X,target[1].Y-target[0].Y);var v=new SheetPoint(target[2].X-target[0].X,target[2].Y-target[0].Y);
         var x=new SheetPoint((u.X*by-v.X*ay)/det,(u.Y*by-v.Y*ay)/det);var y=new SheetPoint((v.X*ax-u.X*bx)/det,(v.Y*ax-u.Y*bx)/det);
-        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition",""),block,new(target[0].X-x.X*source[0].X-y.X*source[0].Y,target[0].Y-x.Y*source[0].X-y.Y*source[0].Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
+        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.SymbolDefinition,block,new(target[0].X-x.X*source[0].X-y.X*source[0].Y,target[0].Y-x.Y*source[0].X-y.Y*source[0].Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
     }
     public static SymbolGlyph Inline(Part part,string block,IsoBlockCatalog? catalog,SheetPoint a,SheetPoint b,SheetPoint transverse)
     {
@@ -71,11 +137,13 @@ internal static class IsoSymbolPlacement
         var transverse=Transverse(axis,turns);
         double width=Math.Max(.001,definition.Maximum.X-definition.Minimum.X),height=Math.Max(.001,definition.Maximum.Y-definition.Minimum.Y);
         var x=new SheetPoint(along.X/l*catalog!.ScaleFor(part),along.Y/l*catalog.ScaleFor(part));var y=new SheetPoint(transverse.X*catalog.ScaleFor(part),transverse.Y*catalog.ScaleFor(part));
-        if(IsoDefinition.Parse(part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition","")).Skey is "SUPS" or "SUPN"){x=new(-x.X,-x.Y);y=new(-y.X,-y.Y);}
+        if(IsoDefinition.Parse(part.SymbolDefinition).Skey is "SUPS" or "SUPN"){x=new(-x.X,-x.Y);y=new(-y.X,-y.Y);}
+        // Heel plates belong below the elbow attachment, regardless of host axis direction.
+        if(IsoDefinition.Parse(part.SymbolDefinition).Skey=="DUCK"&&y.Y>0)y=new(-y.X,-y.Y);
         if(!definition.Ports.TryGetValue("CenterPoint",out var localAnchor))throw new InvalidDataException($"{part.Handle}: в блоке {block} не прочитан параметр CenterPoint опоры.");
-        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition",""),block,new(anchor.X-x.X*localAnchor.X-y.X*localAnchor.Y,anchor.Y-x.Y*localAnchor.X-y.Y*localAnchor.Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
+        return new(part.Handle,part.Properties.GetValueOrDefault("PnPGuid",""),part.SymbolDefinition,block,new(anchor.X-x.X*localAnchor.X-y.X*localAnchor.Y,anchor.Y-x.Y*localAnchor.X-y.Y*localAnchor.Y),x,y,LocalBounds:definition.Corners,LocalContours:definition.Contours);
     }
-    public static SymbolGlyph Terminal(Part part,string block,IsoBlockCatalog? catalog,SheetPoint port,int turns)
+    public static SymbolGlyph Terminal(Part part,string block,IsoBlockCatalog? catalog,SheetPoint port,int turns,SheetPoint? transverse=null)
     {
         var definition=catalog?.Find(block)??throw new InvalidDataException($"{part.Handle}: не прочитаны параметры блока {block} из IsoSymbolStyles.dwg");
         var modelPort=part.Ports.First(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase));
@@ -89,6 +157,6 @@ internal static class IsoSymbolPlacement
         double across=span>1e-8?definition.Corners.Max(p=>(-dy*p.X+dx*p.Y)/span)-definition.Corners.Min(p=>(-dy*p.X+dx*p.Y)/span):0;
         double thickness=(span>1e-8?span:definition.Maximum.X-definition.Minimum.X)*catalog!.ScaleFor(part);
         var end=new SheetPoint(port.X+projected.X/l*thickness,port.Y+projected.Y/l*thickness);
-        return Fit(part,block,definition,port,end,Transverse(axis,turns),catalog.ScaleFor(part));
+        return Fit(part,block,definition,port,end,transverse??Transverse(axis,turns),catalog.ScaleFor(part));
     }
 }

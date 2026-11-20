@@ -1,8 +1,10 @@
-﻿namespace IsoGenerator.Core;
+namespace IsoGenerator.Core;
 public enum BomCategory { Pipes, Fittings, Supports, Valves, Instruments, Flanges, Gaskets, Fasteners, Miscellaneous }
 public static class BomCategories
 {
-    public const double ItemHeight=14, HeadingHeight=7, TextHeight=3;
+    public static double ItemHeight=>IsoAdvancedSettings.Current.BomRowHeight;
+    public static double HeadingHeight=>IsoAdvancedSettings.Current.BomHeadingHeight;
+    public static double TextHeight=>IsoAdvancedSettings.Current.BomTextHeight;
     public static string Title(BomCategory category)=>category switch
     {
         BomCategory.Pipes=>"Трубы", BomCategory.Fittings=>"Фитинги", BomCategory.Supports=>"Опоры трубопровода",
@@ -11,8 +13,8 @@ public static class BomCategories
     };
     public static BomCategory Classify(Part part)
     {
-        string kind=part.Properties.GetValueOrDefault("PnPClassName","").ToUpperInvariant();
-        string type=IsoDefinition.Parse(part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition","")).Type;
+        string kind=part.CatalogClass.ToUpperInvariant();
+        string type=IsoDefinition.Parse(part.SymbolDefinition).Type;
         string identity=kind+" "+type;
         bool Has(params string[] values)=>values.Any(identity.Contains);
         if(kind=="PIPE"||type=="PIPE"||kind is "PIPEBEND" or "PIPE-BEND" or "BEND"||type=="PIPE-BEND")return BomCategory.Pipes;
@@ -30,9 +32,9 @@ public static class BomCategories
     }
     public static int FittingOrder(Part part)
     {
-        string identity=part.Properties.GetValueOrDefault("PnPClassName","").ToUpperInvariant()+" "+IsoDefinition.Parse(part.Properties.GetValueOrDefault("ContentIsoSymbolDefinition","")).Type;
+        string identity=part.CatalogClass.ToUpperInvariant()+" "+IsoDefinition.Parse(part.SymbolDefinition).Type;
         return identity.Contains("ELBOW")?0:identity.Contains("TEE")?1:identity.Contains("REDUCER")?2:3;
     }
     public static double BodyHeight(IReadOnlyList<BomRow> rows)=>rows.Count*ItemHeight+rows.Select(r=>r.Category).Distinct().Count()*HeadingHeight;
-    public static bool Fits(IReadOnlyList<BomRow> rows)=>BodyHeight(rows)<=330;
+    public static bool Fits(IReadOnlyList<BomRow> rows)=>BodyHeight(rows)<=IsoAdvancedSettings.Current.BomBodyLimit;
 }

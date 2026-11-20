@@ -35,6 +35,21 @@ public sealed class UpdateServiceTests
  {using var client=Client(_=>new((HttpStatusCode)status));var result=await UpdateService.CheckAsync(client,"1.3.34");Assert.False(result.CheckSucceeded);Assert.False(result.UpdateAvailable);Assert.NotEmpty(result.CheckError);Assert.Null(result.LatestVersion);}
  [Fact]public async Task Check_MalformedResponse_IsADiagnosticFailure()
  {using var client=Client(_=>new(HttpStatusCode.OK){Content=new StringContent("<html>Proxy error</html>")});var result=await UpdateService.CheckAsync(client,"1.3.34");Assert.False(result.CheckSucceeded);Assert.NotEmpty(result.CheckError);}
+ [Fact]public async Task Check_ApiLimit_UsesPublicReleaseAndVerifiedChecksum()
+ {
+  using var client=Client(request=>request.RequestUri.Host=="api.github.com"?new(HttpStatusCode.Forbidden):request.RequestUri.AbsolutePath.EndsWith(".sha256")?new(HttpStatusCode.OK){Content=new StringContent(Info().InstallerSha256+"  PipingSpecPlugin-Setup.exe")}:new(HttpStatusCode.OK){RequestMessage=new HttpRequestMessage(HttpMethod.Head,"https://github.com/IvanGelenko/specgen-net/releases/tag/v1.3.36")});
+  var info=await UpdateService.CheckAsync(client,"1.3.34");Assert.True(info.CheckSucceeded);Assert.True(info.UpdateAvailable);Assert.Equal("1.3.36",info.LatestVersion);Assert.Equal(Info().InstallerSha256,info.InstallerSha256);
+ }
+ [Fact]public async Task Check_WebsiteFallback_RequiresChecksumBeforeOfferingInstaller()
+ {
+  using var client=Client(request=>request.RequestUri.AbsolutePath.EndsWith(".sha256")?new(HttpStatusCode.NotFound):request.RequestUri.Host=="api.github.com"?new(HttpStatusCode.Forbidden):new(HttpStatusCode.OK){RequestMessage=new HttpRequestMessage(HttpMethod.Head,"https://github.com/IvanGelenko/specgen-net/releases/tag/v1.3.36")});
+  var info=await UpdateService.CheckAsync(client,"1.3.34");Assert.False(info.CheckSucceeded);Assert.False(info.UpdateAvailable);
+ }
+ [Fact]public async Task Check_WebsiteFallback_RejectsUnrelatedRedirect()
+ {
+  using var client=Client(request=>request.RequestUri.Host=="api.github.com"?new(HttpStatusCode.Forbidden):new(HttpStatusCode.OK){RequestMessage=new HttpRequestMessage(HttpMethod.Head,"https://github.com/login")});
+  var info=await UpdateService.CheckAsync(client,"1.3.34");Assert.False(info.CheckSucceeded);
+ }
  [Fact]public async Task Download_VerifiesHash_ReportsProgress_AndUsesDistinctFiles()
  {
   string root=Root();try{

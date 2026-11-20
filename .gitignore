@@ -26,7 +26,7 @@ specgen-backup-*/
 .agents/
 .claude/
 .codex/
-
+.docs/
 # Local tool settings of other assistants
 .codex/
 

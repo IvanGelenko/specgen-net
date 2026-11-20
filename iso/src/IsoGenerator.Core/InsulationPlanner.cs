@@ -13,12 +13,12 @@ internal static class InsulationPlanner
         {
             SheetPoint At(ModelPoint point)=>projectSource is null?project(point):projectSource(point,part.Handle);
             string kind=part.CatalogClass;
-            if(kind is not ("Pipe" or "Elbow" or "Tee")||(Thickness(part)??inherited)<=0)continue;
+            if(kind is not ("Pipe" or "Elbow" or "PipeBend" or "Tee")||(Thickness(part)??inherited)<=0)continue;
             var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();if(ends.Length<2)continue;
-            var bendGlyph=kind=="Elbow"?symbols.FirstOrDefault(g=>g.SourceId==part.Handle&&g.Variant.Length==0):null;
+            var bendGlyph=kind is "Elbow" or "PipeBend"?symbols.FirstOrDefault(g=>g.SourceId==part.Handle&&g.Variant.Length==0):null;
             var paths=new List<SheetPoint[]>();
             if(kind=="Pipe")paths.Add(new[]{At(ends[0].Position),At(ends[1].Position)});
-            else if(kind=="Elbow")
+            else if(kind is "Elbow" or "PipeBend")
             {
                 // Library ports are not necessarily at +/-0.5. Use the same model
                 // port axes as the schematic, so offsets join the neighbouring pipe.

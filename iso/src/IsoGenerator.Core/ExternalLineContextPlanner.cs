@@ -57,7 +57,7 @@ internal static class ExternalLineContextPlanner
                     double scale=map?.Catalog?.ScaleFor(part)??10;
                     SheetPoint Along(SheetPoint from,ModelPoint vector,double length)
                     {var v=IsometricProjection.Project(vector,quarterTurns:turns);double l=Math.Sqrt(v.X*v.X+v.Y*v.Y);return l<1e-8?from:new(from.X+v.X/l*length,from.Y+v.Y/l*length);}
-                    if(kind=="Elbow"&&ends.Length==2&&Corner(ends[0],ends[1]) is {} corner)
+                    if((kind is "Elbow" or "PipeBend")&&ends.Length==2&&Corner(ends[0],ends[1]) is {} corner)
                     {
                         int i=Array.FindIndex(ends,p=>p.Name==entry.Port);if(i<0)i=0;int j=1-i;
                         double leg=library is null?5:Math.Max(.1,Math.Max(library.Maximum.X-library.Minimum.X,library.Maximum.Y-library.Minimum.Y)*scale/2);

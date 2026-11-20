@@ -1160,6 +1160,10 @@ Assert(LayoutQuality.Footprint(expandedRun)>LayoutQuality.Footprint(footprintSce
     "Use of the free field is measured by pipe geometry and fittings, not by a long leader");
 Assert(PipeDimension.IsVerticalTextAxis(-0.2,100)&&!PipeDimension.ReverseTextAxis(-0.2,100)&&
     PipeDimension.ReverseTextAxis(0.2,-100),"Nearly vertical dimension text reads upward from either endpoint order");
+var bendPart=new Part("test.dwg","bend1","AcPpDb3dPipeInlineAsset","L1",
+    new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(100,100,0),new(0,1,0))},
+    new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=PBBW"}});
+Assert(bendPart.Component==ComponentKind.Elbow,"PipeBend is treated as Elbow for corner layout and symbol placement");
 Console.WriteLine($"Passed {checks} checks.");
 
 

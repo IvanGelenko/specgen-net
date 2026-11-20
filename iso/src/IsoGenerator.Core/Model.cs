@@ -24,7 +24,7 @@ public sealed record Part(string SourceDrawing, string Handle, string Kind, stri
     [JsonIgnore] public ComponentKind Component=>CatalogClass switch
     {
         "Pipe"=>ComponentKind.Pipe,
-        "Elbow"=>ComponentKind.Elbow,
+        "Elbow" or "PipeBend"=>ComponentKind.Elbow,
         "Tee"=>ComponentKind.Tee,
         "Reducer"=>ComponentKind.Reducer,
         "Valve"=>ComponentKind.Valve,

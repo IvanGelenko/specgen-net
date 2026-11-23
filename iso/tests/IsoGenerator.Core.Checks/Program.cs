@@ -1225,6 +1225,16 @@ foreach(var s in strokes2)
     Near(Math.Sqrt(Math.Pow(s.Points[0].X-pA.X,2)+Math.Pow(s.Points[0].Y-pA.Y,2)),3);
     Near(Math.Sqrt(Math.Pow(s.Points[^1].X-pB.X,2)+Math.Pow(s.Points[^1].Y-pB.Y,2)),3);
 }
+var verticalNg=Pipe("ng-pipe",new(0,0,0),new(0,0,1300));
+var elbowNg=new Part("test.dwg","ng-elbow","AcPpDb3dPipeInlineAsset","L1",
+    new[]{new Port("S1",new(0,0,1300),new(0,-.029,-.99958)),
+          new Port("S2",new(0,-73,1377.18),new(0,-.99958,.029))},
+    new Dictionary<string,string>{{"PnPClassName","Elbow"}});
+var ngDimensions=DimensionChainPlanner.Build(Snapshot(new[]{elbowNg,verticalNg},
+    new[]{new Connection("ng-pipe","S2","ng-elbow","S1")}),p=>IsometricProjection.Project(p));
+Assert(ngDimensions.Any(d=>d.Role=="overall"&&d.SourceIds!.Contains("ng-elbow")&&
+    d.SourceIds.Contains("ng-pipe")&&d.Millimeters>1374&&d.Millimeters<1376),
+    "The upper elbow contributes its vertical rise to the overall dimension");
 Console.WriteLine($"Passed {checks} checks.");
 
 

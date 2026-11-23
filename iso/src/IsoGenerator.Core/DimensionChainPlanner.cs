@@ -35,12 +35,20 @@ public static class DimensionChainPlanner
             }
         }
         ModelPoint Direction(PipelineTopology.Edge e)=>Unit(Sub(nodes[e.B].Point,nodes[e.A].Point));
-        foreach(var list in incident.Values)
+        bool IsVerticalPipe(PipelineTopology.Edge edge)=>
+            edge.Kind==ComponentKind.Pipe&&Math.Abs(Direction(edge).Z)>1-1e-10;
+        foreach(var (root,list) in incident)
             for(int i=0;i<list.Count;i++)for(int j=i+1;j<list.Count;j++)
                             {
                 var a=edges[list[i]];var b=edges[list[j]];
                 // Small port/tangent discrepancies near a fitting are modelling tolerance, not a new dimension run.
                 double tolerance=a.Kind is ComponentKind.Elbow or ComponentKind.Tee||b.Kind is ComponentKind.Elbow or ComponentKind.Tee?.5:.1;
+                // A directly attached elbow tangent may be slightly rotated in Plant.
+                // Measure its contribution along the vertical pipe axis.
+                if(IsVerticalPipe(b)&&(a.Kind==ComponentKind.Elbow))(a,b)=(b,a);
+                if(IsVerticalPipe(a)&&b.Kind==ComponentKind.Elbow&&
+                    new[]{b.A,b.B}.Any(index=>graph.Root(index)==root&&nodes[index].Kind==RouteNodeKind.Port))
+                    tolerance=2;
                 if(Math.Abs(Dot(Direction(a),Direction(b)))>Math.Cos(tolerance*Math.PI/180))groups.Join(list[i],list[j]);
             }
         var rootNodes=Enumerable.Range(0,nodes.Count).GroupBy(graph.Root).ToDictionary(g=>g.Key,g=>g.ToArray());
@@ -53,7 +61,7 @@ public static class DimensionChainPlanner
         foreach(var group in Enumerable.Range(0,edges.Count).GroupBy(groups.Find))
         {
             var indices=group.ToArray();if(indices.All(i=>edges[i].Kind==ComponentKind.Elbow))continue;
-            var direction=Direction(edges[indices[0]]);
+            var direction=Direction(edges[indices.FirstOrDefault(i=>IsVerticalPipe(edges[i]),indices[0])]);
             // Canonical ordering keeps dimensions stable when connection enumeration changes.
             if(Math.Abs(direction.X)>1e-6?direction.X<0:Math.Abs(direction.Y)>1e-6?direction.Y<0:direction.Z<0)direction=Mul(direction,-1);
             var roots=indices.SelectMany(i=>new[]{graph.Root(edges[i].A),graph.Root(edges[i].B)}).Distinct().ToArray();

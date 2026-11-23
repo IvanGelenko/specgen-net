@@ -17,7 +17,7 @@ public sealed class GenerateCommand
     public void Generate()=>App.DocumentManager.MdiActiveDocument?.SendStringToExecute("PSISOMETRIC ",true,false,false);
 
     // Version each contract independently so unrelated rebuilds do not discard accepted work.
-    const int LayoutVersion=18;
+    const int LayoutVersion=19;
     const int DrawingVersion=5;
     const int DocumentVersion=3;
     static int busy;

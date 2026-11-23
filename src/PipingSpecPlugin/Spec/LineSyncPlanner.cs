@@ -327,7 +327,13 @@ namespace PipingSpecPlugin.Spec
             foreach (var line in lines)
             {
                 if (string.IsNullOrWhiteSpace(line.Id)) continue;
-                var row = new LineLedgerRow { RowId = line.RowId, Id = line.Id, Tag = line.Tag };
+                var row = new LineLedgerRow
+                {
+                    RowId = line.RowId,
+                    RowIds = new List<int> { line.RowId },
+                    Id = line.Id,
+                    Tag = line.Tag
+                };
                 foreach (var col in KnownLineGroupColumns)
                     row.Values[col] = line.AllProperties.TryGetValue(col, out var v) ? v : "";
                 rows.Add(row);
@@ -337,7 +343,13 @@ namespace PipingSpecPlugin.Spec
                     .Select(group =>
                     {
                         var first = group.First();
-                        var merged = new LineLedgerRow { RowId = first.RowId, Id = first.Id.Trim(), Tag = (first.Tag ?? "").Trim() };
+                        var merged = new LineLedgerRow
+                        {
+                            RowId = first.RowId,
+                            RowIds = group.SelectMany(r => r.AllRowIds).Distinct().ToList(),
+                            Id = first.Id.Trim(),
+                            Tag = (first.Tag ?? "").Trim()
+                        };
                         foreach (var col in KnownLineGroupColumns)
                         {
                             var values = group.Select(r => (r.Values[col] ?? "").Trim()).Distinct(StringComparer.Ordinal).ToList();

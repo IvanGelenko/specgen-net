@@ -6,6 +6,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media;
 using Autodesk.ProcessPower.DataLinks;
 using PipingSpecPlugin.Settings;
 using PipingSpecPlugin.Spec;
@@ -46,11 +47,15 @@ namespace PipingSpecPlugin.UI
             CommandIcons.Decorate(BrowseButton, "BROWSE");
             CommandIcons.Decorate(LoadButton, "LOAD");
             CommandIcons.Decorate(RefreshButton, "REFRESH");
+            CommandIcons.Decorate(ApplySelectedButton, "APPLY");
             CommandIcons.Decorate(ApplyButton, "APPLY");
             CommandIcons.Decorate(CloseButton, "CLOSE");
+            if (SyncSelectedMenuItem != null)
+                SyncSelectedMenuItem.Icon = new Image { Source = CommandIcons.Create("APPLY"), Width = 16, Height = 16 };
             BrowseButton.Width = 100;
             LoadButton.Width = 110;
             RefreshButton.Width = 180;
+            ApplySelectedButton.Width = 195;
             ApplyButton.Width = 205;
             _projectDlm = projectDlm;
             _settings = settings;
@@ -78,6 +83,7 @@ namespace PipingSpecPlugin.UI
                 var lines = LineSyncService.ReadAllLines(_projectDlm, _trace);
                 RenderLedger(lines);
                 ApplyButton.IsEnabled = false;
+                UpdateSelectedState();
                 if (lines.Count == 0)
                 {
                     SummaryText.Text = "Линий в проекте: 0.";
@@ -193,6 +199,7 @@ namespace PipingSpecPlugin.UI
             _plan = LineSyncService.BuildPlan(_vtRows, lines);
             RenderLedger(lines);
             RenderSummaryAndProblems(vtRowCount, lines.Count);
+            UpdateSelectedState();
             if (lines.Count == 0)
             {
                 MessageBox.Show(this,
@@ -253,6 +260,7 @@ namespace PipingSpecPlugin.UI
                 .ToList();
 
             var table = new DataTable();
+            table.Columns.Add("_RowIds", typeof(string));
             table.Columns.Add("ID");
             table.Columns.Add("Тег линии");
             foreach (var col in visibleColumns)
@@ -262,6 +270,7 @@ namespace PipingSpecPlugin.UI
             foreach (var row in ledgerRows)
             {
                 var dr = table.NewRow();
+                dr["_RowIds"] = string.Join(",", row.AllRowIds);
                 dr["ID"] = row.Id ?? "";
                 dr["Тег линии"] = row.Tag ?? "";
                 foreach (var col in visibleColumns)
@@ -273,6 +282,7 @@ namespace PipingSpecPlugin.UI
             LedgerGrid.ItemsSource = table.DefaultView;
             foreach (DataColumn col in table.Columns)
             {
+                if (col.ColumnName.StartsWith("_")) continue;
                 var header = col.ColumnName == "ID" || col.ColumnName == "Тег линии"
                     ? col.ColumnName
                     : (labels.TryGetValue(col.ColumnName, out var ru) ? ru : col.ColumnName);
@@ -448,6 +458,252 @@ namespace PipingSpecPlugin.UI
             {
                 MessageBox.Show(this,
                     $"Синхронизация не завершена. Ошибок: {errors.Count}. Проверьте состояние проекта.\n\n"
+                    + string.Join("\n", errors.Take(20))
+                    + (errors.Count > 20 ? $"\n… и ещё {errors.Count - 20}." : ""),
+                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+
+        DataRowView SelectedRowView => LedgerGrid.SelectedItem as DataRowView;
+
+        List<int> GetSelectedRowIds()
+        {
+            var drv = SelectedRowView;
+            if (drv == null) return new List<int>();
+            if (drv.Row.Table.Columns.Contains("_RowIds"))
+            {
+                var s = drv["_RowIds"] as string;
+                if (!string.IsNullOrEmpty(s))
+                {
+                    return s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                            .Select(part => int.TryParse(part, out var id) ? id : 0)
+                            .Where(id => id != 0)
+                            .ToList();
+                }
+            }
+            return new List<int>();
+        }
+
+        string GetSelectedLineId()
+        {
+            var drv = SelectedRowView;
+            return (drv?["ID"] as string ?? "").Trim();
+        }
+
+        string GetSelectedLineTag()
+        {
+            var drv = SelectedRowView;
+            var tag = drv?["Тег линии"] as string ?? "";
+            return tag.Replace("⚠ дубль ID · ", "").Trim();
+        }
+
+        List<LineSyncAction> GetSelectedActions()
+        {
+            if (_plan == null || _plan.Actions == null || _plan.Actions.Count == 0)
+                return new List<LineSyncAction>();
+
+            var rowIds = GetSelectedRowIds();
+            if (rowIds.Count > 0)
+            {
+                var idSet = new HashSet<int>(rowIds);
+                var actions = _plan.Actions.Where(a => a.Line != null && idSet.Contains(a.Line.RowId)).ToList();
+                if (actions.Count > 0) return actions;
+            }
+
+            var lineId = GetSelectedLineId();
+            if (!string.IsNullOrEmpty(lineId))
+            {
+                return _plan.Actions.Where(a => a.Line != null && string.Equals(a.Line.Id?.Trim(), lineId, StringComparison.OrdinalIgnoreCase)).ToList();
+            }
+
+            return new List<LineSyncAction>();
+        }
+
+        void UpdateSelectedState()
+        {
+            var rowIds = GetSelectedRowIds();
+            var lineId = GetSelectedLineId();
+            var lineTag = GetSelectedLineTag();
+
+            if (rowIds.Count == 0 && string.IsNullOrEmpty(lineId))
+            {
+                ApplySelectedButton.IsEnabled = false;
+                if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
+                return;
+            }
+
+            if (_plan == null)
+            {
+                ApplySelectedButton.IsEnabled = false;
+                if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
+                StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}). Загрузите файл ВТ для поиска изменений.";
+                return;
+            }
+
+            var actions = GetSelectedActions();
+            int changesCount = actions.Sum(a => a.Changes.Count);
+
+            if (changesCount > 0)
+            {
+                ApplySelectedButton.IsEnabled = true;
+                if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = true;
+                StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): полей к изменению: {changesCount}. Нажмите «Применить выделенную».";
+            }
+            else
+            {
+                ApplySelectedButton.IsEnabled = false;
+                if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
+
+                var isUnmatchedLine = _plan.UnmatchedLines.Any(l => rowIds.Contains(l.RowId) || string.Equals(l.Id?.Trim(), lineId, StringComparison.OrdinalIgnoreCase));
+                var isDuplicateVtNN = _plan.DuplicateVtNN.Contains(lineId);
+
+                if (isDuplicateVtNN)
+                {
+                    StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): n/n встречается несколько раз в файле ВТ (пропущена).";
+                }
+                else if (isUnmatchedLine)
+                {
+                    StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): не найдена в файле ВТ (нет строки с n/n = {lineId}).";
+                }
+                else
+                {
+                    StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): все параметры уже соответствуют ВТ (изменений нет).";
+                }
+            }
+        }
+
+        void LedgerGrid_SelectionChanged(object sender, SelectionChangedEventArgs e)
+        {
+            UpdateSelectedState();
+        }
+
+        void LedgerGrid_PreviewMouseRightButtonDown(object sender, MouseButtonEventArgs e)
+        {
+            var dep = e.OriginalSource as DependencyObject;
+            while (dep != null && dep is not DataGridRow)
+            {
+                if (dep is System.Windows.Controls.Primitives.DataGridColumnHeader)
+                    return;
+                dep = VisualTreeHelper.GetParent(dep);
+            }
+            if (dep is DataGridRow row)
+            {
+                LedgerGrid.SelectedItem = row.Item;
+            }
+        }
+
+        void ReselectLine(List<int> rowIds, string lineId)
+        {
+            if (LedgerGrid.ItemsSource is not DataView dataView) return;
+            var targetSet = new HashSet<int>(rowIds ?? Enumerable.Empty<int>());
+            foreach (DataRowView drv in dataView)
+            {
+                if (targetSet.Count > 0 && drv.Row.Table.Columns.Contains("_RowIds"))
+                {
+                    var s = drv["_RowIds"] as string;
+                    if (!string.IsNullOrEmpty(s))
+                    {
+                        var ids = s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
+                                   .Select(p => int.TryParse(p, out var id) ? id : 0)
+                                   .Where(id => id != 0);
+                        if (ids.Any(targetSet.Contains))
+                        {
+                            LedgerGrid.SelectedItem = drv;
+                            LedgerGrid.ScrollIntoView(drv);
+                            return;
+                        }
+                    }
+                }
+                if (!string.IsNullOrEmpty(lineId) && string.Equals((drv["ID"] as string ?? "").Trim(), lineId, StringComparison.OrdinalIgnoreCase))
+                {
+                    LedgerGrid.SelectedItem = drv;
+                    LedgerGrid.ScrollIntoView(drv);
+                    return;
+                }
+            }
+        }
+
+        void ApplySelectedButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_plan == null) return;
+
+            var actions = GetSelectedActions();
+            var changes = actions.SelectMany(a => a.Changes).ToList();
+            if (actions.Count == 0 || changes.Count == 0)
+            {
+                MessageBox.Show(this, "Для выбранной линии нет изменений для применения.",
+                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var lineId = GetSelectedLineId();
+            var lineTag = GetSelectedLineTag();
+            var rowIds = GetSelectedRowIds();
+
+            var changeDetails = string.Join("\n", changes.Select(c => $"• {c.DisplayLabel}: «{c.OldValue}» → «{c.NewValue}»"));
+            if (changeDetails.Length > 800)
+                changeDetails = changeDetails.Substring(0, 800) + "\n…";
+
+            var confirm = MessageBox.Show(this,
+                $"Будет синхронизирована линия «{lineTag}» (ID «{lineId}»).\n\n"
+                + $"Изменяемых полей ({changes.Count}):\n{changeDetails}\n\n"
+                + "Действие нельзя отменить средствами плагина (только вручную в Plant 3D). Продолжить?",
+                "Синхронизация ВТ", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (confirm != MessageBoxResult.Yes) return;
+
+            var singlePlan = new LineSyncPlan
+            {
+                Actions = actions
+            };
+
+            Mouse.OverrideCursor = Cursors.Wait;
+            List<string> errors;
+            try
+            {
+                errors = LineSyncService.Apply(singlePlan, _projectDlm, _trace);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Синхронизация прервана:\n{ex.GetType().Name}: {ex.Message}",
+                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+            finally
+            {
+                Mouse.OverrideCursor = null;
+            }
+
+            if (errors.Count == 0) Applied = true;
+            if (!_settings.LoadFailed)
+                try { _settings.Save(); }
+                catch (Exception ex) { _trace?.Invoke($"Не удалось сохранить настройки: {ex.Message}"); }
+
+            try
+            {
+                RebuildPlanAndRender(_vtRows.Count);
+                ReselectLine(rowIds, lineId);
+            }
+            catch (Exception ex)
+            {
+                _trace?.Invoke($"Не удалось перечитать линии после записи: {ex.GetType().Name}: {ex.Message}");
+                StatusText.Text = "Изменения записаны, но перечитать линии не удалось — нажмите «Обновить ведомость».";
+            }
+
+            if (errors.Count == 0)
+            {
+                MessageBox.Show(this,
+                    $"Готово. Линия «{lineTag}» (ID «{lineId}») успешно синхронизирована.\n"
+                    + $"Изменено полей: {changes.Count}.\n\n"
+                    + "Значения записаны в проектную базу Plant 3D (P3dLineGroup). "
+                    + "Если на деталях этой линии настроено наследование свойств "
+                    + "(правила Property Acquisition), для их обновления может "
+                    + "понадобиться пересохранить/переоткрыть соответствующие чертежи.",
+                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            else
+            {
+                MessageBox.Show(this,
+                    $"Синхронизация линии «{lineTag}» не завершена. Ошибок: {errors.Count}. Проверьте состояние проекта.\n\n"
                     + string.Join("\n", errors.Take(20))
                     + (errors.Count > 20 ? $"\n… и ещё {errors.Count - 20}." : ""),
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);

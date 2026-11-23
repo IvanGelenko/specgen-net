@@ -247,8 +247,8 @@ public static class SheetSetPlanner
         var mandatory=(source.RequiredCuts??Array.Empty<Connection>()).Select(CutPreferences.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
         bool CanCut(Connection c)=>!cutPolicy.Protected.Contains(CutPreferences.Key(c))||mandatory.Contains(CutPreferences.Key(c));
         var all=source.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
-        var runContinuity=new SheetRunContinuity(source);
-        bool HasInteriorGap(IEnumerable<string> handles)=>mandatory.Count==0&&runContinuity.HasInteriorGap(handles);
+        var runContinuity=mandatory.Count==0?new SheetRunContinuity(source,Prepare(source).Topology):null;
+        bool HasInteriorGap(IEnumerable<string> handles)=>runContinuity?.HasInteriorGap(handles)==true;
         var leaves=new List<PipelineSnapshot>();
         PipelineSnapshot Subset(HashSet<string> handles)=>TapDimensionReferences.Apply(source,source with
         {

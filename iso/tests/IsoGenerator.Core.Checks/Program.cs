@@ -25,6 +25,17 @@ void Assert(bool value,string message){checks++;if(!value)throw new Exception(me
 Part Pipe(string h,ModelPoint a,ModelPoint b)=>new("test.dwg",h,"AcPpDb3dPipe","L1",new[]{new Port("S1",a,new(-1,0,0)),new Port("S2",b,new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Pipe"},{"PartSizeLongDesc","Pipe 100"},{"Length","1000"}});
 var first=Pipe("A",new(0,0,0),new(1000,0,0));var second=Pipe("B",new(1000,0,0),new(2000,0,0));
 PipelineSnapshot Snapshot(Part[] parts,Connection[] links)=>new(1,"test.dwg",parts,links,Array.Empty<string>());
+var skewBend=new Part("test.dwg","skew-bend","AcPpDb3dPipeInlineAsset","L1",new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(100,100,3),new(0,1,0))},
+    new Dictionary<string,string>{["PnPClassName"]="PipeBend",["InsulationThickness"]="40"});
+var skewBendSnapshot=Snapshot(new[]{skewBend},Array.Empty<Connection>());
+void RejectSkew(Action plan,string consumer)
+{
+    try{plan();}catch(InvalidDataException ex) when(ex.Message.Contains(skewBend.Handle)){Assert(true,consumer);return;}
+    Assert(false,consumer+" must reject nonintersecting elbow axes and identify the part");
+}
+RejectSkew(()=>PipelineTopology.Build(skewBendSnapshot),"Topology");
+RejectSkew(()=>SheetPlanner.Build(skewBendSnapshot),"Sheet");
+RejectSkew(()=>InsulationPlanner.Add(skewBendSnapshot,p=>new(p.X,p.Y),Array.Empty<SymbolGlyph>(),new List<Stroke>()),"Insulation");
 // Two distinct horizontal runs overlap in view 0 but separate in view 1.
 var viewFixture=Snapshot(new[]{Pipe("view-a",new(0,0,0),new(1000,0,0)),Pipe("view-b",new(100,100,-100),new(1100,100,-100))},Array.Empty<Connection>());
 Assert(AutomaticView.Select(viewFixture)==1,"Automatic view avoids superimposed runs");
@@ -880,9 +891,14 @@ var coupledLoops=LoopFixture(new ModelPoint[]{new(0,0,0),new(1000,0,0),new(1000,
 Assert(new SchematicLayout(coupledLoops).ClosedLoops==2,"Coupled cycles with a shared pipe are solved together");
 var boundaryTall=tallSnapshot with{Connections=tallSnapshot.Connections.Append(new Connection("T00","S1","outside-line","S2")).ToArray()};
 Assert(SheetSetPlanner.Build(boundaryTall).Count==defaultTallSheets.Count,"A boundary object outside the selected line does not break adjacent-sheet context");
-var continuity=new SheetRunContinuity(Snapshot(new[]{
+var continuityParts=new[]{
     Pipe("run-left",new(0,0,0),new(100,0,0)),Pipe("run-middle",new(100,0,0),new(200,0,0)),Pipe("run-right",new(200,0,0),new(300,0,0)),
-    Pipe("parallel",new(0,50,0),new(300,50,0))},Array.Empty<Connection>()));
+    Pipe("parallel",new(0,50,0),new(300,50,0))};
+var continuity=new SheetRunContinuity(Snapshot(continuityParts,new[]{new Connection("run-left","S2","run-middle","S1"),new Connection("run-middle","S2","run-right","S1")}));
+var detachedRun=new SheetRunContinuity(Snapshot(continuityParts,Array.Empty<Connection>()));
+Assert(!detachedRun.HasInteriorGap(new[]{"run-left","run-right"}),"Disconnected collinear pipes do not form a run");
+var familyPipes=continuityParts.Take(2).Select(p=>p with{Properties=new Dictionary<string,string>(p.Properties){["PartSizeLongDesc"]="",["PartFamilyLongDesc"]=p.Handle}}).ToArray();
+Assert(SheetPlanner.Build(Snapshot(familyPipes,new[]{new Connection("run-left","S2","run-middle","S1")})).BillOfMaterials.Count==2,"Different displayed family descriptions get distinct BOM positions");
 Assert(continuity.HasInteriorGap(new[]{"run-left","run-right","parallel"}),"A connected bypass must not hide an omitted middle of a straight run");
 Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle"}),"A sheet boundary at the end of a straight run is allowed");
 Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle","run-right"}),"The complete run has no interior gap");
@@ -1160,10 +1176,55 @@ Assert(LayoutQuality.Footprint(expandedRun)>LayoutQuality.Footprint(footprintSce
     "Use of the free field is measured by pipe geometry and fittings, not by a long leader");
 Assert(PipeDimension.IsVerticalTextAxis(-0.2,100)&&!PipeDimension.ReverseTextAxis(-0.2,100)&&
     PipeDimension.ReverseTextAxis(0.2,-100),"Nearly vertical dimension text reads upward from either endpoint order");
-var bendPart=new Part("test.dwg","bend1","AcPpDb3dPipeInlineAsset","L1",
+var pipeBendPart=new Part("test.dwg","bend1","AcPpDb3dPipeInlineAsset","L1",
     new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(100,100,0),new(0,1,0))},
     new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=PBBW"}});
-Assert(bendPart.Component==ComponentKind.Elbow,"PipeBend is treated as Elbow for corner layout and symbol placement");
+Assert(pipeBendPart.Component==ComponentKind.Elbow,"PipeBend is treated as Elbow for corner layout and symbol placement");
+var returnBend=new Part("test.dwg","bend180","AcPpDb3dPipeInlineAsset","L1",
+    new[]{new Port("S1",new(0,0,0),new(1,0,0)),new Port("S2",new(0,80,0),new(1,0,0))},
+    new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=BUBW"}});
+var returnTop=PipelineTopology.Build(Snapshot(new[]{returnBend},Array.Empty<Connection>()));
+Assert(returnTop.Edges.Count==3&&returnTop.Nodes.Count(n=>n.Kind==RouteNodeKind.Axis)==2,"180-degree return bend creates two corner axis nodes and 3 edges");
+var bendDef=new IsoBlockDefinition("Bend-180return",
+    new Dictionary<string,SheetPoint>{{"Port1",new(-0.75,0)},{"Port3",new(-0.75,0.9375)},{"CenterPoint",new(0,0)}},
+    new SheetPoint(-0.75,0),new SheetPoint(0,0.9375));
+var testCatalog=new IsoBlockCatalog(new[]{bendDef});
+var pA=IsometricProjection.Project(new ModelPoint(0,0,0));
+var pB=IsometricProjection.Project(new ModelPoint(0,80,0));
+var pCorner=IsometricProjection.Project(new ModelPoint(-40,40,0));
+var bendGlyph=IsoSymbolPlacement.Corner(returnBend,"Bend-180return",testCatalog,pA,pCorner,pB);
+Assert(Math.Abs(bendGlyph.XAxis.Y/bendGlyph.XAxis.X-1.0/Math.Sqrt(3))<1e-6,"Bend-180return X axis aligns with the connected pipe in isometric plane (not horizontal)");
+var placedP1=new SheetPoint(bendGlyph.Origin.X+bendGlyph.XAxis.X*(-0.75),bendGlyph.Origin.Y+bendGlyph.XAxis.Y*(-0.75));
+var placedP3=new SheetPoint(bendGlyph.Origin.X+bendGlyph.XAxis.X*(-0.75)+bendGlyph.YAxis.X*0.9375,bendGlyph.Origin.Y+bendGlyph.XAxis.Y*(-0.75)+bendGlyph.YAxis.Y*0.9375);
+var placedApex=new SheetPoint(bendGlyph.Origin.X+bendGlyph.YAxis.X*0.46875,bendGlyph.Origin.Y+bendGlyph.YAxis.Y*0.46875);
+Assert(Math.Abs(placedP1.X-pA.X)<1e-6&&Math.Abs(placedP1.Y-pA.Y)<1e-6,"Bend-180return Port1 connects exactly to pipe A");
+Assert(Math.Abs(placedP3.X-pB.X)<1e-6&&Math.Abs(placedP3.Y-pB.Y)<1e-6,"Bend-180return Port3 connects exactly to pipe B");
+Assert(Math.Abs(placedApex.X-pCorner.X)<1e-6&&Math.Abs(placedApex.Y-pCorner.Y)<1e-6,"Bend-180return apex connects exactly to corner axis");
+var insStrokes=new List<Stroke>();
+var insPart=returnBend with{Properties=new Dictionary<string,string>(returnBend.Properties){["InsulationThickness"]="50"}};
+var insSnap=Snapshot(new[]{insPart},Array.Empty<Connection>());
+InsulationPlanner.Add(insSnap,p=>IsometricProjection.Project(p),new[]{bendGlyph},insStrokes);
+Assert(insStrokes.Count==2,"Insulated return bend has 2 contours");
+foreach(var s in insStrokes)
+{
+    var paActual=s.Points[0];var pbActual=s.Points[^1];
+    Near(Math.Sqrt(Math.Pow(paActual.X-pA.X,2)+Math.Pow(paActual.Y-pA.Y,2)),3);
+    Near(Math.Sqrt(Math.Pow(pbActual.X-pB.X,2)+Math.Pow(pbActual.Y-pB.Y,2)),3);
+}
+var bendDefWithContours=new IsoBlockDefinition("Bend-180return-contours",
+    new Dictionary<string,SheetPoint>{{"Port1",new(-0.75,0)},{"Port3",new(-0.75,0.9375)},{"CenterPoint",new(0,0)}},
+    new SheetPoint(-0.75,0),new SheetPoint(0,0.9375),
+    new[]{new SheetPoint[]{new(-0.75,0),new(-0.375,0.1),new(0,0.46875),new(-0.375,0.8375),new(-0.75,0.9375)}});
+var cat2=new IsoBlockCatalog(new[]{bendDefWithContours});
+var glyph2=IsoSymbolPlacement.Corner(returnBend,"Bend-180return-contours",cat2,pA,pCorner,pB);
+var strokes2=new List<Stroke>();
+InsulationPlanner.Add(insSnap,p=>IsometricProjection.Project(p),new[]{glyph2},strokes2);
+Assert(strokes2.Count==2,"Insulated return bend with block contours has 2 contours");
+foreach(var s in strokes2)
+{
+    Near(Math.Sqrt(Math.Pow(s.Points[0].X-pA.X,2)+Math.Pow(s.Points[0].Y-pA.Y,2)),3);
+    Near(Math.Sqrt(Math.Pow(s.Points[^1].X-pB.X,2)+Math.Pow(s.Points[^1].Y-pB.Y,2)),3);
+}
 Console.WriteLine($"Passed {checks} checks.");
 
 

@@ -14,7 +14,7 @@ internal static class PlantSnapshotReader
 {
     static ModelPoint Point(Autodesk.AutoCAD.Geometry.Point3d p)=>new(p.X,p.Y,p.Z);
     static ModelPoint Vector(Autodesk.AutoCAD.Geometry.Vector3d p)=>new(p.X,p.Y,p.Z);
-    internal static PipelineSnapshot Capture(Database db,string filename,ObjectId seedId,string? selectedLine=null,IReadOnlyCollection<string>? selectedHandles=null,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,CancellationToken cancellationToken=default,Action<int>? report=null)
+    internal static PipelineSnapshot Capture(Database db,string filename,ObjectId seedId,string? selectedLine=null,IReadOnlyCollection<string>? selectedHandles=null,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,CancellationToken cancellationToken=default,Action<int>? report=null,IReadOnlyDictionary<string,string>? drawingLines=null)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if(db.Insunits!=UnitsValue.Millimeters)throw new InvalidOperationException("Поддерживаются чертежи в миллиметрах.");
@@ -30,8 +30,11 @@ internal static class PlantSnapshotReader
             // Only this expected lookup failure means "no properties"; other read failures must stop capture.
             int row;
             try{row=manager.FindAcPpRowId(id);}
-            catch(System.Exception ex) when(ex.Message.Contains("ObjectDoesNotHaveLink",StringComparison.OrdinalIgnoreCase)){return new(StringComparer.OrdinalIgnoreCase);}
-            return row>0?manager.GetAllProperties(row,true).ToDictionary(p=>p.Key,p=>p.Value??"",StringComparer.OrdinalIgnoreCase):new();
+            catch(System.Exception ex) when(ex.Message.Contains("ObjectDoesNotHaveLink",StringComparison.OrdinalIgnoreCase)){row=0;}
+            var values=row>0?manager.GetAllProperties(row,true).ToDictionary(p=>p.Key,p=>p.Value??"",StringComparer.OrdinalIgnoreCase):new(StringComparer.OrdinalIgnoreCase);
+            if(drawingLines?.TryGetValue(id.Handle.ToString(),out var resolved)==true)
+                values["LineNumberTag"]=resolved;
+            return values;
         }
         var seed=seedId.IsNull?new Dictionary<string,string>():Properties(seedId);
         if(selectedLine is null&&seed.Count==0)throw new InvalidOperationException("Выбранный компонент не связан с базой проекта Plant 3D. Выберите трубу из открытого проекта.");
@@ -64,10 +67,17 @@ internal static class PlantSnapshotReader
                 catch(System.Exception ex){warnings.Add($"{id.Handle}: не прочитаны встроенные свойства опоры: {ex.Message}");}
             }
             if(scope is not null)props["LineNumberTag"]=line;
-            if(props.GetValueOrDefault("LineNumberTag")==line){propertyCache[id]=props;queue.Enqueue(id);}
+            if(string.Equals(props.GetValueOrDefault("LineNumberTag")?.Trim(),line,StringComparison.OrdinalIgnoreCase)){propertyCache[id]=props;queue.Enqueue(id);}
         }
         var seen=new HashSet<ObjectId>();var parts=new List<ModelPart>();var accessories=new List<ModelPart>();var links=new Dictionary<string,Connection>();
         using var connections=new ConnectionManager();
+        string LineOf(ObjectId id)
+        {
+            string handle=id.Handle.ToString();
+            if(drawingLines?.TryGetValue(handle,out var resolved)==true)return resolved.Trim();
+            if(scope?.Contains(handle)==true)return line;
+            return (propertyCache.GetValueOrDefault(id)??Properties(id)).GetValueOrDefault("LineNumberTag","").Trim();
+        }
         while(queue.Count>0)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -82,7 +92,28 @@ internal static class PlantSnapshotReader
                 readPorts.Add(new(port.Name,Point(port.Position),Vector(port.Direction),end));
             }
             parts.Add(new(filename,id.Handle.ToString(),id.ObjectClass.Name,line,readPorts,propertyCache.GetValueOrDefault(id)??new(),part is InlineAsset asset?Vector(asset.ZAxis):null));
-            if(part is Connector connector)
+            var attached=connections.GetConnections(id);
+            bool OwnsAccessories()
+            {
+                string owner=LineOf(id);
+                if(owner.Length==0)
+                {
+                    // Unassigned boundary joints have the same owner whichever line is generated first.
+                    var neighborLines=new SortedSet<string>(StringComparer.OrdinalIgnoreCase);
+                    for(int i=0;i<attached.Count;i++)
+                    {
+                        var link=attached[i];
+                        var other=link.ObjectId1==id?link.ObjectId2:link.ObjectId1;
+                        if(other.IsNull||other.Database!=db||other.ObjectClass.Name=="AcPpDb3dConnector")continue;
+                        string neighborLine=LineOf(other);
+                        if(neighborLine.Length>0)neighborLines.Add(neighborLine);
+                    }
+                    owner=neighborLines.Min??"";
+                }
+                if(owner.Length==0)warnings.Add($"{id.Handle}: не удалось определить линию соединения для учёта его деталей.");
+                return owner.Equals(line,StringComparison.OrdinalIgnoreCase);
+            }
+            if(part is Connector connector&&connector.NumSubParts>0&&OwnsAccessories())
             {
                 for(int index=0;index<connector.NumSubParts;index++)
                 {
@@ -106,7 +137,6 @@ internal static class PlantSnapshotReader
                     accessories.Add(new(filename,id.Handle+"#"+index,"ConnectorSubPart",line,Array.Empty<IsoGenerator.Core.Port>(),values));
                 }
             }
-            var attached=connections.GetConnections(id);
             for(int i=0;i<attached.Count;i++)
             {
                 var c=attached[i];
@@ -121,14 +151,57 @@ internal static class PlantSnapshotReader
                 foreach(var other in new[]{c.ObjectId1,c.ObjectId2})if(other.Database==db&&other.ObjectClass.Name=="AcPpDb3dConnector"&&!seen.Contains(other))queue.Enqueue(other);
             }
         }
-        var markers=IsoMarkerReader.Read(model,tr,cancellationToken,warnings).Where(marker=>
-            parts.Any(part=>part.Handle==marker.HostHandle)||
-            (marker.HostHandle.Length==0&&BreakPointPreparation.HostCandidates(parts,marker.Position).Count>0)).ToArray();
+        var own=parts.Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var drawingMarkers=IsoMarkerReader.Read(model,tr,cancellationToken,warnings);
+        var markers=drawingMarkers.Where(marker=>own.Contains(marker.HostHandle)).ToList();
+        var orphans=drawingMarkers.Where(marker=>marker.HostHandle.Length==0).ToArray();
+        if(orphans.Length>0)
+        {
+            var pipes=parts.Where(p=>p.Component==ComponentKind.Pipe).ToList();
+            var capturedPipes=pipes.Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var nativePipeIds=new Dictionary<string,ObjectId>(StringComparer.OrdinalIgnoreCase);
+            var pipeClass=new Dictionary<string,string>{{"PnPClassName","Pipe"}};
+            foreach(ObjectId id in model)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                string handle=id.Handle.ToString();
+                if(id.ObjectClass.Name!="AcPpDb3dPipe"||capturedPipes.Contains(handle))continue;
+                var pipe=(PlantPart)tr.GetObject(id,OpenMode.ForRead);
+                var nativePorts=pipe.GetPorts(PortType.All);
+                var ends=new List<IsoGenerator.Core.Port>();
+                for(int i=0;i<nativePorts.Count;i++)
+                {
+                    var port=nativePorts[i];
+                    if(port.Name is "S1" or "S2")ends.Add(new(port.Name,Point(port.Position),Vector(port.Direction)));
+                }
+                pipes.Add(new(filename,handle,id.ObjectClass.Name,"",ends,pipeClass));
+                nativePipeIds.Add(handle,id);
+            }
+            foreach(var marker in orphans)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var candidates=BreakPointPreparation.HostCandidates(pipes,marker.Position);
+                if(!candidates.Any(pipe=>own.Contains(pipe.Handle)))continue;
+                if(candidates.Count==1)
+                {
+                    markers.Add(marker with{HostHandle=candidates[0].Handle});
+                    warnings.Add($"{marker.Handle}: восстановлена привязка точки разрыва к трубе {candidates[0].Handle} по оси.");
+                }
+                else
+                {
+                    string hosts=string.Join(", ",candidates.Select(pipe=>
+                    {
+                        string pipeLine=nativePipeIds.TryGetValue(pipe.Handle,out var nativeId)?LineOf(nativeId):pipe.Line;
+                        return $"{pipe.Handle} ({(pipeLine.Length==0?"без номера линии":pipeLine)})";
+                    }));
+                    warnings.Add($"{marker.Handle}: точка разрыва пропущена, найдены несколько труб в текущем DWG: {hosts}.");
+                }
+            }
+        }
         if(!markers.Any(marker=>marker.InformationType==BreakPointPreparation.BreakPointInformationType))
             warnings.Add("В текущем DWG не найдены точки разрыва выбранной линии.");
         // Capture only two physical neighbours across a line boundary. They are context,
         // never members of the selected line or its bill of materials.
-        var own=parts.Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var markerHandles=markers.Select(m=>m.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var externalContexts=new List<ExternalLineContext>();
         foreach(var boundary in links.Values)
@@ -145,7 +218,7 @@ internal static class PlantSnapshotReader
                 continue;
             }
             if(tr.GetObject(rootId,OpenMode.ForRead) is not PlantPart)continue;
-            var rootProperties=Properties(rootId);string otherLine=rootProperties.GetValueOrDefault("LineNumberTag","").Trim();
+            string otherLine=LineOf(rootId);
             if(otherLine.Length==0||otherLine.Equals(line,StringComparison.OrdinalIgnoreCase))continue;
             var remoteParts=new List<ModelPart>();var remoteLinks=new List<Connection>();var pending=new Queue<ObjectId>();pending.Enqueue(rootId);
             var visited=new HashSet<ObjectId>();int physicalCount=0;
@@ -156,7 +229,7 @@ internal static class PlantSnapshotReader
                 if(tr.GetObject(id,OpenMode.ForRead) is not PlantPart item)continue;
                 bool joint=id.ObjectClass.Name=="AcPpDb3dConnector";
                 var values=joint?new Dictionary<string,string>():Properties(id);
-                if(!joint&&!values.GetValueOrDefault("LineNumberTag","").Equals(otherLine,StringComparison.OrdinalIgnoreCase))continue;
+                if(!joint&&!values.GetValueOrDefault("LineNumberTag","").Trim().Equals(otherLine,StringComparison.OrdinalIgnoreCase))continue;
                 if(!joint&&(values.GetValueOrDefault("PnPClassName","").Contains("Support",StringComparison.OrdinalIgnoreCase)||values.GetValueOrDefault("PnPClassName","").Contains("Instrument",StringComparison.OrdinalIgnoreCase)))continue;
                 var itemPorts=item.GetPorts(PortType.All);var portValues=new List<IsoGenerator.Core.Port>();
                 for(int k=0;k<itemPorts.Count;k++)

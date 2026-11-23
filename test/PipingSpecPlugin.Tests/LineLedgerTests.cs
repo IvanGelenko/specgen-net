@@ -75,5 +75,97 @@ namespace PipingSpecPlugin.Tests
             Assert.Equal(2, LineSyncService.BuildLedger(new List<LineGroupInfo> { first, second }, true).Count);
             Assert.Empty(LineSyncService.BuildLedger(new List<LineGroupInfo>(), true));
         }
+
+        [Fact]
+        public void BuildLedgerPopulatesRowIdsWhenUncollapsed()
+        {
+            var lines = new List<LineGroupInfo> { Line(101), Line(102) };
+            var ledger = LineSyncService.BuildLedger(lines, false);
+            Assert.Equal(2, ledger.Count);
+            Assert.Equal(new[] { 101 }, ledger[0].AllRowIds);
+            Assert.Equal(new[] { 102 }, ledger[1].AllRowIds);
+        }
+
+        [Fact]
+        public void BuildLedgerAggregatesRowIdsWhenCollapsed()
+        {
+            var lines = new List<LineGroupInfo> { Line(101), Line(102), Line(201, tag: "other") };
+            var ledger = LineSyncService.BuildLedger(lines, true);
+            Assert.Equal(2, ledger.Count);
+            var merged = ledger[0];
+            Assert.Equal(2, merged.RowIds.Count);
+            Assert.Contains(101, merged.RowIds);
+            Assert.Contains(102, merged.RowIds);
+            Assert.Equal(new[] { 201 }, ledger[1].AllRowIds);
+        }
+
+        [Fact]
+        public void LineSyncPlanFilterForLineIsolatesSingleLine()
+        {
+            var lines = new List<LineGroupInfo>
+            {
+                Line(10, tag: "150-LINE-1", pressure: "1.0"),
+                Line(20, tag: "150-LINE-2", pressure: "1.0")
+            };
+            lines[1].Id = "2";
+
+            var vtRows = new List<VtRowData>
+            {
+                new() { NN = "1", WorkPressure = "2.0" },
+                new() { NN = "2", WorkPressure = "3.0" }
+            };
+
+            var plan = LineSyncService.BuildPlan(vtRows, lines);
+            Assert.Equal(2, plan.Actions.Count);
+            Assert.Equal(2, plan.TotalChangedFields());
+
+            var filtered10 = plan.FilterForLine(10);
+            Assert.Single(filtered10.Actions);
+            Assert.Equal(10, filtered10.Actions[0].Line.RowId);
+            Assert.Equal("1", filtered10.Actions[0].Line.Id);
+            Assert.Single(filtered10.Actions[0].Changes);
+            Assert.Equal(1, filtered10.TotalChangedFields());
+
+            var filtered20 = plan.FilterForLine(20);
+            Assert.Single(filtered20.Actions);
+            Assert.Equal(20, filtered20.Actions[0].Line.RowId);
+            Assert.Equal("2", filtered20.Actions[0].Line.Id);
+            Assert.Equal(1, filtered20.TotalChangedFields());
+
+            // Original plan remains unchanged
+            Assert.Equal(2, plan.Actions.Count);
+        }
+
+        [Fact]
+        public void LineSyncPlanFilterForLineHandlesMultipleRowIdsAndEmpty()
+        {
+            var lines = new List<LineGroupInfo>
+            {
+                Line(10, pressure: "1.0"),
+                Line(20, pressure: "1.0"),
+                Line(30, pressure: "1.0")
+            };
+            lines[1].Id = "2";
+            lines[2].Id = "3";
+
+            var vtRows = new List<VtRowData>
+            {
+                new() { NN = "1", WorkPressure = "2.0" },
+                new() { NN = "2", WorkPressure = "2.0" },
+                new() { NN = "3", WorkPressure = "2.0" }
+            };
+
+            var plan = LineSyncService.BuildPlan(vtRows, lines);
+            Assert.Equal(3, plan.Actions.Count);
+
+            var multi = plan.FilterForLine(new[] { 10, 30 });
+            Assert.Equal(2, multi.Actions.Count);
+            Assert.Contains(multi.Actions, a => a.Line.RowId == 10);
+            Assert.Contains(multi.Actions, a => a.Line.RowId == 30);
+
+            var empty = plan.FilterForLine(999);
+            Assert.Empty(empty.Actions);
+            Assert.Equal(0, empty.TotalChangedFields());
+        }
     }
 }

@@ -50,7 +50,17 @@ public sealed class SchematicLayout
                     int index=Array.FindIndex(modelPorts,p=>p.Name==name);
                     var localCenter=definition.Ports.GetValueOrDefault("CenterPoint",default);
                     if(index>=0&&index<ports.Length)
-                    {var port=ports[index];return Math.Sqrt(Math.Pow(port.X-localCenter.X,2)+Math.Pow(port.Y-localCenter.Y,2))*catalog.ScaleFor(part);}
+                    {
+                        var port=ports[index];
+                        double len;
+                        if(ports.Length>=2&&Math.Abs(ports[0].X-ports[^1].X)<=1e-4)
+                        {
+                            double apexX=Math.Abs(definition.Maximum.X-ports[0].X)>=Math.Abs(definition.Minimum.X-ports[0].X)?definition.Maximum.X:definition.Minimum.X;
+                            len=Math.Abs(port.X-apexX);
+                        }
+                        else len=Math.Sqrt(Math.Pow(port.X-localCenter.X,2)+Math.Pow(port.Y-localCenter.Y,2));
+                        return len*catalog.ScaleFor(part);
+                    }
                 }
                 var a=ports.Length>0?ports[0]:new SheetPoint(definition.Minimum.X,0);
                 var b=ports.Length>1?ports[1]:new SheetPoint(definition.Maximum.X,0);

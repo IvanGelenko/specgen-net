@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 
 namespace PipingSpecPlugin.Spec
 {
@@ -63,6 +64,23 @@ namespace PipingSpecPlugin.Spec
             foreach (var a in Actions) n += a.Changes.Count;
             return n;
         }
+
+        /// <summary>
+        /// Creates a plan containing only the actions affecting the specified line row ID(s).
+        /// </summary>
+        public LineSyncPlan FilterForLine(IEnumerable<int> rowIds)
+        {
+            var targetIds = new HashSet<int>(rowIds ?? Enumerable.Empty<int>());
+            return new LineSyncPlan
+            {
+                Actions = Actions.Where(a => a.Line != null && targetIds.Contains(a.Line.RowId)).ToList(),
+                DuplicateIds = DuplicateIds.ToList(),
+                DuplicateVtNN = DuplicateVtNN.ToList(),
+                UnmatchedLines = UnmatchedLines.Where(l => targetIds.Contains(l.RowId)).ToList()
+            };
+        }
+
+        public LineSyncPlan FilterForLine(int rowId) => FilterForLine(new[] { rowId });
     }
 
     /// <summary>
@@ -75,9 +93,12 @@ namespace PipingSpecPlugin.Spec
     public class LineLedgerRow
     {
         public int RowId;
+        public List<int> RowIds = new();
         public string Id;
         public string Tag;
         public System.Collections.Generic.Dictionary<string, string> Values = new(System.StringComparer.OrdinalIgnoreCase);
+
+        public IEnumerable<int> AllRowIds => RowIds != null && RowIds.Count > 0 ? RowIds : new[] { RowId };
     }
 
     /// <summary>

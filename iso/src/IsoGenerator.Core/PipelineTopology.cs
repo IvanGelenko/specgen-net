@@ -23,13 +23,17 @@ internal sealed class PipelineTopology
     static ModelPoint Mul(ModelPoint a,double k)=>new(a.X*k,a.Y*k,a.Z*k);
     static double Dot(ModelPoint a,ModelPoint b)=>a.X*b.X+a.Y*b.Y+a.Z*b.Z;
     static ModelPoint Unit(ModelPoint a)=>Mul(a,1/Math.Sqrt(Dot(a,a)));
-    static ModelPoint? Corner(Port a,Port b)
+    // Parallel axes have no single corner and use the return-bend path.
+    internal static ModelPoint? ElbowCorner(Part part,Port a,Port b)
     {
         var w=Sub(a.Position,b.Position);var u=a.Direction;var v=b.Direction;
         double aa=Dot(u,u),bb=Dot(u,v),cc=Dot(v,v),dd=Dot(u,w),ee=Dot(v,w),den=aa*cc-bb*bb;
-        if(Math.Abs(den)<1e-10)return null;
+        if(!(aa>0&&cc>0&&double.IsFinite(aa*cc)))
+            throw new InvalidDataException($"{part.Handle}: invalid elbow port direction");
+        if(Math.Abs(den)<1e-10*aa*cc)return null;
         var p=Add(a.Position,Mul(u,(bb*ee-cc*dd)/den));var q=Add(b.Position,Mul(v,(aa*ee-bb*dd)/den));
-        return p.DistanceTo(q)<1?Mul(Add(p,q),.5):null;
+        if(p.DistanceTo(q)<1)return Mul(Add(p,q),.5);
+        throw new InvalidDataException($"{part.Handle}: cannot dimension elbow without intersecting port axes");
     }
     public IReadOnlyList<Node> Nodes {get;}
     public IReadOnlyList<Edge> Edges {get;}
@@ -65,14 +69,30 @@ internal sealed class PipelineTopology
             if(ends.Length<2)continue;
             if(kind==ComponentKind.Elbow)
             {
-                var corner=Corner(ends[0],ends[1]);if(corner is null)throw new InvalidDataException($"{p.Handle}: cannot dimension elbow without intersecting port axes");
-                int center=NodeAt(corner.Value,RouteNodeKind.Axis,p.Handle);
-                foreach(var end in ends)EdgeBetween(Id(end),center,p.Handle,kind);
-                // Support ports on an elbow attach to its axis corner in the schematic.
-                // Without this join their isolated graph nodes are packed away from the elbow.
-                foreach(var port in p.Ports.Except(ends))
-                    if(supportPorts.Contains(new(p.Handle,port.Name)))
-                        sets.Join(center,Id(port));
+                var corner=ElbowCorner(p,ends[0],ends[1]);
+                if(corner is null)
+                {
+                    var dir=Unit(ends[0].Direction);
+                    double r=ends[0].Position.DistanceTo(ends[1].Position)/2;
+                    var c0=Sub(ends[0].Position,Mul(dir,r));
+                    var c1=Sub(ends[1].Position,Mul(dir,r));
+                    int n0=NodeAt(c0,RouteNodeKind.Axis,p.Handle);
+                    int n1=NodeAt(c1,RouteNodeKind.Axis,p.Handle);
+                    EdgeBetween(Id(ends[0]),n0,p.Handle,kind);
+                    EdgeBetween(n0,n1,p.Handle,kind);
+                    EdgeBetween(n1,Id(ends[1]),p.Handle,kind);
+                    foreach(var port in p.Ports.Except(ends))
+                        if(supportPorts.Contains(new(p.Handle,port.Name)))
+                            sets.Join(n0,Id(port));
+                }
+                else
+                {
+                    int center=NodeAt(corner.Value,RouteNodeKind.Axis,p.Handle);
+                    foreach(var end in ends)EdgeBetween(Id(end),center,p.Handle,kind);
+                    foreach(var port in p.Ports.Except(ends))
+                        if(supportPorts.Contains(new(p.Handle,port.Name)))
+                            sets.Join(center,Id(port));
+                }
             }
             else if(kind==ComponentKind.Tee&&ends.Length==3)
             {

@@ -22,22 +22,19 @@ public sealed record SheetScene(string Line, IReadOnlyList<Stroke> Strokes, IRea
     IReadOnlyList<PipeDimension> Dimensions, IReadOnlyList<BomRow> BillOfMaterials, IReadOnlyList<string> Warnings, int SourcePartCount, IReadOnlyList<SymbolGlyph>? Symbols = null, string SourceDrawing = "", IReadOnlyDictionary<string,string>? SourceGuids = null, IReadOnlyList<WeldMarker>? Welds = null,int LayoutLevel = 0,IReadOnlyDictionary<string,double>? PipeExtensions = null,int QuarterTurns = 0,bool ExcludeFlangeHardware = false,bool BomOnly = false,IReadOnlyList<string>? FittingSourceIds = null,IReadOnlyDictionary<string,string>? OriginalHandles = null,bool InstrumentCalloutsOnly=false,double PaperMargin=0,int NonGridPipeCount=0,double? GeometryScale=null);
 public static class SheetPlanner
 {
+    static string BomDescription(Part part)
+    {
+        var description=Get(part,"PartSizeLongDesc");
+        return string.IsNullOrWhiteSpace(description)?Get(part,"PartFamilyLongDesc"):description;
+    }
     static string Get(Part p,string name) => p.Properties.TryGetValue(name,out var value)?value:"";
     static Port[] Ends(Part p)=>p.Ports.Where(q=>q.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
     static ModelPoint Sub(ModelPoint a,ModelPoint b)=>new(a.X-b.X,a.Y-b.Y,a.Z-b.Z);
     static ModelPoint Add(ModelPoint a,ModelPoint b)=>new(a.X+b.X,a.Y+b.Y,a.Z+b.Z);
     static ModelPoint Mul(ModelPoint a,double k)=>new(a.X*k,a.Y*k,a.Z*k);
     static double Dot(ModelPoint a,ModelPoint b)=>a.X*b.X+a.Y*b.Y+a.Z*b.Z;
+    static ModelPoint Unit(ModelPoint a){double l=Math.Sqrt(Dot(a,a));return l<1e-9?a:Mul(a,1/l);}
     static ModelPoint Mid(ModelPoint a,ModelPoint b)=>Mul(Add(a,b),.5);
-    static ModelPoint? Corner(Port a,Port b)
-    {
-        var u=a.Direction;var v=b.Direction;var w=Sub(a.Position,b.Position);
-        double aa=Dot(u,u),bb=Dot(u,v),cc=Dot(v,v),dd=Dot(u,w),ee=Dot(v,w),den=aa*cc-bb*bb;
-        if(Math.Abs(den)<1e-9)return null;
-        var p=Add(a.Position,Mul(u,(bb*ee-cc*dd)/den));
-        var q=Add(b.Position,Mul(v,(aa*ee-bb*dd)/den));
-        return p.DistanceTo(q)<1?Mid(p,q):null;
-    }
     public static SheetScene Build(PipelineSnapshot snapshot,int quarterTurns=0, IsoSymbolMap? symbolMap=null, IReadOnlyList<SheetContinuation>? continuations=null, int sheetNumber=1, int sheetCount=1, IReadOnlyList<Stroke>? contextStrokes=null, IReadOnlyList<SymbolGlyph>? contextSymbols=null,int compactLevel=0,IReadOnlyDictionary<string,double>? pipeExtensions=null,bool excludeFlangeHardware=false,bool instrumentCalloutsOnly=false,double paperMargin=0,double? fixedScale=null)
         =>Build(PreparedSheetInput.Create(snapshot),quarterTurns,symbolMap,continuations,sheetNumber,sheetCount,
             contextStrokes,contextSymbols,compactLevel,pipeExtensions,excludeFlangeHardware,instrumentCalloutsOnly,paperMargin,fixedScale);
@@ -61,7 +58,7 @@ public static class SheetPlanner
         if(layout.ClosedLoops>0)warnings.Add($"Совместно замкнуто контуров: {layout.ClosedLoops}; размеры элементов и реальные координаты сохранены.");
         var symbols=new List<SymbolGlyph>();var strokes=new List<Stroke>();var labels=new List<Annotation>();var dimensions=new List<PipeDimension>();
         var rows=new List<BomRow>();var positions=new Dictionary<string,int>();
-        foreach(var group in physical.Concat(snapshot.Accessories??Array.Empty<Part>()).Where(p=>!instrumentCalloutsOnly||BomCategories.Classify(p)!=BomCategory.Instruments).Where(p=>!excludeFlangeHardware||(BomCategories.Classify(p) is not (BomCategory.Gaskets or BomCategory.Fasteners)&&p.Component!=ComponentKind.Flange&&!IsoDefinition.Parse(p.SymbolDefinition).Type.StartsWith("FLANGE",StringComparison.Ordinal))).GroupBy(p=>string.Join("\u001f",p.CatalogClass,Get(p,"PartSizeLongDesc"),Get(p,"DesignStd"),Get(p,"Size"),Get(p,"WallThickness"),Get(p,"Spec"),Get(p,"Material"),BomCategories.Classify(p)==BomCategory.Fasteners?Get(p,"Length"):"",Get(p,"BoltSize"),Get(p,"IsoQuantityUnit"),PartIdentifier.Read(p))).OrderBy(g=>BomCategories.Classify(g.First())).ThenBy(g=>PartDiameter.Read(g.First())??double.MaxValue).ThenBy(g=>BomCategories.FittingOrder(g.First())).ThenBy(g=>g.Key,StringComparer.Ordinal))
+        foreach(var group in physical.Concat(snapshot.Accessories??Array.Empty<Part>()).Where(p=>!instrumentCalloutsOnly||BomCategories.Classify(p)!=BomCategory.Instruments).Where(p=>!excludeFlangeHardware||(BomCategories.Classify(p) is not (BomCategory.Gaskets or BomCategory.Fasteners)&&p.Component!=ComponentKind.Flange&&!IsoDefinition.Parse(p.SymbolDefinition).Type.StartsWith("FLANGE",StringComparison.Ordinal))).GroupBy(p=>string.Join("\u001f",p.CatalogClass,BomDescription(p),Get(p,"DesignStd"),Get(p,"Size"),Get(p,"WallThickness"),Get(p,"Spec"),Get(p,"Material"),BomCategories.Classify(p)==BomCategory.Fasteners?Get(p,"Length"):"",Get(p,"BoltSize"),Get(p,"IsoQuantityUnit"),PartIdentifier.Read(p))).OrderBy(g=>BomCategories.Classify(g.First())).ThenBy(g=>PartDiameter.Read(g.First())??double.MaxValue).ThenBy(g=>BomCategories.FittingOrder(g.First())).ThenBy(g=>g.Key,StringComparer.Ordinal))
         {
             var first=group.First(); bool pipe=first.Component==ComponentKind.Pipe; double qty=0;
             foreach(var p in group)
@@ -71,7 +68,7 @@ public static class SheetPlanner
                 else qty++;
             }
             int position=rows.Count+1;
-            var description=Get(first,"PartSizeLongDesc");if(string.IsNullOrWhiteSpace(description))description=Get(first,"PartFamilyLongDesc");
+            var description=BomDescription(first);
             if(BomCategories.Classify(first)==BomCategory.Fasteners&&Get(first,"Length").Length>0)description+=" (L="+Get(first,"Length")+" мм)";
             rows.Add(new(position,first.CatalogClass,description,Get(first,"DesignStd"),qty,pipe?"м":Get(first,"IsoQuantityUnit").Length>0?Get(first,"IsoQuantityUnit"):"шт.",group.Select(p=>p.Handle).ToArray(),PartIdentifier.Read(first),BomCategories.Classify(first)));
             foreach(var p in group)positions[p.Handle]=position;
@@ -145,25 +142,41 @@ public static class SheetPlanner
             }
             var a=ends[0].Position;var b=ends[1].Position;
             var center=Mid(a,b);
+            SheetPoint c;
             if(kind==ComponentKind.Elbow)
             {
-                var corner=Corner(ends[0],ends[1]);
-                if(corner is null){warnings.Add($"{p.Handle}: elbow axes do not intersect");strokes.Add(new(p.Handle,"unsupported",new[]{Project(a),Project(b)}));}
-                else {center=corner.Value;strokes.Add(new(p.Handle,"elbow",new[]{Project(a),Project(center),Project(b)}));}
+                var corner=PipelineTopology.ElbowCorner(p,ends[0],ends[1]);
+                if(corner is null)
+                {
+                    var dir=Unit(ends[0].Direction);
+                    double r=a.DistanceTo(b)/2;
+                    var c0=Sub(a,Mul(dir,r));
+                    var c1=Sub(b,Mul(dir,r));
+                    var p0=Project(c0);var p1=Project(c1);
+                    center=Mul(Add(c0,c1),.5);
+                    c=new SheetPoint((p0.X+p1.X)/2,(p0.Y+p1.Y)/2);
+                    strokes.Add(new(p.Handle,"elbow",new[]{Project(a),p0,p1,Project(b)}));
+                }
+                else
+                {
+                    center=corner.Value;
+                    c=Project(center);
+                    strokes.Add(new(p.Handle,"elbow",new[]{Project(a),c,Project(b)}));
+                }
             }
             else
             {
+                c=Project(center);
                 strokes.Add(new(p.Handle,kind==ComponentKind.Pipe?"pipe":"component",new[]{Project(a),Project(b)}));
-                foreach(var end in ends.Skip(2))strokes.Add(new(p.Handle,"branch",new[]{Project(center),Project(end.Position)}));
+                foreach(var end in ends.Skip(2))strokes.Add(new(p.Handle,"branch",new[]{c,Project(end.Position)}));
             }
-            var c=Project(center);
             bool librarySymbol=false;
             var iso=IsoDefinition.Parse(p.SymbolDefinition);
             if(symbolMap?.Catalog is {} blockCatalog&&kind!=ComponentKind.Pipe)
             {
                 var block=symbolMap.Resolve(iso.Skey)??throw new InvalidDataException($"{p.Handle}: нет сопоставления ISO {iso.Skey}");
                 var start=Project(a);var finish=Project(b);SymbolGlyph fitted;
-                if(kind==ComponentKind.Elbow)fitted=IsoSymbolPlacement.Corner(p,block,blockCatalog,start,Project(center),finish);
+                if(kind==ComponentKind.Elbow)fitted=IsoSymbolPlacement.Corner(p,block,blockCatalog,start,c,finish);
                 else if(ends.Length>=3)fitted=IsoSymbolPlacement.Junction(p,block,blockCatalog,ends.Select(e=>Project(e.Position)).ToArray());
                 else
                 {
@@ -171,8 +184,12 @@ public static class SheetPlanner
                     if(kind==ComponentKind.Flange&&ends[1].EndCondition=="FL")(start,finish)=(finish,start);
                     fitted=IsoSymbolPlacement.Inline(p,block,blockCatalog,start,finish,transverse);
                 }
-                symbols.Add(fitted);var localCenter=blockCatalog.Find(block)!.Ports.GetValueOrDefault("CenterPoint",default);
-                c=new(fitted.Origin.X+fitted.XAxis.X*localCenter.X+fitted.YAxis.X*localCenter.Y,fitted.Origin.Y+fitted.XAxis.Y*localCenter.X+fitted.YAxis.Y*localCenter.Y);
+                symbols.Add(fitted);
+                if(kind!=ComponentKind.Elbow)
+                {
+                    var localCenter=blockCatalog.Find(block)!.Ports.GetValueOrDefault("CenterPoint",default);
+                    c=new(fitted.Origin.X+fitted.XAxis.X*localCenter.X+fitted.YAxis.X*localCenter.Y,fitted.Origin.Y+fitted.XAxis.Y*localCenter.X+fitted.YAxis.Y*localCenter.Y);
+                }
                 if(kind==ComponentKind.Valve)
                 {
                     var pa=Project(a);var pb=Project(b);double dx=pb.X-pa.X,dy=pb.Y-pa.Y,len=Math.Sqrt(dx*dx+dy*dy);var xaxis=new SheetPoint(dx/len,dy/len);

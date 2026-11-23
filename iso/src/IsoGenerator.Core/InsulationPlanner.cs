@@ -5,6 +5,14 @@ internal static class InsulationPlanner
     static double Offset=>IsoAdvancedSettings.Current.InsulationOffset;
     static double Dot(ModelPoint a,ModelPoint b)=>a.X*b.X+a.Y*b.Y+a.Z*b.Z;
     static double? Thickness(Part part)=>double.TryParse(part.Properties.GetValueOrDefault("InsulationThickness","").Trim().Replace(',','.'),NumberStyles.Float,CultureInfo.InvariantCulture,out double n)&&double.IsFinite(n)?n:null;
+    static double? Radius(Part part)
+    {
+        if(double.TryParse(part.Properties.GetValueOrDefault("CurveRadius","").Trim().Replace(',','.'),NumberStyles.Float,CultureInfo.InvariantCulture,out double r)&&r>0)return r;
+        var desc=part.Properties.GetValueOrDefault("PartSizeLongDesc","");
+        var m=System.Text.RegularExpressions.Regex.Match(desc,@"(?<!\p{L})(?:Р|R|радиус(?:\s+гиба)?)\s*=\s*(\d+(?:[.,]\d+)?)",System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if(m.Success&&double.TryParse(m.Groups[1].Value.Replace(',','.'),NumberStyles.Float,CultureInfo.InvariantCulture,out double rDesc)&&rDesc>0)return rDesc;
+        return null;
+    }
     public static void Add(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,IReadOnlyList<SymbolGlyph> symbols,List<Stroke> strokes,Func<ModelPoint,string,SheetPoint>? projectSource=null)
     {
         double inherited=snapshot.Parts.Select(Thickness).Where(n=>n>0).Select(n=>n!.Value).DefaultIfEmpty(0).Max();
@@ -17,19 +25,76 @@ internal static class InsulationPlanner
             var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();if(ends.Length<2)continue;
             var bendGlyph=kind is "Elbow" or "PipeBend"?symbols.FirstOrDefault(g=>g.SourceId==part.Handle&&g.Variant.Length==0):null;
             var paths=new List<SheetPoint[]>();
+            ModelPoint? elbowCorner=null;
             if(kind=="Pipe")paths.Add(new[]{At(ends[0].Position),At(ends[1].Position)});
             else if(kind is "Elbow" or "PipeBend")
             {
                 // Library ports are not necessarily at +/-0.5. Use the same model
                 // port axes as the schematic, so offsets join the neighbouring pipe.
                 var a=ends[0];var b=ends[1];
-                double wx=a.Position.X-b.Position.X,wy=a.Position.Y-b.Position.Y,wz=a.Position.Z-b.Position.Z;
-                double aa=Dot(a.Direction,a.Direction),bb=Dot(a.Direction,b.Direction),cc=Dot(b.Direction,b.Direction);
-                double dd=a.Direction.X*wx+a.Direction.Y*wy+a.Direction.Z*wz,ee=b.Direction.X*wx+b.Direction.Y*wy+b.Direction.Z*wz,den=aa*cc-bb*bb;
-                if(Math.Abs(den)<1e-10)throw new InvalidDataException($"{part.Handle}: не определён угол отвода для изоляции");
-                double t=(bb*ee-cc*dd)/den;
-                var corner=new ModelPoint(a.Position.X+a.Direction.X*t,a.Position.Y+a.Direction.Y*t,a.Position.Z+a.Direction.Z*t);
-                paths.Add(new[]{At(a.Position),At(corner),At(b.Position)});
+                elbowCorner=PipelineTopology.ElbowCorner(part,a,b);
+                if(elbowCorner is null)
+                {
+                    List<SheetPoint>? chained=null;
+                    if(bendGlyph?.LocalContours is {} contours&&contours.Count>0)
+                    {
+                        SheetPoint AtCurve(SheetPoint p)=>new(bendGlyph.Origin.X+bendGlyph.XAxis.X*p.X+bendGlyph.YAxis.X*p.Y,bendGlyph.Origin.Y+bendGlyph.XAxis.Y*p.X+bendGlyph.YAxis.Y*p.Y);
+                        var pa=At(a.Position);var pb=At(b.Position);
+                        var remaining=contours.Select(c=>c.Select(AtCurve).ToList()).ToList();
+                        var current=pa;
+                        var pathPoints=new List<SheetPoint>{current};
+                        while(remaining.Count>0)
+                        {
+                            int bestIdx=-1;bool reverse=false;double bestDist=double.MaxValue;
+                            for(int k=0;k<remaining.Count;k++)
+                            {
+                                double d0=Math.Sqrt(Math.Pow(remaining[k][0].X-current.X,2)+Math.Pow(remaining[k][0].Y-current.Y,2));
+                                double d1=Math.Sqrt(Math.Pow(remaining[k][^1].X-current.X,2)+Math.Pow(remaining[k][^1].Y-current.Y,2));
+                                if(d0<bestDist){bestDist=d0;bestIdx=k;reverse=false;}
+                                if(d1<bestDist){bestDist=d1;bestIdx=k;reverse=true;}
+                            }
+                            if(bestDist>5.0)break;
+                            var seg=remaining[bestIdx];
+                            remaining.RemoveAt(bestIdx);
+                            if(reverse)seg.Reverse();
+                            pathPoints.AddRange(seg.Skip(1));
+                            current=pathPoints[^1];
+                        }
+                        if(pathPoints.Count>3&&Math.Sqrt(Math.Pow(pathPoints[^1].X-pb.X,2)+Math.Pow(pathPoints[^1].Y-pb.Y,2))<5.0)
+                        {
+                            pathPoints[0]=pa;
+                            pathPoints[^1]=pb;
+                            chained=pathPoints;
+                        }
+                    }
+                    if(chained is not null)
+                    {
+                        paths.Add(chained.ToArray());
+                    }
+                    else
+                    {
+                        double r=a.Position.DistanceTo(b.Position)/2;
+                        double l=Math.Sqrt(Dot(a.Direction,a.Direction));
+                        var dir=l<1e-9?a.Direction:new ModelPoint(a.Direction.X/l,a.Direction.Y/l,a.Direction.Z/l);
+                        var mid=new ModelPoint((a.Position.X+b.Position.X)/2,(a.Position.Y+b.Position.Y)/2,(a.Position.Z+b.Position.Z)/2);
+                        var uTrans=r<1e-9?new ModelPoint(0,1,0):new ModelPoint((b.Position.X-a.Position.X)/(2*r),(b.Position.Y-a.Position.Y)/(2*r),(b.Position.Z-a.Position.Z)/(2*r));
+                        var arc=new List<SheetPoint>();
+                        for(int step=0;step<=16;step++)
+                        {
+                            double phi=Math.PI*step/16.0;
+                            var pt=new ModelPoint(
+                                mid.X-uTrans.X*r*Math.Cos(phi)-dir.X*r*Math.Sin(phi),
+                                mid.Y-uTrans.Y*r*Math.Cos(phi)-dir.Y*r*Math.Sin(phi),
+                                mid.Z-uTrans.Z*r*Math.Cos(phi)-dir.Z*r*Math.Sin(phi));
+                            arc.Add(At(pt));
+                        }
+                        paths.Add(arc.ToArray());
+                    }
+                }
+                else
+                {
+                    paths.Add(new[]{At(a.Position),At(elbowCorner.Value),At(b.Position)});
+                }
             }
             else
             {
@@ -82,6 +147,16 @@ internal static class InsulationPlanner
                         SheetPoint AtCurve(SheetPoint p)=>new(bendGlyph.Origin.X+bendGlyph.XAxis.X*p.X+bendGlyph.YAxis.X*p.Y,bendGlyph.Origin.Y+bendGlyph.XAxis.Y*p.X+bendGlyph.YAxis.Y*p.Y);
                         double Distance(SheetPoint p)=>Math.Sqrt(Math.Pow(p.X-path[1].X,2)+Math.Pow(p.Y-path[1].Y,2));
                         tangent=(Distance(AtCurve(curve[0]))+Distance(AtCurve(curve[^1])))/2;
+                    }
+                    else if(Radius(part) is {} rad&&rad>0&&elbowCorner is not null)
+                    {
+                        double modelTangent=rad*Math.Tan(turn/2);
+                        double modelLeg=(ends[0].Position.DistanceTo(elbowCorner.Value)+ends[1].Position.DistanceTo(elbowCorner.Value))/2;
+                        if(modelLeg>1e-3)
+                        {
+                            double sheetLeg=(il+ol)/2;
+                            tangent=sheetLeg*Math.Clamp(modelTangent/modelLeg,0.05,0.9);
+                        }
                     }
                     // Offset bends need different inner/outer radii. A small inside radius avoids a cusp
                     // when the paper offset exceeds the radius of a tightly drawn elbow.

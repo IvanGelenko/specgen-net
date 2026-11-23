@@ -166,7 +166,7 @@ namespace PipingSpecPlugin.Audit
             return ends;
         }
 
-        static void SetLine(AuditPart item, int rowId, DataLinksManager dlm, string fallback)
+        internal static void SetLine(AuditPart item, int rowId, DataLinksManager dlm, string fallback)
         {
             var related = dlm.GetRelatedRowIds("P3dLineGroupPartRelationship", "Part", rowId, "LineGroup");
             var groups = new List<int>();

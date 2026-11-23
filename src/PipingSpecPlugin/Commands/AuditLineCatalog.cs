@@ -20,14 +20,30 @@ namespace PipingSpecPlugin.Commands
         // «Не проверено» (merge them into the snapshot's ReadIssues).
         public List<AuditIssue> ReadIssues { get; } = new();
 
+        readonly List<(string Line, string Reason)> unresolvedIsometricRows = new();
+
+        public Dictionary<string,string> DrawingLines() => Parts.Values
+            .Where(p => !string.IsNullOrWhiteSpace(p.LineKey))
+            .ToDictionary(p => p.Key, p => p.LineKey, StringComparer.OrdinalIgnoreCase);
+
+        public void EnsureIsometricLinesReadable(IEnumerable<string> selectedLines)
+        {
+            var selected = selectedLines?.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var reasons = unresolvedIsometricRows.Where(r => selected == null || r.Line == null || selected.Contains(r.Line))
+                .Select(r => r.Reason).Distinct().ToList();
+            if (reasons.Count > 0)
+                throw new InvalidOperationException("Невозможно подтвердить полный состав линии Plant 3D.\n" + string.Join("\n", reasons));
+        }
+
         // Same saved-DWG PartReader and handle resolution as SelectByPropertyHelper.
         // The caller makes sure the disk copy is current (DrawingSaveGuard);
         // the audit itself never refreshes the live link database.
-        public static AuditLineCatalog Read(Document document, Action<string> trace)
+        public static AuditLineCatalog Read(Document document, Action<string> trace, bool forIsometric = false)
         {
             if (string.IsNullOrEmpty(document.Name) || !File.Exists(document.Name))
                 throw new InvalidOperationException("Сохраните чертёж перед чтением данных линий.");
             var result = new AuditLineCatalog();
+            var missing = new List<(Handle Handle, int Row, string Line, string Reason)>();
             var primaryRows = new Dictionary<string, int>();
             var hasPrimaryProperties = new HashSet<string>();
             var subParts = new Dictionary<string, List<(int Row, AuditSubPart Part)>>();
@@ -97,7 +113,21 @@ namespace PipingSpecPlugin.Commands
                 }
                 foreach (var (rowId, reason) in read.SkippedRowDetails)
                 {
-                    var keys = PartEntityIndex.EntityHandlesForRow(dlm, rowId, disk).Select(h => h.ToString()).Distinct().ToList();
+                    var handles = PartEntityIndex.EntityHandlesForRow(dlm, rowId, disk).Distinct().ToList();
+                    var keys = handles.Select(h => h.ToString()).ToList();
+                    if (forIsometric)
+                    {
+                        var row = new AuditPart();
+                        try { DrawingAuditReader.SetLine(row, rowId, dlm, null); }
+                        catch (System.Exception ex) { trace?.Invoke($"Строка {rowId}: {ex.Message}"); }
+                        if (handles.Count == 0)
+                            result.unresolvedIsometricRows.Add((row.LineKey, $"Строка {rowId}: не найден элемент чертежа ({reason})."));
+                        foreach (var handle in handles)
+                        {
+                            if (IsIsoSymbol(disk, handle) || hasPrimaryProperties.Contains(handle.ToString())) continue;
+                            missing.Add((handle, rowId, row.LineKey, reason));
+                        }
+                    }
                     trace?.Invoke($"AuditLineCatalog: строка {rowId} не прочитана ({reason}); элементы: {(keys.Count == 0 ? "не найдены" : string.Join(", ", keys))}");
                     // A gasket / bolt row shares its connector's element, which
                     // may still have properties from another row.
@@ -110,9 +140,35 @@ namespace PipingSpecPlugin.Commands
                 }
             }
             finally { HostApplicationServices.WorkingDatabase = previous; }
+            if (missing.Count > 0)
+            {
+                var db = document.Database;
+                var live = DataLinksManager.GetManager(db);
+                using var transaction = db.TransactionManager.StartOpenCloseTransaction();
+                foreach (var entries in missing.GroupBy(e => e.Handle))
+                {
+                    string key = entries.Key.ToString();
+                    result.Parts.Remove(key); // A shared subpart row cannot establish the owner's line.
+                    try
+                    {
+                        var id = db.GetObjectId(false, entries.Key, 0);
+                        if (transaction.GetObject(id, OpenMode.ForRead) is not Autodesk.ProcessPower.PnP3dObjects.Part) continue;
+                        var part = ReadLiveIsometricPart(live, id);
+                        if (part == null || string.IsNullOrWhiteSpace(part.LineKey))
+                            throw new InvalidOperationException("Номер линии не определён.");
+                        result.Parts[key] = part;
+                        trace?.Invoke($"Элемент {key}: восстановлен из открытого DWG, линия {part.LineKey}.");
+                    }
+                    catch (System.Exception ex)
+                    {
+                        foreach (var entry in entries)
+                            result.unresolvedIsometricRows.Add((entry.Line, $"Строка {entry.Row}, элемент {key}: {entry.Reason}. {ex.Message}"));
+                    }
+                }
+            }
             foreach (var pair in subParts)
                 if (result.Parts.TryGetValue(pair.Key, out var owner)) owner.SubParts.AddRange(pair.Value.Select(s => s.Part));
-            if (read.Records.Count > 0 && result.Parts.Count == 0)
+            if (read.Records.Count > 0 && result.Parts.Count == 0 && result.unresolvedIsometricRows.Count == 0)
                 throw new InvalidOperationException("Не удалось сопоставить линии с элементами текущего чертежа.");
             // The count is of drawing elements, as in the audit summary — not of
             // data rows (gaskets and bolt sets have no element of their own).
@@ -120,10 +176,44 @@ namespace PipingSpecPlugin.Commands
             // nothing and is not offered.
             var elements = result.Parts.Values.GroupBy(p => p.LineKey ?? AuditOptions.NoLine, StringComparer.Ordinal)
                 .ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+            foreach (var (line, _) in result.unresolvedIsometricRows)
+                if (line != null) elements.TryAdd(line, 0);
+            var existing = result.Lines.Select(l => l.Key).ToHashSet(StringComparer.Ordinal);
+            foreach (var key in elements.Keys.Where(k => !existing.Contains(k)))
+                result.Lines.Add(new AuditLineChoice { Key = key, Label = key == AuditOptions.NoLine ? AuditOptions.NoLineLabel : key });
             result.Lines.RemoveAll(l => !elements.ContainsKey(l.Key));
             foreach (var line in result.Lines) line.Count = elements[line.Key];
             result.Lines.Sort((a, b) => AuditLineOrder.Compare(a.Key, b.Key));
             return result;
+        }
+
+        public static AuditLineCatalog ReadLiveIsometric(Database db)
+        {
+            var result = new AuditLineCatalog();
+            var dlm = DataLinksManager.GetManager(db);
+            using var tr = db.TransactionManager.StartOpenCloseTransaction();
+            var space = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(db), OpenMode.ForRead);
+            foreach (ObjectId id in space)
+            {
+                if (tr.GetObject(id, OpenMode.ForRead) is not Autodesk.ProcessPower.PnP3dObjects.Part || IsIsoSymbol(db, id.Handle)) continue;
+                var part = ReadLiveIsometricPart(dlm, id);
+                if (part != null) result.Parts.Add(part.Key, part);
+            }
+            return result;
+        }
+
+        static AuditPart ReadLiveIsometricPart(DataLinksManager dlm, ObjectId id)
+        {
+            int rowId;
+            try { rowId = dlm.FindAcPpRowId(id); }
+            catch (System.Exception ex) when (ex.Message.Contains("ObjectDoesNotHaveLink", StringComparison.OrdinalIgnoreCase)) { return null; }
+            if (rowId <= 0) return null;
+            var values = dlm.GetAllProperties(rowId, true);
+            string Get(string key) => values.FirstOrDefault(p => key.Equals(p.Key, StringComparison.OrdinalIgnoreCase)).Value;
+            var part = new AuditPart { Key = id.Handle.ToString(), Diameter = Get("NominalDiameter"),
+                Tag = Get("Tag"), InsulationThickness = Get("InsulationThickness") };
+            DrawingAuditReader.SetLine(part, rowId, dlm, Get("LineNumberTag"));
+            return part;
         }
 
         static bool IsIsoSymbol(Database disk, Handle handle)

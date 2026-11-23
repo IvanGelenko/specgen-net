@@ -24,10 +24,10 @@ public sealed class IsometricCommand
             var piping=(Autodesk.ProcessPower.P3dProjectParts.PipingProject)project.ProjectParts["Piping"];
             string projectIso=Path.Combine(piping.ProjectDirectory,"Isometric");
             foreach(string filename in new[]{"IsoSkeyAcadBlockMap.xml","IsoSymbolStyles.dwg"})if(!File.Exists(Path.Combine(projectIso,filename)))throw new FileNotFoundException("Не найден файл изометрий активного проекта: "+Path.Combine(projectIso,filename));
-            var catalog=AuditLineCatalog.Read(doc,logger.Log);
+            var catalog=AuditLineCatalog.Read(doc,logger.Log,forIsometric:true);
             var choices=catalog.Lines.Where(l=>l.Key!=AuditOptions.NoLine).Select(line=>new IsometricLineChoice(line.Key,
                 LineDesignationParser.Parse(line.Key)?.NominalSize??string.Join(", ",catalog.Parts.Values.Where(p=>p.LineKey==line.Key&&!string.IsNullOrWhiteSpace(p.Diameter)).Select(p=>p.Diameter).Distinct()),line.Count)).ToArray();
-            if(choices.Length==0){System.Windows.Forms.MessageBox.Show("В текущем чертеже не найдены детали с номером линии.","Изометрии");return;}
+            if(choices.Length==0){catalog.EnsureIsometricLinesReadable(null);System.Windows.Forms.MessageBox.Show("В текущем чертеже не найдены детали с номером линии.","Изометрии");return;}
             var settings=PluginSettings.Load();
             string outputFolder=Directory.Exists(settings.LastIsoOutputDirectory)?settings.LastIsoOutputDirectory:Path.Combine(Path.GetDirectoryName(doc.Name)!,"Изометрии");
             string defaultTemplate=Path.Combine(Path.GetDirectoryName(typeof(IsoGenerator.AutoCAD.GenerateCommand).Assembly.Location)!,"iso_template.dwg");
@@ -50,6 +50,7 @@ public sealed class IsometricCommand
                 }
                 return;
             }
+            catalog.EnsureIsometricLinesReadable(selectedLines);
             selections[drawingKey]=selectedLines;
             string selectedTemplate=dialog.TemplatePath;double selectedScale=dialog.SymbolScale;double selectedMinimum=dialog.MinimumPipeLength;
             var documents=dialog.Documents;
@@ -79,7 +80,7 @@ public sealed class IsometricCommand
                     latest.LastIsoOutputDirectory=savedFolder;latest.Save();
                 }
                 catch(System.Exception ex){doc.Editor.WriteMessage("\n[Изометрия] Не удалось запомнить папку: "+ex.Message);}
-            },dialog.QuarterTurns,dialog.ExcludeFlangeHardware,dialog.IgnoreBreakPoints,selectedTemplate,selectedScale,dialog.InstrumentCalloutsOnly,dialog.AutomaticView,documents.Valves,documents.Supports,dialog.TitleDetails.DocumentNumber,dialog.RecalculateLine,selectedMinimum,dialog.AdvancedSettings,report);
+            },dialog.QuarterTurns,dialog.ExcludeFlangeHardware,dialog.IgnoreBreakPoints,selectedTemplate,selectedScale,dialog.InstrumentCalloutsOnly,dialog.AutomaticView,documents.Valves,documents.Supports,dialog.TitleDetails.DocumentNumber,dialog.RecalculateLine,selectedMinimum,dialog.AdvancedSettings,report,drawingLines:catalog.DrawingLines());
         }
         catch(System.Exception ex){logger.Error(ex.ToString());doc.Editor.WriteMessage("\n[Изометрия] "+ex.Message);System.Windows.Forms.MessageBox.Show(ex.Message,"Изометрии");}
     }

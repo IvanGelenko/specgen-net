@@ -100,7 +100,26 @@ internal static class IsoSymbolPlacement
         var definition=catalog.Find(block)??throw new InvalidDataException($"{part.Handle}: отсутствует блок {block}");
         var ports=definition.Ports.Where(p=>p.Key is "Port1" or "Port2" or "Port3").OrderBy(p=>p.Key,StringComparer.Ordinal).Select(p=>p.Value).ToArray();
         if(ports.Length<2)throw new InvalidDataException($"{block}: для углового символа нужны два параметра порта");
-        var p1=ports[0];var p2=ports[^1];var localCorner=new SheetPoint(p2.X,p1.Y);
+        var p1=ports[0];var p2=ports[^1];
+        SheetPoint localCorner;
+        if(Math.Abs(p2.X-p1.X)<=1e-4)
+        {
+            double apexX=Math.Abs(definition.Maximum.X-p1.X)>=Math.Abs(definition.Minimum.X-p1.X)
+                ? definition.Maximum.X
+                : definition.Minimum.X;
+            localCorner=new SheetPoint(apexX,(p1.Y+p2.Y)/2);
+        }
+        else if(Math.Abs(p2.Y-p1.Y)<=1e-4)
+        {
+            double apexY=Math.Abs(definition.Maximum.Y-p1.Y)>=Math.Abs(definition.Minimum.Y-p1.Y)
+                ? definition.Maximum.Y
+                : definition.Minimum.Y;
+            localCorner=new SheetPoint((p1.X+p2.X)/2,apexY);
+        }
+        else
+        {
+            localCorner=new SheetPoint(p2.X,p1.Y);
+        }
         return Three(part,block,definition,new[]{p1,localCorner,p2},new[]{a,corner,b});
     }
     public static SymbolGlyph Junction(Part part,string block,IsoBlockCatalog catalog,IReadOnlyList<SheetPoint> targets)

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using Autodesk.AutoCAD.ApplicationServices;
 using Autodesk.AutoCAD.DatabaseServices;
@@ -105,8 +106,10 @@ namespace Plant3dMcp
             if (!string.Equals(document.Database.Filename, drawing, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The active drawing changed. Check document_info before capturing.");
             using var documentLock = document.LockDocument();
+            var drawingLines = PipingSpecPlugin.Commands.AuditLineCatalog.ReadLiveIsometric(document.Database).DrawingLines();
+            var handles = drawingLines.Where(p => string.Equals(p.Value, line, StringComparison.OrdinalIgnoreCase)).Select(p => p.Key).ToArray();
             var snapshot = IsoGenerator.AutoCAD.PlantSnapshotReader.Capture(
-                document.Database, document.Database.Filename, ObjectId.Null, line);
+                document.Database, document.Database.Filename, ObjectId.Null, line, handles, drawingLines: drawingLines);
             if (snapshot.Parts.Count == 0)
                 throw new InvalidOperationException("The requested line is not present in the active drawing.");
             return snapshot;

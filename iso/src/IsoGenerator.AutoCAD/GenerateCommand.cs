@@ -17,7 +17,7 @@ public sealed class GenerateCommand
     public void Generate()=>App.DocumentManager.MdiActiveDocument?.SendStringToExecute("PSISOMETRIC ",true,false,false);
 
     // Version each contract independently so unrelated rebuilds do not discard accepted work.
-    const int LayoutVersion=17;
+    const int LayoutVersion=18;
     const int DrawingVersion=5;
     const int DocumentVersion=3;
     static int busy;
@@ -48,7 +48,7 @@ public sealed class GenerateCommand
         Action<string>? onCompleted=null,int quarterTurns=0,bool excludeFlangeHardware=false,bool ignoreBreakPoints=false,
         string? templatePath=null,double symbolScale=10,bool instrumentCalloutsOnly=true,bool automaticView=false,
         string valvesDocument="",string supportsDocument="",string stampDocument="",bool recalculateLine=false,
-        double minimumPipeLength=10,IsoAdvancedSettings? advancedSettings=null,IsometricReportDetails? report=null)
+        double minimumPipeLength=10,IsoAdvancedSettings? advancedSettings=null,IsometricReportDetails? report=null,IReadOnlyDictionary<string,string>? drawingLines=null)
     {
         var doc=App.DocumentManager.MdiActiveDocument;if(doc is null)return;
         if(Interlocked.CompareExchange(ref busy,1,0)!=0){System.Windows.Forms.MessageBox.Show("Создание изометрии уже выполняется. Дождитесь завершения или отмените его в окне прогресса.","Изометрии");return;}
@@ -104,7 +104,7 @@ public sealed class GenerateCommand
                 string lineJob=lines.Count==1?job:Path.Combine(job,$"line-{captured.Count+1:00}");
                 Directory.CreateDirectory(lineJob);
                 var snapshot=PlantSnapshotReader.Capture(doc.Database,doc.Name,ObjectId.Null,line,request.Handles,request.PropertyHints,
-                    cancellationToken:token,report:count=>view.Report("Этап 1 из 6 — чтение модели",$"{line} · прочитано объектов: {count}"));
+                    drawingLines:drawingLines,cancellationToken:token,report:count=>view.Report("Этап 1 из 6 — чтение модели",$"{line} · прочитано объектов: {count}"));
                 File.WriteAllText(Path.Combine(lineJob,"snapshot.json"),JsonSerializer.Serialize(snapshot,new JsonSerializerOptions{WriteIndented=true}));
                 File.WriteAllText(Path.Combine(lineJob,"run-settings.json"),JsonSerializer.Serialize(new{line,quarterTurns,automaticView,excludeFlangeHardware,ignoreBreakPoints,instrumentCalloutsOnly,templatePath,symbolScale,minimumPipeLength,advancedSettings,valvesDocument,supportsDocument,stampDocument,startedUtc=DateTimeOffset.UtcNow,sourceDrawing=snapshot.SourceDrawing,sourceObjects=snapshot.Parts.Count},new JsonSerializerOptions{WriteIndented=true}));
                 captured.Add(new(request,snapshot,lineJob));

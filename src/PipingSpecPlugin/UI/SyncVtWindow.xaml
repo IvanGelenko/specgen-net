@@ -40,7 +40,20 @@
                       HorizontalScrollBarVisibility="Auto"
                       VerticalScrollBarVisibility="Auto"
                       FontSize="11" MinRowHeight="22"
-                      ColumnHeaderHeight="220"/>
+                      ColumnHeaderHeight="220"
+                      SelectionUnit="FullRow"
+                      SelectionMode="Single"
+                      SelectionChanged="LedgerGrid_SelectionChanged"
+                      PreviewMouseRightButtonDown="LedgerGrid_PreviewMouseRightButtonDown">
+                <DataGrid.ContextMenu>
+                    <ContextMenu>
+                        <MenuItem x:Name="SyncSelectedMenuItem"
+                                  Header="Синхронизировать выделенную линию"
+                                  Click="ApplySelectedButton_Click"
+                                  IsEnabled="False"/>
+                    </ContextMenu>
+                </DataGrid.ContextMenu>
+            </DataGrid>
         </GroupBox>
 
         <GroupBox Grid.Row="3" Header="Проблемы (не будут записаны)" Padding="6" Margin="0,0,0,10" MaxHeight="160">
@@ -54,10 +67,13 @@
                     Content="Закрыть" Width="100" Height="32" Margin="8,0,0,0"
                     Click="CloseButton_Click"/>
             <Button DockPanel.Dock="Right" x:Name="ApplyButton"
-                    Content="Применить в Plant 3D" Width="180" Height="32"
+                    Content="Применить все в Plant 3D" Width="205" Height="32" Margin="8,0,0,0"
                     Click="ApplyButton_Click" IsEnabled="False"/>
+            <Button DockPanel.Dock="Right" x:Name="ApplySelectedButton"
+                    Content="Применить выделенную" Width="195" Height="32" Margin="8,0,0,0"
+                    Click="ApplySelectedButton_Click" IsEnabled="False"/>
             <Button DockPanel.Dock="Right" x:Name="RefreshButton"
-                    Content="Обновить ведомость" Width="150" Height="32" Margin="0,0,8,0"
+                    Content="Обновить ведомость" Width="180" Height="32" Margin="0,0,8,0"
                     Click="RefreshButton_Click"/>
             <TextBlock x:Name="StatusText" VerticalAlignment="Center"
                        Foreground="Gray" FontStyle="Italic" Text="Выберите файл ВТ и нажмите «Загрузить»."/>

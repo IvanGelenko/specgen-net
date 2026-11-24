@@ -49,38 +49,70 @@ namespace PipingSpecPlugin.Spec
         }
 
         /// <summary>
+        /// Extracts corrosion rate in mm/year as a clean decimal string.
+        /// Handles text with units (e.g. "0,1 мм/год"), footnote asterisks,
+        /// or comma decimal separators. Returns null if missing/non-numeric.
+        /// </summary>
+        public static string ExtractCorrosionRate(string vtCell)
+        {
+            if (string.IsNullOrWhiteSpace(vtCell)) return null;
+            var cleaned = vtCell.Replace(",", ".").Trim();
+            var m = Regex.Match(cleaned, @"\d+(?:\.\d+)?");
+            if (m.Success && double.TryParse(m.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                return d.ToString("0.####", CultureInfo.InvariantCulture);
+            return null;
+        }
+
+        /// <summary>
         /// ВТ's "Срок службы .../отбраковочная толщина стенки, лет/мм"
         /// column is itself a "years/mm" composite cell (e.g. "20/2") —
         /// only the first number (years, srok) is what gets written and
         /// used in the corrosion-allowance calculation below. A cell with
-        /// no '/' is treated as years-only.
+        /// no '/' is treated as years-only. Also handles optional text like "20 лет".
         /// </summary>
         public static string ExtractServiceLifeYears(string vtCell)
         {
             if (string.IsNullOrWhiteSpace(vtCell)) return null;
             var first = vtCell.Replace(",", ".").Trim().Split('/')[0].Trim();
-            return double.TryParse(first, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
-                ? d.ToString("0.####", CultureInfo.InvariantCulture)
-                : null;
+            var m = Regex.Match(first, @"\d+(?:\.\d+)?");
+            if (m.Success && double.TryParse(m.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
+                return d.ToString("0.####", CultureInfo.InvariantCulture);
+            return null;
         }
 
         /// <summary>
         /// Прибавка на коррозию = Скорость коррозии (мм/год) × Срок
-        /// службы (лет). Both inputs are ВТ cell text — corrosionRateCell
-        /// is a plain number, serviceLifeCell may be the "years/mm"
-        /// composite handled by ExtractServiceLifeYears. Returns null if
-        /// either side doesn't parse, so callers never write a bogus 0
-        /// for a missing input.
+        /// службы (лет). Both inputs are cell or property text — corrosionRateCell
+        /// is a rate (may contain units like "мм/год"), serviceLifeCell may be
+        /// the "years/mm" composite or years only. Returns null if either side
+        /// doesn't parse, so callers never write a bogus 0 for a missing input.
         /// </summary>
         public static string ComputeCorrosionAllowance(string corrosionRateCell, string serviceLifeCell)
         {
-            if (!double.TryParse((corrosionRateCell ?? "").Replace(",", ".").Trim(),
-                    NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
+            var rateStr = ExtractCorrosionRate(corrosionRateCell);
+            if (rateStr == null || !double.TryParse(rateStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
                 return null;
-            var years = ExtractServiceLifeYears(serviceLifeCell);
-            if (years == null || !double.TryParse(years, NumberStyles.Float, CultureInfo.InvariantCulture, out var yearsNum))
+            var yearsStr = ExtractServiceLifeYears(serviceLifeCell);
+            if (yearsStr == null || !double.TryParse(yearsStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var yearsNum))
                 return null;
             return (rate * yearsNum).ToString("0.####", CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// Срок службы (лет) = Прибавка на коррозию (мм) / Скорость коррозии (мм/год).
+        /// Used as a dynamic fallback in the ledger grid when srok property has not yet been saved in Plant 3D.
+        /// </summary>
+        public static string ComputeServiceLifeFromCorrosion(string corrosionAllowance, string corrosionRate)
+        {
+            if (string.IsNullOrWhiteSpace(corrosionAllowance) || string.IsNullOrWhiteSpace(corrosionRate))
+                return null;
+            if (!double.TryParse(corrosionAllowance.Replace(",", ".").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var corr) || corr <= 0)
+                return null;
+            var rateStr = ExtractCorrosionRate(corrosionRate);
+            if (rateStr == null || !double.TryParse(rateStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate) || rate <= 0)
+                return null;
+            var years = corr / rate;
+            return years.ToString("0.####", CultureInfo.InvariantCulture);
         }
 
         /// <summary>

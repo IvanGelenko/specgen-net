@@ -259,5 +259,110 @@ namespace PipingSpecPlugin.Tests
             }
             finally { File.Delete(path); }
         }
+
+        [Fact]
+        public void Can_Read_Workbook_Opened_With_FileShare_ReadWrite()
+        {
+            var header1 = new[] { "n/n", "Обозначение" };
+            var path = WriteWorkbook(header1, null, new[] { new[] { "1", "TAG-1" } });
+            try
+            {
+                // Simulate Excel opening the file with FileShare.ReadWrite
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                var row = Assert.Single(result.Rows);
+                Assert.Equal("1", row.NN);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Reads_ServiceLife_From_Pipeline_Service_Life_Header()
+        {
+            var header1 = new[] { "n/n", "Обозначение", "Срок службы\nтрубопровода" };
+            var path = WriteWorkbook(header1, null, new[] { new[] { "1", "TAG-1", "20" } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                var row = Assert.Single(result.Rows);
+                Assert.Equal("1", row.NN);
+                Assert.Equal("20", row.ServiceLife);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Reads_ServiceLife_From_Column_T()
+        {
+            // 20 columns: index 0 is 'A', index 19 is 'T'
+            var headers = new string[20];
+            headers[0] = "n/n";
+            headers[1] = "Обозначение";
+            headers[19] = "Срок службы трубопровода"; // column T
+            var rowValues = new string[20];
+            rowValues[0] = "1";
+            rowValues[1] = "TAG-1";
+            rowValues[19] = "25";
+
+            var path = WriteWorkbook(headers, null, new[] { rowValues });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                var row = Assert.Single(result.Rows);
+                Assert.Equal("1", row.NN);
+                Assert.Equal("25", row.ServiceLife);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Theory]
+        [InlineData("Скорость коррозии")]
+        [InlineData("Скорость коррозии (мм/год)")]
+        [InlineData("Скорость\nкоррозии, мм/год")]
+        public void Reads_CorrosionRate_From_Various_Header_Formats(string header)
+        {
+            var header1 = new[] { "n/n", "Обозначение", header };
+            var path = WriteWorkbook(header1, null, new[] { new[] { "1", "TAG-1", "0.1" } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                var row = Assert.Single(result.Rows);
+                Assert.Equal("1", row.NN);
+                Assert.Equal("0.1", row.CorrosionRate);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Reads_CorrosionRate_From_Column_S()
+        {
+            // 20 columns: index 0 is 'A', index 18 is 'S', index 19 is 'T'
+            var headers = new string[20];
+            headers[0] = "n/n";
+            headers[1] = "Обозначение";
+            headers[18] = "Скорость коррозии, мм/год"; // column S
+            headers[19] = "Срок службы трубопровода";  // column T
+            var rowValues = new string[20];
+            rowValues[0] = "1";
+            rowValues[1] = "TAG-1";
+            rowValues[18] = "0.1";
+            rowValues[19] = "20";
+
+            var path = WriteWorkbook(headers, null, new[] { rowValues });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                var row = Assert.Single(result.Rows);
+                Assert.Equal("1", row.NN);
+                Assert.Equal("0.1", row.CorrosionRate);
+                Assert.Equal("20", row.ServiceLife);
+            }
+            finally { File.Delete(path); }
+        }
     }
 }

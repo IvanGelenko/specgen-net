@@ -19,10 +19,14 @@ internal static class IsoMarkerReader
                 if(dictionary.Contains("PnP3dInfo")&&tr.GetObject(dictionary.GetAt("PnP3dInfo"),OpenMode.ForRead) is Xrecord record)
                 {using var data=record.Data;foreach(var value in data?.AsArray()??Array.Empty<Autodesk.AutoCAD.DatabaseServices.TypedValue>())if(value.TypeCode==90){kind=Convert.ToInt32(value.Value);break;}}
             }
+            // The native start symbol has its own class even without PnP3dInfo.
+            if(id.ObjectClass.Name=="AcPpDb3dIsoStartPointSymbol")kind=5;
             var ports=marker.GetPorts(PortType.All);
             if(ports.Count==0)
             {
-                if(kind==BreakPointPreparation.BreakPointInformationType)
+                if(kind==5)
+                    warnings?.Add($"{id.Handle}: Plant 3D не вернул координаты точки начала.");
+                else if(kind==BreakPointPreparation.BreakPointInformationType)
                     warnings?.Add($"{id.Handle}: Plant 3D не вернул координаты точки разрыва.");
                 continue;
             }
@@ -35,7 +39,7 @@ internal static class IsoMarkerReader
                 var port=first?c.Port2:c.Port1;
                 result.Add(new(id.Handle.ToString(),host.Handle.ToString(),port.Name,new(point.X,point.Y,point.Z),kind,marker is IsoArrowSymbol arrow?new ModelPoint(arrow.Direction.X,arrow.Direction.Y,arrow.Direction.Z):null));
             }
-            if(kind==BreakPointPreparation.BreakPointInformationType&&before==result.Count)
+            if((kind==5||kind==BreakPointPreparation.BreakPointInformationType)&&before==result.Count)
                 result.Add(new(id.Handle.ToString(),"","",new(point.X,point.Y,point.Z),kind));
         }
         return result;

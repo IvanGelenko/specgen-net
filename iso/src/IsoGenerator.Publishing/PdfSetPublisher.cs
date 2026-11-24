@@ -15,7 +15,12 @@ public static class PdfSetPublisher
     public static void MergeReport(string cover,string contents,IReadOnlyList<string> drawings,string output,string title)=>
         Save(drawings,output,title,cover,contents);
 
-    static void Save(IReadOnlyList<string> sheets,string output,string title,string? cover,string? contents)
+    public static void MergeWithRetainedPages(IReadOnlyList<string> drawings,string output,string title,
+        string? cover,string? contents,string previousPdf,IReadOnlySet<int> retainedDrawings)=>
+        Save(drawings,output,title,cover,contents,previousPdf,retainedDrawings);
+
+    static void Save(IReadOnlyList<string> sheets,string output,string title,string? cover,string? contents,
+        string? previousPdf=null,IReadOnlySet<int>? retainedDrawings=null)
     {
         if(sheets.Count==0)throw new InvalidDataException("Нет листов для PDF.");
         if(File.Exists(output))throw new IOException("PDF уже существует: "+output);
@@ -32,8 +37,18 @@ public static class PdfSetPublisher
             if(contentsDocument.PageCount<2)throw new InvalidDataException("Шаблон должен содержать страницы содержания и лист регистрации изменений.");
             for(int i=0;i<contentsDocument.PageCount-1;i++)document.AddPage(contentsDocument.Pages[i]);
         }
-        foreach(var sheet in sheets)
+        int frontPages=document.PageCount;
+        using var previous=previousPdf is null?null:PdfReader.Open(previousPdf,PdfDocumentOpenMode.Import);
+        if(previous is not null&&previous.PageCount!=frontPages+sheets.Count+(contentsDocument is null?0:1))
+            throw new InvalidDataException("����� ������� ������������� PDF ����������. ��������� ������ ���������.");
+        for(int i=0;i<sheets.Count;i++)
         {
+            if(previous is not null&&retainedDrawings?.Contains(i)==true)
+            {
+                document.AddPage(previous.Pages[frontPages+i]);
+                continue;
+            }
+            var sheet=sheets[i];
             using var source=PdfReader.Open(sheet,PdfDocumentOpenMode.Import);
             if(source.PageCount!=1)throw new InvalidDataException("Ожидался один лист в промежуточном PDF: "+sheet);
             document.AddPage(source.Pages[0]);

@@ -30,6 +30,22 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
+        public void Parses_Cyrillic_Designation()
+        {
+            var parts = LineDesignationParser.Parse("150-КСН001-ЛС016С-ГН (Врезка 2)");
+            Assert.NotNull(parts);
+            Assert.Equal("150", parts.NominalSize);
+            Assert.Equal("КСН", parts.EnvironmentCode);
+            Assert.Equal("001", parts.LineNumber);
+            Assert.Equal("ЛС", parts.MaterialCode);
+            Assert.Equal("016", parts.PressureCode);
+            Assert.Equal("С", parts.FlangeCode);
+            Assert.Equal("Г", parts.InsulationCode);
+            Assert.Equal("Н", parts.SputnikCode);
+            Assert.Equal("001", LineDesignationParser.ParseSyncLineNumber("150-КСН001-ЛС016С-ГН"));
+        }
+
+        [Fact]
         public void Parses_Designation_Without_Optional_Flange_Segment()
         {
             var parts = LineDesignationParser.Parse("050-N001-LS016B-NN");

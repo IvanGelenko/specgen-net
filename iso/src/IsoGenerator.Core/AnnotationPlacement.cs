@@ -65,7 +65,7 @@ internal static class AnnotationPlacement
         var dimensionSegments=DimensionRouting.GetSegments(dimensions);
         var occupied=dimensions.Select(DimensionBox).ToList();
         var insulationLines=strokes.Where(s=>s.Role=="insulation").SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>(A:a,B:b))).ToArray();
-        var lines=strokes.Where(s=>s.Role is not ("insulation" or "slope-hatch")).SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>(A:a,B:b))).ToList();
+        var lines=strokes.Where(s=>s.Role is not ("insulation" or "slope-hatch" or "slope-projection-dimension" or "bend-dimension")).SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>(A:a,B:b))).ToList();
         foreach(var d in dimensions)
         {
             var (a,b)=DimensionLine(d);lines.Add((a,b));lines.Add((d.Start,a));lines.Add((d.End,b));
@@ -131,13 +131,13 @@ internal static class AnnotationPlacement
                 (SheetPoint Anchor,SheetPoint Knee,SheetPoint Left,SheetPoint Right,SheetPoint Text,Box Box,double Crowding,int Crossings,int LeaderCrossings,double Score,double Overflow)? bestLeader=null;
                 // Keep text clear, but allow the leader and shelf to cross dimension ink as a fallback.
                 for(int pass=0;pass<2&&!placed&&bestLeader is null;pass++)
-                foreach(var anchorCandidate in new[]{anchor}.Concat(label.NearbyAnchors??Array.Empty<SheetPoint>()).Concat(label.Role=="elevation"?symbols.Where(g=>g.Variant=="missing").SelectMany(SymbolFootprint.Corners).Where(p=>Math.Abs(p.Y-anchor.Y)<.01&&Math.Abs(p.X-anchor.X)<=5.01):Array.Empty<SheetPoint>()))
+                foreach(var anchorCandidate in new[]{anchor}.Concat(label.NearbyAnchors??Array.Empty<SheetPoint>()))
                 {
                     bool compactLeader=remoteLeader&&(label.Role!="valve-tag"||compactValves);
                     double crossingWeight=label.Role=="valve-tag"?IsoAdvancedSettings.Current.ValveLeaderCrossingWeight:IsoAdvancedSettings.Current.LeaderCrossingWeight;
                     foreach(double radius in (compactLeader?new[]{10.0,15,20,24,30,36,42,48,60,72,84,96}:remoteLeader?new[]{24.0,30,36,42,48,60,72,84,96}:new[]{4.0,6,8,10,12,18,24,30,36,42,48}).Append(IsoAdvancedSettings.Current.LeaderTarget).Append(IsoAdvancedSettings.Current.LeaderMaxReach)
                          .Concat(fixedGeometry.HasValue?new[]{4d,6d,8d,12d,18d,22d,27d,33d}:Array.Empty<double>())
-                         .Where(reach=>reach<=IsoAdvancedSettings.Current.LeaderMaxReach).Distinct().Order())
+                         .Where(reach=>reach<=IsoAdvancedSettings.Current.LeaderMaxReach).Distinct().OrderBy(reach=>label.Role=="support-type"&&reach<10).ThenBy(reach=>reach))
                     {
                         foreach(var dir in new[]{(1.0,1.0),(-1.0,1.0),(1.0,-1.0),(-1.0,-1.0),(1.0,.5),(-1.0,.5),(1.0,-.5),(-1.0,-.5),(.5,1.0),(-.5,1.0),(.5,-1.0),(-.5,-1.0),(1.0,0.0),(-1.0,0.0),(0.0,1.0),(0.0,-1.0)}
                             .Concat(fixedGeometry.HasValue?new[]{(.25,1d),(-.25,1d),(.25,-1d),(-.25,-1d)}:Array.Empty<(double,double)>()))
@@ -166,7 +166,10 @@ internal static class AnnotationPlacement
                                     double crowding=lines.Count(l=>Hits(l.A,l.B,neighbourhood))*10+occupied.Count(b=>b.Overlaps(neighbourhood))*15+bodies.Count(b=>b.Overlaps(neighbourhood))*15;
                                     var leg=new DimensionRouting.Segment(anchorCandidate,knee,false);
                                     var shelf=new DimensionRouting.Segment(left,right,false);
-                                    int crossings=lines.Count(l=>DimensionRouting.CheckCross(leg,new(l.A,l.B,false)));
+                                    int crossings=label.Role=="continuation"
+                                        ?dimensionSegments.Count(segment=>DimensionRouting.CheckCross(leg,segment)||
+                                            DimensionRouting.CheckCross(shelf,segment))
+                                        :lines.Count(l=>DimensionRouting.CheckCross(leg,new(l.A,l.B,false)));
                                     int leaderCrossings=leaderPaths.Count(l=>
                                         DimensionRouting.CheckCross(leg,new(l.A,l.B,false))||
                                         DimensionRouting.CheckCross(shelf,new(l.A,l.B,false))||Hits(l.A,l.B,box));
@@ -179,7 +182,9 @@ internal static class AnnotationPlacement
                                         {
                                             double cost=score+crossings*crossingWeight+crowding*.005;
                                             double priorCost=prior.Score+prior.Crossings*crossingWeight+prior.Crowding*.005;
-                                            better=(leaderCrossings,cost).CompareTo((prior.LeaderCrossings,priorCost))<0;
+                                            better=label.Role=="continuation"
+                                                ?(crossings,leaderCrossings,cost).CompareTo((prior.Crossings,prior.LeaderCrossings,priorCost))<0
+                                                :(leaderCrossings,cost).CompareTo((prior.LeaderCrossings,priorCost))<0;
                                         }
                                         else better=(leaderCrossings,crowding,crossings,score)
                                             .CompareTo((prior.LeaderCrossings,prior.Crowding,prior.Crossings,prior.Score))<0;
@@ -212,7 +217,7 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                 if(!placed)throw new SheetCapacityException($"Не помещается выноска {label.Text}; требуется больше места",label.SourceId,conflict:LayoutConflict.Annotation);
                 continue;
             }
-            if(label.Role is not ("position" or "position-group" or "slope-angle" or "bend-angle" or "slope-value" or "slope-projection")){result.Add(label);continue;}
+            if(label.Role is not ("position" or "position-group" or "slope-angle" or "bend-angle" or "operator-angle" or "slope-value" or "slope-projection")){result.Add(label);continue;}
             if(label.Role=="slope-value")
             {
                 var axis=new SheetPoint(Math.Cos(label.Rotation),Math.Sin(label.Rotation));
@@ -224,38 +229,100 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                     var center=new SheetPoint((first.X+second.X)/2,(first.Y+second.Y)/2);
                     var run=strokes.FirstOrDefault(stroke=>stroke.Role=="pipe"&&stroke.SourceId==label.SourceId);
                     double span=run is null?0:Math.Abs((run.Points[^1].X-run.Points[0].X)*axis.X+(run.Points[^1].Y-run.Points[0].Y)*axis.Y);
-                    var alternatives=from offset in new[]{0d,2d,4d,6d,9d,12d,-12d,-14d,-16d,-18d}
-                                     from slide in new[]{0d,-.16,.16,-.28,.28}
-                                     orderby offset<0, Math.Abs(offset)+Math.Abs(slide)*span*.35
+                    double Along(SheetPoint p)=>p.X*axis.X+p.Y*axis.Y;
+                    double Across(SheetPoint p)=>p.X*normal.X+p.Y*normal.Y;
+                    var baselines=dimensionSegments.Where(segment=>segment.Baseline)
+                        .Where(segment=>run is not null&&Math.Abs(Across(segment.B)-Across(segment.A))<=
+                            .05*Math.Abs(Along(segment.B)-Along(segment.A)))
+                        .Where(segment=>run is not null&&Math.Min(Along(segment.A),Along(segment.B))<Math.Max(Along(run.Points[0]),Along(run.Points[^1]))&&
+                            Math.Max(Along(segment.A),Along(segment.B))>Math.Min(Along(run.Points[0]),Along(run.Points[^1])))
+                        .ToArray();
+                    double AtStation(SheetPoint a,SheetPoint b,double station)=>
+                        Across(a)+(Across(b)-Across(a))*(station-Along(a))/(Along(b)-Along(a));
+                    var alternatives=from offset in Enumerable.Range(-48,97).Select(i=>i*.5)
+                                     from slide in new[]{0d,-.16,.16,-.28,.28,-.4,.4}
+                                     orderby Math.Abs(offset)+Math.Abs(slide)*span*.35
                                      select new SheetPoint(label.Position.X+normal.X*offset+axis.X*slide*span,
                                                            label.Position.Y+normal.Y*offset+axis.Y*slide*span);
-                    bool chosenAlongRun=false;
-                    foreach(var point in alternatives)
+                    double textHeight=IsoAdvancedSettings.Current.LeaderTextHeight;
+                    double halfWidth=Math.Max(TextLength(label.Text)*2.1*textHeight/3.5,Math.Abs(Along(indicator.Points[1])-Along(indicator.Points[0]))/2);
+                    bool AbovePipeBelowDimension(SheetPoint point)
                     {
-                        var textBox=TextBox(point,label.Text,rotation:label.Rotation);
+                        if(run is null||span<.01)return false;
+                        double station=Along(point);
+                        double low=Across(point)+Math.Min(-.6,indicator.Points.Min(p=>Across(p)-Across(center))-2.8);
+                        double high=Across(point)+Math.Max(textHeight,indicator.Points.Max(p=>Across(p)-Across(center))-2.8);
+                        double left=station-halfWidth,right=station+halfWidth;
+                        var ends=run.Points;
+                        if(left<Math.Min(Along(ends[0]),Along(ends[^1]))||right>Math.Max(Along(ends[0]),Along(ends[^1])))return false;
+                        if(new[]{left,right}.Any(t=>low<AtStation(ends[0],ends[^1],t)+.3))return false;
+                        foreach(var line in baselines)
+                        {
+                            double from=Math.Max(left,Math.Min(Along(line.A),Along(line.B)));
+                            double to=Math.Min(right,Math.Max(Along(line.A),Along(line.B)));
+                            if(from>=to)continue;
+                            double t=(from+to)/2;
+                            if(AtStation(line.A,line.B,t)<=AtStation(ends[0],ends[^1],t)+.3)continue;
+                            if(high>Math.Min(AtStation(line.A,line.B,from),AtStation(line.A,line.B,to))-.3)return false;
+                        }
+                        return true;
+                    }
+                    bool chosenAlongRun=false;
+                    foreach(var point in alternatives.Where(AbovePipeBelowDimension))
+                    {
+                        double halfText=TextLength(label.Text)*1.05*textHeight/3.5+.4;
+                        var localText=new Box(-halfText,-.6,halfText,textHeight);
+                        SheetPoint ToLocal(SheetPoint p)=>new(Along(p)-Along(point),Across(p)-Across(point));
+                        SheetPoint FromLocal(double x,double y)=>new(point.X+axis.X*x+normal.X*y,point.Y+axis.Y*x+normal.Y*y);
                         double moveX=point.X-normal.X*2.8-center.X,moveY=point.Y-normal.Y*2.8-center.Y;
-                        var bounds=new Box(Math.Min(textBox.Left,indicator.Points.Min(p=>p.X)+moveX),
-                            Math.Min(textBox.Bottom,indicator.Points.Min(p=>p.Y)+moveY),
-                            Math.Max(textBox.Right,indicator.Points.Max(p=>p.X)+moveX),
-                            Math.Max(textBox.Top,indicator.Points.Max(p=>p.Y)+moveY));
+                        var moved=indicator.Points.Select(p=>new SheetPoint(p.X+moveX,p.Y+moveY)).ToArray();
+                        var ink=moved.Concat(from x in new[]{localText.Left,localText.Right}
+                            from y in new[]{localText.Bottom,localText.Top} select FromLocal(x,y)).ToArray();
+                        var bounds=new Box(ink.Min(p=>p.X),ink.Min(p=>p.Y),ink.Max(p=>p.X),ink.Max(p=>p.Y));
+                        bool HitsDimensionText(PipeDimension dimension)
+                        {
+                            var location=ToLocal(dimension.TextPosition!.Value);
+                            double dx=Along(dimension.End)-Along(dimension.Start),dy=Across(dimension.End)-Across(dimension.Start);
+                            double length=Math.Sqrt(dx*dx+dy*dy);
+                            if(length<1e-8)return false;
+                            double ratio=IsoAdvancedSettings.Current.DimensionTextHeight/3.5;
+                            double width=(dimension.Label.Length*1.05+.3)*ratio,height=1.8*ratio;
+                            double x=(Math.Abs(dx)*width+Math.Abs(dy)*height)/length;
+                            double y=(Math.Abs(dy)*width+Math.Abs(dx)*height)/length;
+                            var inkBox=new Box(location.X-x,location.Y-y,location.X+x,location.Y+y);
+                            return inkBox.Overlaps(localText)||moved.Zip(moved.Skip(1),(p,q)=>Hits(ToLocal(p),ToLocal(q),inkBox)).Any(hit=>hit);
+                        }
                         if(bounds.Left<20||bounds.Right>570||bounds.Bottom<20||bounds.Top>390||
-                           occupied.Any(box=>box.Overlaps(bounds))||bodies.Any(box=>box.Overlaps(bounds))||
-                           lines.Any(line=>Hits(line.A,line.B,textBox))||
-                           insulationLines.Any(line=>Hits(line.A,line.B,bounds)))continue;
+                           occupied.Skip(dimensions.Count).Any(box=>box.Overlaps(bounds))||bodies.Any(box=>box.Overlaps(bounds))||
+                           dimensions.Any(HitsDimensionText)||
+                           lines.Any(line=>Hits(ToLocal(line.A),ToLocal(line.B),localText))||
+                           insulationLines.Any(line=>Hits(ToLocal(line.A),ToLocal(line.B),localText)||
+                              moved.Zip(moved.Skip(1),(a,b)=>new DimensionRouting.Segment(a,b,false))
+                                  .Any(segment=>DimensionRouting.CheckCross(segment,new(line.A,line.B,false)))))continue;
                         Occupy(bounds);
                         result.Add(label with{Position=point});
                         chosenAlongRun=true;
                         break;
                     }
                     if(chosenAlongRun)continue;
+                    throw new SheetCapacityException($"Нет места для знака уклона над трубой {label.SourceId}.",
+                        label.SourceId,conflict:LayoutConflict.Annotation);
                 }
             }
-            var origin=new SheetPoint(label.Position.X-2,label.Position.Y-3);
+            var origin=label.Role=="position"&&label.Anchor is {} attachment?attachment:new SheetPoint(label.Position.X-2,label.Position.Y-3);
             var anchors=new[]{origin}.Concat(label.NearbyAnchors??Array.Empty<SheetPoint>()).ToArray();
             var candidates=new List<(SheetPoint Point,SheetPoint Anchor,double Score)>();
+            if(label.Role is ("slope-angle" or "bend-angle")&&label.Anchor is {} angleAnchor)
+            {
+                double halfText=TextLength(label.Text)*1.05*IsoAdvancedSettings.Current.LeaderTextHeight/3.5;
+                foreach(double lift in new[]{2d,3d,4.5,6,8,12,16,22})
+                foreach(double slide in new[]{0d,-2,2,-4,4,-6,6})
+                    candidates.Add((new(angleAnchor.X-halfText+slide,angleAnchor.Y+lift),angleAnchor,lift+Math.Abs(slide)));
+            }
             var positionDirs = label.Role is "position" or "position-group"?new[]{(1.0,1.0),(-1.0,1.0),(1.0,-1.0),(-1.0,-1.0),(1.0,0.0),(-1.0,0.0),(0.0,1.0),(0.0,-1.0),(1.0,.5),(-1.0,.5),(1.0,-.5),(-1.0,-.5),(.5,1.0),(-.5,1.0),(.5,-1.0),(-.5,-1.0)}:new[]{(1.0,1.0),(-1.0,1.0),(1.0,-1.0),(-1.0,-1.0),(1.0,0.0),(-1.0,0.0),(0.0,1.0),(0.0,-1.0)};
+            if(label.Role is not ("slope-angle" or "bend-angle")||label.Anchor is null)
             foreach(var near in anchors)
-            foreach(double radius in label.Role is "slope-angle" or "bend-angle"?new[]{4.0,6,8,10,14,18,24,30,36,42,48}:label.Role=="slope-value"?new[]{4.0,6,8,10,14,18,24,30}:label.Role=="position-group"?new[]{2.5,3.5,4.5,6,8,10,12,14,18,22,26,30,35,40}:new[]{2.5,3.5,4.5,6,8,10,12,14})
+            foreach(double radius in label.Role is "slope-angle" or "bend-angle"?new[]{4.0,6,8,10,14,18,24,30,36,42,48}:label.Role=="slope-value"?new[]{4.0,6,8,10,14,18,24,30}:label.Role=="position-group"?new[]{2.5,3.5,4.5,6,8,10,12,14,18,22,26,30,35,40}:new[]{1.5,2,2.5,3,3.5,4.5,6,8,10,12,14})
                 foreach(var dir in positionDirs)
                 {
                     double dlen=Math.Sqrt(dir.Item1*dir.Item1+dir.Item2*dir.Item2);
@@ -280,7 +347,7 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
             {
                 // Dense fittings can trap a position number inside the neighboring dimension chains.
                 // A short leader preserves the association and gives the text a second chance.
-                foreach(double radius in new[]{18d,22d,26d,30d})
+                foreach(double radius in new[]{10d,12d,14d,16d,18d,22d,26d,30d})
                 {
                     if(chosen is not null)break;
                     foreach(var dir in positionDirs)
@@ -302,7 +369,7 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                 }
             }
             if(chosen is null)throw new SheetCapacityException($"No readable annotation position for {label.SourceId} ({label.Role}: {label.Text}); sheet needs more space",label.SourceId,conflict:LayoutConflict.Annotation);
-            result.Add(label with{Position=chosen.Value,Anchor=chosenAnchor});
+            result.Add(label with{Position=chosen.Value,Anchor=label.Role=="slope-projection"?label.Anchor:chosenAnchor});
         }
         return result;
     }

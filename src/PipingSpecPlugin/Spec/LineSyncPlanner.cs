@@ -227,28 +227,26 @@ namespace PipingSpecPlugin.Spec
                     }
 
                     // Срок службы (srok) -> years extracted from ВТ's
-                    // "лет/мм" composite cell, then Прибавка на коррозию
-                    // (Corrosion) = CorrosionSpeed × srok. Uses the
-                    // CorrosionSpeed value ВТ is providing THIS run
-                    // (vt.CorrosionRate), not whatever's already on the
-                    // line — the two numbers must come from the same
-                    // source or the product is meaningless. Skipped
-                    // entirely if either input is missing/unparsable
-                    // rather than writing a bogus 0.
+                    // cell (e.g. "20", "20/2", "20 лет").
                     var srokYears = VtValueParsing.ExtractServiceLifeYears(vt.ServiceLife);
                     if (srokYears != null)
                     {
                         var oldSrok = CurrentOf("srok") ?? "";
                         if (!SameFieldValue("srok", srokYears, oldSrok))
                             action.Changes.Add(new FieldChange { PropertyName = "srok", DisplayLabel = "Срок службы, лет", OldValue = oldSrok, NewValue = srokYears });
+                    }
 
-                        var corrosion = VtValueParsing.ComputeCorrosionAllowance(vt.CorrosionRate, vt.ServiceLife);
-                        if (corrosion != null)
-                        {
-                            var oldCorrosion = CurrentOf("Corrosion") ?? "";
-                            if (!SameFieldValue("Corrosion", corrosion, oldCorrosion))
-                                action.Changes.Add(new FieldChange { PropertyName = "Corrosion", DisplayLabel = "Прибавка на коррозию (расч.)", OldValue = oldCorrosion, NewValue = corrosion });
-                        }
+                    // Прибавка на коррозию (Corrosion) = Скорость коррозии × Срок службы.
+                    // Uses values provided in ВТ this run, falling back to the line's existing
+                    // Plant 3D property if only one of the inputs was specified/updated.
+                    var effectiveRate = !string.IsNullOrWhiteSpace(vt.CorrosionRate) ? vt.CorrosionRate : CurrentOf("CorrosionSpeed");
+                    var effectiveLife = !string.IsNullOrWhiteSpace(vt.ServiceLife) ? vt.ServiceLife : CurrentOf("srok");
+                    var corrosion = VtValueParsing.ComputeCorrosionAllowance(effectiveRate, effectiveLife);
+                    if (corrosion != null)
+                    {
+                        var oldCorrosion = CurrentOf("Corrosion") ?? "";
+                        if (!SameFieldValue("Corrosion", corrosion, oldCorrosion))
+                            action.Changes.Add(new FieldChange { PropertyName = "Corrosion", DisplayLabel = "Прибавка на коррозию (расч.)", OldValue = oldCorrosion, NewValue = corrosion });
                     }
 
                     // Tag keeps the designation minus ВТ remarks in parentheses; Номер receives only the three-digit line number.
@@ -336,6 +334,30 @@ namespace PipingSpecPlugin.Spec
                 };
                 foreach (var col in KnownLineGroupColumns)
                     row.Values[col] = line.AllProperties.TryGetValue(col, out var v) ? v : "";
+
+                // If srok is empty in the Plant 3D database, but Corrosion and CorrosionSpeed are present,
+                // compute srok = Corrosion / CorrosionSpeed dynamically as a fallback.
+                if (string.IsNullOrWhiteSpace(row.Values["srok"]))
+                {
+                    var calcLife = VtValueParsing.ComputeServiceLifeFromCorrosion(
+                        row.Values.TryGetValue("Corrosion", out var corr) ? corr : null,
+                        row.Values.TryGetValue("CorrosionSpeed", out var cs) ? cs : null);
+                    if (calcLife != null)
+                        row.Values["srok"] = calcLife;
+                }
+
+                // If Corrosion is not explicitly saved in the Plant 3D line properties,
+                // but CorrosionSpeed and srok are present, compute Corrosion dynamically
+                // so the calculated column displays properly in the ledger.
+                if (string.IsNullOrWhiteSpace(row.Values["Corrosion"]))
+                {
+                    var calc = VtValueParsing.ComputeCorrosionAllowance(
+                        row.Values.TryGetValue("CorrosionSpeed", out var cs) ? cs : null,
+                        row.Values.TryGetValue("srok", out var sr) ? sr : null);
+                    if (calc != null)
+                        row.Values["Corrosion"] = calc;
+                }
+
                 rows.Add(row);
             }
             if (collapseDuplicates)

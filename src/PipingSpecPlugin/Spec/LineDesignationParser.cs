@@ -44,8 +44,9 @@ namespace PipingSpecPlugin.Spec
         // Size - environment + line number - material + pressure + flange - insulation + heating.
         // Pressure accepts two or three digits; flange accepts one or two letters.
         // Legacy free-form line numbers remain readable, but only three digits are synced.
+        // Supports Latin and Unicode/Cyrillic letters (\p{L}).
         static readonly Regex Pattern = new Regex(
-            @"^\s*(?<size>\d+)-(?<env>[A-Za-z]+)(?<num>[^-]*)-(?<mat>[A-Za-z]{2})(?<press>[0-9]{2,3})(?<flange>[A-Za-z]{1,2})?-(?<ins>[A-Za-z])(?<sput>[A-Za-z])\s*(?:\(.*)?$",
+            @"^\s*(?<size>\d+)-(?<env>\p{L}+)(?<num>[^-]*)-(?<mat>\p{L}{2})(?<press>[0-9]{2,3})(?<flange>\p{L}{1,2})?-(?<ins>\p{L})(?<sput>\p{L})\s*(?:\(.*)?$",
             RegexOptions.Compiled);
 
         static readonly Regex WsRun = new Regex(@"\s+", RegexOptions.Compiled);
@@ -75,7 +76,7 @@ namespace PipingSpecPlugin.Spec
         {
             if (string.IsNullOrWhiteSpace(designation)) return null;
             var match = Regex.Match(designation.Split('\n')[0].Trim(),
-                @"^[0-9]+-[A-Za-z]+(?<number>[0-9]{3})-");
+                @"^[0-9]+-\p{L}+(?<number>[0-9]{3})-");
             return match.Success ? match.Groups["number"].Value : null;
         }
 

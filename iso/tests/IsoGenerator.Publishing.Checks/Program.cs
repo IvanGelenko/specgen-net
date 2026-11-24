@@ -8,6 +8,22 @@ try
     bool prevented=false;try{PdfSetPublisher.Merge(pages,args[1],"Do not overwrite");}catch(IOException){prevented=true;}
     if(!prevented)throw new Exception("Existing PDF was overwritten");
     string publication=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"publication-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(publication);
+    string marked=Path.Combine(publication,"marked.pdf"), pageFile=Path.Combine(publication,"page.pdf");
+    using(var pdf=new PdfSharp.Pdf.PdfDocument())
+    {
+        for(int i=0;i<3;i++)
+            pdf.AddPage().Annotations.Add(new PdfSharp.Pdf.Annotations.PdfTextAnnotation { Contents=$"marker-{i}" });
+        pdf.Save(marked);
+    }
+    using(var pdf=new PdfSharp.Pdf.PdfDocument()){pdf.AddPage();pdf.Save(pageFile);}
+    string partial=Path.Combine(publication,"partial.pdf");
+    PdfSetPublisher.MergeWithRetainedPages(new[]{pageFile,pageFile,pageFile},partial,"Partial",null,null,marked,new HashSet<int>{0,2});
+    using(var pdf=PdfReader.Open(partial,PdfDocumentOpenMode.Import))
+    {
+        if(pdf.PageCount!=3||pdf.Pages[0].Annotations.Count!=1||pdf.Pages[1].Annotations.Count!=0||pdf.Pages[2].Annotations.Count!=1||
+           pdf.Pages[0].Annotations[0].Contents!="marker-0"||pdf.Pages[2].Annotations[0].Contents!="marker-2")
+            throw new Exception("Partial publication lost annotations or retained the replaced page.");
+    }
     string stagedOne=Path.Combine(publication,"staged-one"),stagedTwo=Path.Combine(publication,"staged-two"),targetOne=Path.Combine(publication,"one.dwg"),targetTwo=Path.Combine(publication,"two.pdf");
     File.WriteAllText(stagedOne,"new-one");File.WriteAllText(stagedTwo,"new-two");File.WriteAllText(targetOne,"old-one");File.WriteAllText(targetTwo,"old-two");
     bool noOverwrite=false;try{OutputSetPublisher.Publish(new[]{stagedOne,stagedTwo},new[]{targetOne,targetTwo},false,Path.Combine(publication,"no-overwrite"));}catch(IOException){noOverwrite=true;}

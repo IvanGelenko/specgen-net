@@ -56,6 +56,8 @@ namespace PipingSpecPlugin.Spec
             }
             if (table == null) { Trace("LineSyncService: таблица P3dLineGroup не найдена в проекте."); return result; }
 
+            EnsureLineGroupSrokColumn(pnpDb, trace);
+
             try { table.RefreshCachedRows(); } catch { }
 
             PnPRow[] rows;
@@ -295,6 +297,8 @@ namespace PipingSpecPlugin.Spec
             catch (Exception ex) { errors.Add($"Синхронизация не начата: {ex.Message}"); return errors; }
             if (pnpDb == null) { errors.Add("PnPDatabase недоступна. Изменения не выполнялись."); return errors; }
 
+            EnsureLineGroupSrokColumn(pnpDb, trace);
+
             errors = SyncTransaction.Run(
                 () => pnpDb.StartTransaction(),
                 () =>
@@ -319,6 +323,37 @@ namespace PipingSpecPlugin.Spec
             foreach (var error in errors)
                 try { trace?.Invoke(error); } catch { }
             return errors;
+        }
+
+        public static void EnsureLineGroupSrokColumn(PnPDatabase pnpDb, Action<string> trace = null)
+        {
+            if (pnpDb == null) return;
+            try
+            {
+                var table = pnpDb.Tables["P3dLineGroup"];
+                if (table == null || table.Columns.Contains("srok")) return;
+
+                trace?.Invoke("LineSyncService: свойство «srok» отсутствует в P3dLineGroup. Добавление в схему проекта...");
+                try
+                {
+                    var col = new PnPColumn("srok", typeof(string), 255);
+                    table.Columns.Add(col);
+                    try { table.SetColumnAttribute("srok", "DISPLAYNAME", "Срок службы, лет"); } catch { }
+                    try { table.SetColumnAttribute("srok", "ISHIDDENINAREAVIEW", "false"); } catch { }
+                    try { table.SetColumnAttribute("srok", "ISNEWCREATION", "true"); } catch { }
+                    try { table.SetColumnAttribute("srok", "TYPE", "PnPStringType"); } catch { }
+                    try { pnpDb.AcceptSchemaChanges(); } catch { }
+                    trace?.Invoke("LineSyncService: свойство «srok» (Срок службы, лет) успешно добавлено в схему P3dLineGroup.");
+                }
+                catch (Exception ex)
+                {
+                    trace?.Invoke($"LineSyncService: не удалось добавить свойство «srok» через PnPTable: {ex.Message}");
+                }
+            }
+            catch (Exception ex)
+            {
+                trace?.Invoke($"LineSyncService: EnsureLineGroupSrokColumn: {ex.Message}");
+            }
         }
     }
 }

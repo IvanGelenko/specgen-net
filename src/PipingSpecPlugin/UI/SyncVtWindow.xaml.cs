@@ -376,7 +376,7 @@ namespace PipingSpecPlugin.UI
 
         void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
-            _collapseLedgerDuplicates = true;
+            _collapseLedgerDuplicates = CollapseDuplicatesChk.IsChecked == true;
             if (_vtRows == null) { RefreshLedgerOnly(); return; }
             Mouse.OverrideCursor = Cursors.Wait;
             try { RebuildPlanAndRender(_vtRows.Count); }
@@ -388,6 +388,27 @@ namespace PipingSpecPlugin.UI
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
             }
             finally { Mouse.OverrideCursor = null; }
+        }
+
+        void CollapseDuplicatesChk_Changed(object sender, RoutedEventArgs e)
+        {
+            if (!IsLoaded) return;
+            _collapseLedgerDuplicates = CollapseDuplicatesChk.IsChecked == true;
+            if (_vtRows != null)
+            {
+                Mouse.OverrideCursor = Cursors.Wait;
+                try { RebuildPlanAndRender(_vtRows.Count); }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, $"Не удалось перечитать линии из Plant 3D:\n{ex.GetType().Name}: {ex.Message}",
+                        "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                finally { Mouse.OverrideCursor = null; }
+            }
+            else
+            {
+                RefreshLedgerOnly();
+            }
         }
 
         void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
@@ -414,6 +435,7 @@ namespace PipingSpecPlugin.UI
             {
                 MessageBox.Show(this, $"Синхронизация прервана:\n{ex.GetType().Name}: {ex.Message}",
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (_vtRows != null) try { RebuildPlanAndRender(_vtRows.Count); } catch { }
                 return;
             }
             finally
@@ -666,6 +688,10 @@ namespace PipingSpecPlugin.UI
             {
                 MessageBox.Show(this, $"Синхронизация прервана:\n{ex.GetType().Name}: {ex.Message}",
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
+                if (_vtRows != null)
+                {
+                    try { RebuildPlanAndRender(_vtRows.Count); ReselectLine(rowIds, lineId); } catch { }
+                }
                 return;
             }
             finally

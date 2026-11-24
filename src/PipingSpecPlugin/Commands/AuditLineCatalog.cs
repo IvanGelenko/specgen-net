@@ -35,22 +35,29 @@ namespace PipingSpecPlugin.Commands
                 throw new InvalidOperationException("Невозможно подтвердить полный состав линии Plant 3D.\n" + string.Join("\n", reasons));
         }
 
-        // Same saved-DWG PartReader and handle resolution as SelectByPropertyHelper.
-        // The caller makes sure the disk copy is current (DrawingSaveGuard);
-        // the audit itself never refreshes the live link database.
+        // Audit reads the saved DWG. Isometrics must use the open drawing and its current project links.
         public static AuditLineCatalog Read(Document document, Action<string> trace, bool forIsometric = false)
         {
-            if (string.IsNullOrEmpty(document.Name) || !File.Exists(document.Name))
+            if (!forIsometric && (string.IsNullOrEmpty(document.Name) || !File.Exists(document.Name)))
                 throw new InvalidOperationException("Сохраните чертёж перед чтением данных линий.");
             var result = new AuditLineCatalog();
             var missing = new List<(Handle Handle, int Row, string Line, string Reason)>();
             var primaryRows = new Dictionary<string, int>();
             var hasPrimaryProperties = new HashSet<string>();
             var subParts = new Dictionary<string, List<(int Row, AuditSubPart Part)>>();
-            using var disk = new Database(false, true);
-            disk.ReadDwgFile(document.Name, FileShare.ReadWrite, true, "");
-            disk.CloseInput(true);
-            var read = PartReader.Read(disk, null, trace);
+            using var saved = forIsometric ? null : new Database(false, true);
+            if (saved != null)
+            {
+                saved.ReadDwgFile(document.Name, FileShare.ReadWrite, true, "");
+                saved.CloseInput(true);
+            }
+            var disk = saved ?? document.Database;
+            DataLinksManager projectLinks = null;
+            if (forIsometric && Autodesk.ProcessPower.PlantInstance.PlantApplication.CurrentProject is {} project &&
+                project.ProjectParts["Piping"] is Autodesk.ProcessPower.P3dProjectParts.PipingProject piping)
+                projectLinks = piping.DataLinksManager;
+            var read = PartReader.Read(disk, projectLinks, trace);
+            string sourceName = forIsometric ? "открытого чертежа" : "сохранённого чертежа";
             // Only a drawing-wide failure stops (same policy as the spec scan).
             if (ReviewSection.ReadStopsGeneration(read.SkippedRows, read.WorkingDbSwapFailed, read.PnpReconnectFailed))
                 throw new InvalidOperationException(read.PnpReconnectFailed
@@ -132,7 +139,7 @@ namespace PipingSpecPlugin.Commands
                     // A gasket / bolt row shares its connector's element, which
                     // may still have properties from another row.
                     result.ReadIssues.Add(new AuditIssue { RuleId = "read", Check = "Чтение данных", Severity = "Не проверено",
-                        Message = $"Свойства детали (строка Plant 3D {rowId}) не прочитаны из сохранённого чертежа: {reason}. " +
+                        Message = $"Свойства детали (строка Plant 3D {rowId}) не прочитаны из {sourceName}: {reason}. " +
                             (keys.Count == 0 ? "Элемент чертежа для неё не найден — деталь в аудит не вошла."
                              : keys.All(result.Parts.ContainsKey) ? "Элемент проверен по данным другой строки, связанной с ним."
                              : "Номер линии и свойства элемента взяты из открытого чертежа и могут быть устаревшими."),
@@ -187,7 +194,7 @@ namespace PipingSpecPlugin.Commands
             return result;
         }
 
-        public static AuditLineCatalog ReadLiveIsometric(Database db)
+        public static AuditLineCatalog ReadLiveIsometric(Database db, DataLinksManager projectLinks = null)
         {
             var result = new AuditLineCatalog();
             var dlm = DataLinksManager.GetManager(db);
@@ -197,6 +204,8 @@ namespace PipingSpecPlugin.Commands
             {
                 if (tr.GetObject(id, OpenMode.ForRead) is not Autodesk.ProcessPower.PnP3dObjects.Part || IsIsoSymbol(db, id.Handle)) continue;
                 var part = ReadLiveIsometricPart(dlm, id);
+                if (string.IsNullOrWhiteSpace(part?.LineKey) && projectLinks != null && !ReferenceEquals(dlm, projectLinks))
+                    part = ReadLiveIsometricPart(projectLinks, id) ?? part;
                 if (part != null) result.Parts.Add(part.Key, part);
             }
             return result;

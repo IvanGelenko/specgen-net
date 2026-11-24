@@ -55,8 +55,9 @@ public class RenderCommands
             }
             var textStyles=(TextStyleTable)tr.GetObject(db.TextStyleTableId,OpenMode.ForRead);
             ObjectId gostStyle;
-            if(textStyles.Has("Standard_m"))gostStyle=textStyles["Standard_m"];
-            else {textStyles.UpgradeOpen();var style=new TextStyleTableRecord{Name="Standard_m"};gostStyle=textStyles.Add(style);tr.AddNewlyCreatedDBObject(style,true);}
+            const string generatedTextStyle="ISO-ANNOTATION-TEXT";
+            if(textStyles.Has(generatedTextStyle))gostStyle=textStyles[generatedTextStyle];
+            else {textStyles.UpgradeOpen();var style=new TextStyleTableRecord{Name=generatedTextStyle};gostStyle=textStyles.Add(style);tr.AddNewlyCreatedDBObject(style,true);}
             var gost=(TextStyleTableRecord)tr.GetObject(gostStyle,OpenMode.ForWrite);
             gost.FileName="GOST_B.TTF";gost.BigFontFileName="";gost.TextSize=tuning.LeaderTextHeight;gost.XScale=1;gost.ObliquingAngle=Math.PI/12;
             db.Textstyle=gostStyle;
@@ -196,11 +197,7 @@ public class RenderCommands
                     order.MoveToTop(new ObjectIdCollection(new[]{arrow.ObjectId}));
                     continue;
                 }
-                if(stroke.Role=="slope-angle-arrow")
-                {
-                    var arrow=new Solid(Pt(stroke.Points[0]),Pt(stroke.Points[1]),Pt(stroke.Points[2]),Pt(stroke.Points[2]));
-                    Add(arrow,"ISO-ANNOTATION",stroke.SourceId);continue;
-                }
+                if(stroke.Role is "slope-angle-arrow" or "slope-angle-arc" or "slope-projection-dimension" or "bend-dimension")continue;
                 var pl=new Polyline();for(int i=0;i<stroke.Points.Count;i++)pl.AddVertexAt(i,new Point2d(stroke.Points[i].X,stroke.Points[i].Y),0,0,0);
                 string layer=stroke.Role is "position-leader" or "slope-hatch"?"ISO-ANNOTATION":
                     stroke.Role.StartsWith("context-",StringComparison.Ordinal)?"ISO-CONTEXT":"ISO-GEOMETRY";
@@ -212,6 +209,7 @@ public class RenderCommands
                 if(stroke.Role.StartsWith("slope-",StringComparison.Ordinal)||stroke.Role.StartsWith("elevation-",StringComparison.Ordinal))pl.LineWeight=LineWeight.LineWeight013;
                 if(stroke.Role=="continuation-break")pl.LineWeight=LineWeight.LineWeight013;
             }
+            var valveMasks=new List<ObjectId>();
             if(scene.Symbols is {Count:>0})
             {
                 var path=Environment.GetEnvironmentVariable("ISO_SYMBOL_LIBRARY")??throw new InvalidOperationException("ISO_SYMBOL_LIBRARY missing");
@@ -229,6 +227,24 @@ public class RenderCommands
                         }
                         continue;
                     }
+                    if(!glyph.Context&&IsoDefinition.Parse(glyph.Definition).Type=="VALVE"&&
+                        (glyph.Variant.Length==0||glyph.Variant.StartsWith("end-",StringComparison.Ordinal))&&
+                        glyph.LocalBounds is {Count:>0} bounds)
+                    {
+                        double x0=bounds.Min(p=>p.X),x1=bounds.Max(p=>p.X);
+                        double y0=bounds.Min(p=>p.Y),y1=bounds.Max(p=>p.Y);
+                        double determinant=glyph.XAxis.X*glyph.YAxis.Y-glyph.XAxis.Y*glyph.YAxis.X;
+                        if(x1-x0>1e-8&&y1-y0>1e-8&&Math.Abs(determinant)>1e-8)
+                        {
+                            Point2d At(double x,double y)=>new(glyph.Origin.X+glyph.XAxis.X*x+glyph.YAxis.X*y,
+                                glyph.Origin.Y+glyph.XAxis.Y*x+glyph.YAxis.Y*y);
+                            var outline=new Point2dCollection(new[]{At(x0,y0),At(x1,y0),At(x1,y1),At(x0,y1),At(x0,y0)});
+                            var mask=new Wipeout();
+                            mask.SetFrom(outline,Vector3d.ZAxis);
+                            Add(mask,"ISO-ANNOTATION",glyph.SourceId);
+                            valveMasks.Add(mask.ObjectId);
+                        }
+                    }
                     Trace("symbol "+glyph.SourceId+" "+glyph.Block+" "+glyph.Variant);
                     var blockId=library.CreateGlyph(glyph,db,tr);
                     var reference=new BlockReference(Pt(glyph.Origin),blockId);
@@ -240,6 +256,54 @@ public class RenderCommands
             Trace("annotations");
             foreach(var label in scene.Annotations.Where(label=>label.Role is not ("title" or "status")))
             {
+                if(label.Role=="slope-projection"&&label.Anchor is {} midpoint)
+                {
+                    var edge=scene.Strokes.Where(stroke=>stroke.Role=="slope-projection-dimension"&&stroke.SourceId==label.SourceId)
+                        .OrderBy(stroke=>Math.Pow((stroke.Points[0].X+stroke.Points[1].X)/2-midpoint.X,2)+
+                            Math.Pow((stroke.Points[0].Y+stroke.Points[1].Y)/2-midpoint.Y,2)).First();
+                    var first=edge.Points[0];var second=edge.Points[1];
+                    if(PipeDimension.ReverseTextAxis(second.X-first.X,second.Y-first.Y))(first,second)=(second,first);
+                    var normal=new Vector3d(-Math.Sin(label.Rotation),Math.Cos(label.Rotation),0);
+                    var text=Pt(label.Position)+new Vector3d(Math.Cos(label.Rotation),Math.Sin(label.Rotation),0)*
+                        (label.Text.Length*1.05*tuning.DimensionTextHeight/3.5);
+                    var offset=text-Pt(midpoint);
+                    double side=offset.DotProduct(normal)>=0?1:-1;
+                    var dimension=new AlignedDimension(Pt(first),Pt(second),text-normal*(side*tuning.TextLift),label.Text,dimensionStyle)
+                    {
+                        Dimtxt=tuning.DimensionTextHeight,Dimasz=tuning.ArrowSize,Dimtad=1,Dimtmove=2,Dimtix=true,
+                        Dimexo=tuning.ExtensionOffset,Dimexe=tuning.ExtensionOvershoot,UsingDefaultTextPosition=false,TextPosition=text
+                    };
+                    Add(dimension,"ISO-DIMENSION",label.SourceId);
+                    dimensionIds.Add(dimension.ObjectId);
+                    continue;
+                }
+                var bend=label.Role=="bend-angle"?scene.Strokes.FirstOrDefault(stroke=>stroke.Role=="bend-dimension"&&stroke.SourceId==label.SourceId):null;
+                if(label.Role=="slope-angle"||bend is not null)
+                {
+                    Point3d center,first,second,arcPoint;
+                    if(bend is not null)
+                    {
+                        center=Pt(bend.Points[0]);first=Pt(bend.Points[1]);second=Pt(bend.Points[2]);arcPoint=Pt(bend.Points[3]);
+                    }
+                    else
+                    {
+                        var triangle=scene.Strokes.Single(stroke=>stroke.Role=="slope-triangle"&&stroke.SourceId==label.SourceId);
+                        var arc=scene.Strokes.Single(stroke=>stroke.Role=="slope-angle-arc"&&stroke.SourceId==label.SourceId);
+                        center=Pt(triangle.Points[0]);first=Pt(arc.Points[0]);second=Pt(arc.Points[^1]);arcPoint=Pt(arc.Points[arc.Points.Count/2]);
+                    }
+                    if((first-center).CrossProduct(second-center).Z<0)(first,second)=(second,first);
+                    // Preserve the true model angle in text, since projection changes the on-paper angle.
+                    var angular=new Point3AngularDimension(center,first,second,arcPoint,label.Text,dimensionStyle)
+                    {
+                        Dimtxt=tuning.DimensionTextHeight,Dimasz=tuning.ArrowSize,Dimtad=1,Dimtmove=2,Dimtix=true,
+                        Dimexo=tuning.ExtensionOffset,Dimexe=tuning.ExtensionOvershoot,UsingDefaultTextPosition=false
+                    };
+                    angular.TextPosition=Pt(new SheetPoint(label.Position.X+label.Text.Length*1.05*tuning.DimensionTextHeight/3.5,
+                        label.Position.Y+tuning.DimensionTextHeight/2));
+                    Add(angular,"ISO-DIMENSION",label.SourceId);
+                    dimensionIds.Add(angular.ObjectId);
+                    continue;
+                }
                 if(label.Role=="slope-value"&&scene.Strokes.FirstOrDefault(stroke=>stroke.Role=="slope-indicator"&&stroke.SourceId==label.SourceId) is {} indicator)
                 {
                     if(!bt.IsWriteEnabled)bt.UpgradeOpen();
@@ -365,6 +429,21 @@ public class RenderCommands
             table.UpgradeOpen();if(scene.BomOnly)table.Cells[0,0].TextString="Спецификация трубопровода (продолжение)";table.BreakEnabled=false;if(table.Rows.Count>2)table.DeleteRows(2,table.Rows.Count-2);
             int displayRows=scene.BillOfMaterials.Count+scene.BillOfMaterials.Select(r=>r.Category).Distinct().Count();
             if(displayRows>0)table.InsertRows(2,BomCategories.ItemHeight,displayRows);
+            string Quantity(BomRow row)=>row.QuantityText+" "+row.Unit;
+            double quantityWidth=table.Columns[3].Width;
+            foreach(var row in scene.BillOfMaterials)
+            {
+                using var text=new DBText{TextString=Quantity(row),TextStyleId=gostStyle,
+                    Height=BomCategories.TextHeight,Oblique=Math.PI/12};
+                var extents=text.GeometricExtents;
+                quantityWidth=Math.Max(quantityWidth,Math.Ceiling(extents.MaxPoint.X-extents.MinPoint.X+4));
+            }
+            double extraWidth=quantityWidth-table.Columns[3].Width;
+            if(extraWidth>0)
+            {
+                table.Columns[2].Width-=extraWidth;
+                table.Columns[3].Width=quantityWidth;
+            }
             int tableRow=2;
             foreach(var category in scene.BillOfMaterials.GroupBy(r=>r.Category).OrderBy(g=>g.Key))
             {
@@ -375,7 +454,7 @@ public class RenderCommands
                 tableRow++;
                 foreach(var row in category)
                 {
-                    string[] values={row.Position.ToString(CultureInfo.InvariantCulture),row.Designation,row.Description,row.QuantityText+" "+row.Unit,""};
+                    string[] values={row.Position.ToString(CultureInfo.InvariantCulture),row.Designation,row.Description,Quantity(row),""};
                     for(int j=0;j<5;j++){table.Cells[tableRow,j].TextString=values[j];table.Cells[tableRow,j].TextHeight=BomCategories.TextHeight;table.Cells[tableRow,j].TextStyleId=gostStyle;}
                     tableRow++;
                 }
@@ -402,8 +481,15 @@ public class RenderCommands
                         "A146"=>stampSheetNumber,
                         _=>null
                     };
-                    if(value is not null){text.UpgradeOpen();text.Contents=value;text.TextStyleId=gostStyle;text.TextHeight=tuning.LeaderTextHeight;}
+                    if(value is not null){text.UpgradeOpen();text.Contents=value;}
                 }
+            }
+            if(valveMasks.Count>0)
+            {
+                Autodesk.AutoCAD.ApplicationServices.Core.Application.SetSystemVariable("WIPEOUTFRAME",0);
+                var order=(DrawOrderTable)tr.GetObject(ms.DrawOrderTableId,OpenMode.ForWrite);
+                if(dimensionIds.Count>0)
+                    order.MoveBelow(new ObjectIdCollection(dimensionIds.ToArray()),valveMasks[0]);
             }
             Trace("commit");
             tr.Commit();

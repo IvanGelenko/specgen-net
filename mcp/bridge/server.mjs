@@ -20,6 +20,15 @@ const TOOLS = [
   { name: 'get_part_properties', description: 'All Plant data properties of an object by DWG handle (hex)',
     inputSchema: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'] } },
   { name: 'list_specs', description: 'Names of piping specs in the current project', inputSchema: { type: 'object', properties: {} } },
+  { name: 'list_spec_parts', description: 'List part classes in a project spec, or look up catalog records by class and DN. Optional case-insensitive search matches the size description.',
+    inputSchema: { type: 'object', properties: { spec: { type: 'string' }, part_class: { type: 'string' }, dn: { type: 'number', exclusiveMinimum: 0 }, search: { type: 'string' }, offset: { type: 'integer', minimum: 0 } }, required: ['spec'], additionalProperties: false } },
+  { name: 'insert_spec_part', description: 'Place one catalog part in the active Plant drawing at a model position. Use list_spec_parts to select a unique record. Dry run by default. For a standalone part provide position (and length for a straight pipe). For a flanged valve insertion into a straight existing pipe provide pipe_handle and bolt_length, optionally fraction and gasket_type.',
+    inputSchema: { type: 'object', properties: { drawing: { type: 'string' }, spec: { type: 'string' }, part_class: { type: 'string' }, dn: { type: 'number', exclusiveMinimum: 0 }, record_id: { type: 'integer' }, description: { type: 'string' },
+      position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, axis: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, up: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, length: { type: 'number', exclusiveMinimum: 0 }, pipe_handle: { type: 'string' }, fraction: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 1 }, bolt_length: { type: 'number', exclusiveMinimum: 0 }, gasket_type: { type: 'string' }, dry_run: { type: 'boolean' } },
+      required: ['drawing', 'spec', 'part_class', 'dn'], allOf: [
+        { anyOf: [{ required: ['record_id'] }, { required: ['description'] }] },
+        { oneOf: [{ required: ['position'], not: { required: ['pipe_handle'] } }, { required: ['pipe_handle', 'bolt_length'] }] }
+      ], additionalProperties: false } },
   { name: 'create_pipe', description: 'Creates a straight spec pipe in the active drawing. TWO-PHASE: by default (dry_run omitted/true) nothing is changed and the plan is returned; call again with dry_run=false to create. spec = project spec name (default !_Rus-PipeAndFittings_09Г2С_PN16), nd = nominal diameter in mm, length in mm, wall = wall thickness in mm (optional; if the spec has several pipes of that DN the default rule is used: s_min from table 5.6 by outer diameter + 2 mm, rounded up, e.g. 159 mm -> 5 mm), start [x,y,z] (default 0,0,0), direction [x,y,z] (default 1,0,0). Errors if the spec has no matching pipe or the match is ambiguous.',
     inputSchema: { type: 'object', properties: { spec: { type: 'string' }, nd: { type: 'number', exclusiveMinimum: 0 }, length: { type: 'number', exclusiveMinimum: 0 }, wall: { type: 'number' }, start: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, direction: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, relax_weld_spacing: { type: 'boolean' }, dry_run: { type: 'boolean' } }, required: ['nd', 'length'], additionalProperties: false } },
   { name: 'create_pipeline', description: 'Creates a continuous piping run along a polyline: straight pipes plus an elbow at every turn (angle taken from the geometry, elbow wall = pipe wall, elbow tangent length trimmed from both pipes). points = vertices [[x,y,z],...] in mm (2..50). TWO-PHASE: default is a dry run returning the plan; dry_run=false creates it. Pipes and elbows have the same wall and outer diameter; every joint is connected with the native connection manager. If anything fails, including an open joint, every object created by the call is erased. The result gives the connection count of each object (elbows and inner pipes 2, end pipes 1). spec default !_Rus-PipeAndFittings_09Г2С_PN16, wall default by the table-5.6 rule.',
@@ -62,6 +71,7 @@ const TOOLS = [
 
 // MCP annotations let clients gate writes; everything not listed here is read-only.
 const WRITE_ANNOTATIONS = {
+  insert_spec_part: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   create_pipe: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   create_pipeline: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   create_branch: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },

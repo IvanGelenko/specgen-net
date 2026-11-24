@@ -24,6 +24,7 @@ internal sealed class PlanningExecution
     int variants;
 
     public double MinimumPipeLength {get;}
+    internal bool PreferDimensionCorners {get;set;}
 
     public PlanningExecution(CancellationToken token,IProgress<PlanningProgress>? progress,TimeSpan timeLimit,
         int variantLimit,double minimumPipeLength)

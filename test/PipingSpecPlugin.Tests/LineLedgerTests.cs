@@ -167,5 +167,88 @@ namespace PipingSpecPlugin.Tests
             Assert.Empty(empty.Actions);
             Assert.Equal(0, empty.TotalChangedFields());
         }
+
+        [Fact]
+        public void BuildLedger_Computes_Corrosion_When_Empty_From_CorrosionSpeed_And_Srok()
+        {
+            var line = Line(10);
+            line.AllProperties["CorrosionSpeed"] = "0.1";
+            line.AllProperties["srok"] = "20";
+            // line.AllProperties["Corrosion"] is empty
+
+            var rows = LineSyncService.BuildLedger(new List<LineGroupInfo> { line });
+            var row = Assert.Single(rows);
+            Assert.Equal("2", row.Values["Corrosion"]);
+        }
+
+        [Fact]
+        public void BuildLedger_Computes_Srok_When_Empty_From_Corrosion_And_CorrosionSpeed()
+        {
+            var line = Line(10);
+            line.AllProperties["Corrosion"] = "2";
+            line.AllProperties["CorrosionSpeed"] = "0.1";
+            // line.AllProperties["srok"] is empty
+
+            var rows = LineSyncService.BuildLedger(new List<LineGroupInfo> { line });
+            var row = Assert.Single(rows);
+            Assert.Equal("20", row.Values["srok"]);
+        }
+
+        [Fact]
+        public void BuildPlan_Computes_Corrosion_When_CorrosionRate_In_Vt_And_Srok_In_Line()
+        {
+            var line = Line(10);
+            line.AllProperties["srok"] = "20";
+
+            var vtRows = new List<VtRowData>
+            {
+                new() { NN = "1", CorrosionRate = "0.1" }
+            };
+
+            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var action = Assert.Single(plan.Actions);
+            var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
+            Assert.NotNull(change);
+            Assert.Equal("2", change.NewValue);
+        }
+
+        [Fact]
+        public void BuildPlan_Computes_Corrosion_When_ServiceLife_In_Vt_And_CorrosionSpeed_In_Line()
+        {
+            var line = Line(10);
+            line.AllProperties["CorrosionSpeed"] = "0.05";
+
+            var vtRows = new List<VtRowData>
+            {
+                new() { NN = "1", ServiceLife = "20" }
+            };
+
+            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var action = Assert.Single(plan.Actions);
+            var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
+            Assert.NotNull(change);
+            Assert.Equal("1", change.NewValue);
+        }
+
+        [Fact]
+        public void BuildPlan_Computes_Corrosion_When_Both_In_Vt()
+        {
+            var line = Line(10);
+
+            var vtRows = new List<VtRowData>
+            {
+                new() { NN = "1", CorrosionRate = "0.1", ServiceLife = "20" }
+            };
+
+            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var action = Assert.Single(plan.Actions);
+            var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
+            Assert.NotNull(change);
+            Assert.Equal("2", change.NewValue);
+
+            var srokChange = action.Changes.Find(c => c.PropertyName == "srok");
+            Assert.NotNull(srokChange);
+            Assert.Equal("20", srokChange.NewValue);
+        }
     }
 }

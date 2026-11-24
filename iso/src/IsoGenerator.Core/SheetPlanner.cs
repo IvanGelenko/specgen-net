@@ -27,6 +27,25 @@ public static class SheetPlanner
         var description=Get(part,"PartSizeLongDesc");
         return string.IsNullOrWhiteSpace(description)?Get(part,"PartFamilyLongDesc"):description;
     }
+    static readonly System.Text.RegularExpressions.Regex BomStandard = new(
+        @"(?<![\p{L}\p{N}])(?:ГОСТ(?:\s*Р)?|ОСТ)\s*\d+(?:\s*[-‐‑–—.]\s*\d+)*(?![\p{L}\p{N}]|\s*[-‐‑–—.]\s*\d)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    internal static string RemoveRepeatedStandards(string description,string designation)
+    {
+        static string Key(string value)=>string.Concat(value.Where(c=>!char.IsWhiteSpace(c)))
+            .Replace('‐','-').Replace('‑','-').Replace('–','-').Replace('—','-').ToUpperInvariant();
+        var standards=BomStandard.Matches(designation).Select(match=>Key(match.Value)).ToHashSet();
+        if(standards.Count==0)return description;
+        var duplicates=BomStandard.Matches(description).Where(match=>standards.Contains(Key(match.Value))).ToArray();
+        foreach(var match in duplicates.Reverse())
+        {
+            int start=match.Index,end=match.Index+match.Length;
+            if(start>0&&"-‐‑–—".Contains(description[start-1]))start--;
+            if(end<description.Length&&description[end]=='/')end++;
+            description=description[..start]+description[end..];
+        }
+        return duplicates.Length==0?description:System.Text.RegularExpressions.Regex.Replace(description,@"[ 	]{2,}"," ").Trim();
+    }
     static string Get(Part p,string name) => p.Properties.TryGetValue(name,out var value)?value:"";
     static Port[] Ends(Part p)=>p.Ports.Where(q=>q.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
     static ModelPoint Sub(ModelPoint a,ModelPoint b)=>new(a.X-b.X,a.Y-b.Y,a.Z-b.Z);
@@ -68,9 +87,15 @@ public static class SheetPlanner
                 else qty++;
             }
             int position=rows.Count+1;
-            var description=BomDescription(first);
+            string standard=Get(first,"DesignStd"),identifier=PartIdentifier.Read(first);
+            var description=RemoveRepeatedStandards(BomDescription(first),string.IsNullOrWhiteSpace(identifier)?standard:identifier);
             if(BomCategories.Classify(first)==BomCategory.Fasteners&&Get(first,"Length").Length>0)description+=" (L="+Get(first,"Length")+" мм)";
-            rows.Add(new(position,first.CatalogClass,description,Get(first,"DesignStd"),qty,pipe?"м":Get(first,"IsoQuantityUnit").Length>0?Get(first,"IsoQuantityUnit"):"шт.",group.Select(p=>p.Handle).ToArray(),PartIdentifier.Read(first),BomCategories.Classify(first)));
+            var category=BomCategories.Classify(first);
+            string unit=Get(first,"IsoQuantityUnit");
+            if(pipe)unit="м";
+            else if(excludeFlangeHardware&&category==BomCategory.Valves)unit="компл.";
+            else if(unit.Length==0)unit="шт.";
+            rows.Add(new(position,first.CatalogClass,description,standard,qty,unit,group.Select(p=>p.Handle).ToArray(),identifier,category));
             foreach(var p in group)positions[p.Handle]=position;
         }
         foreach(var p in physical)
@@ -193,7 +218,7 @@ public static class SheetPlanner
                 if(kind==ComponentKind.Valve)
                 {
                     var pa=Project(a);var pb=Project(b);double dx=pb.X-pa.X,dy=pb.Y-pa.Y,len=Math.Sqrt(dx*dx+dy*dy);var xaxis=new SheetPoint(dx/len,dy/len);
-                    var axis=Sub(b,a);var across=IsoSymbolPlacement.FlangeTransverse(snapshot,p,axis,quarterTurns,out bool hostFound);double scale=blockCatalog.ScaleFor(p);
+                    var axis=Sub(b,a);var across=IsoSymbolPlacement.FlangeTransverse(snapshot,p,axis,quarterTurns);double scale=blockCatalog.ScaleFor(p);
                     SymbolGlyph Accessory(string name,SheetPoint origin,SheetPoint x,SheetPoint y,string variant)
                     {
                         var definition=blockCatalog.Find(name)??throw new InvalidDataException($"{p.Handle}: нет дополнительного блока {name}");var anchor=definition.Ports.GetValueOrDefault("CenterPoint",default);
@@ -208,11 +233,30 @@ public static class SheetPlanner
                     var spindle=symbolMap.ResolveSpindle(iso.Skey);
                     if(spindle is not null&&blockCatalog.Find(spindle) is not null)
                     {
-                        var unit=Mul(axis,1/Math.Sqrt(Dot(axis,axis)));var stem=p.OperatorDirection??new ModelPoint(0,0,1);var normal=Sub(stem,Mul(unit,Dot(stem,unit)));
-                        if(Dot(normal,normal)<1e-10)normal=Math.Abs(unit.Z)<.95?new(0,0,1):new(1,0,0);
-                        var plane=IsometricProjection.Project(normal,quarterTurns:quarterTurns);double length=Math.Sqrt(plane.X*plane.X+plane.Y*plane.Y);
-                        var operatorAcross=hostFound?(plane.X*across.X+plane.Y*across.Y<0?new SheetPoint(-across.X,-across.Y):across):new SheetPoint(plane.X/length,plane.Y/length);
-                        symbols.Add(Accessory(spindle,c,xaxis,operatorAcross,"operator"));
+                        if(p.OperatorDirection is {} stem)
+                        {
+                            var plane=IsometricProjection.Project(stem,quarterTurns:quarterTurns);
+                            double length=Math.Sqrt(plane.X*plane.X+plane.Y*plane.Y);
+                            double area=xaxis.X*plane.Y-xaxis.Y*plane.X;
+                            if(double.IsFinite(length)&&length>1e-8&&Math.Abs(area)>1e-8*length)
+                            {
+                                var direction=new SheetPoint(plane.X/length,plane.Y/length);
+                                var glyph=Accessory(spindle,c,xaxis,direction,"operator");
+                                symbols.Add(glyph);
+                                double horizontal=Math.Sqrt(stem.X*stem.X+stem.Y*stem.Y);
+                                double angle=Math.Round(Math.Atan2(horizontal,Math.Abs(stem.Z))*180/Math.PI,1);
+                                if(angle>0&&angle<90)
+                                {
+                                    double tip=blockCatalog.Find(spindle)!.Maximum.Y;
+                                    var anchor=new SheetPoint(glyph.Origin.X+glyph.YAxis.X*tip,glyph.Origin.Y+glyph.YAxis.Y*tip);
+                                    string text=angle.ToString("0.#",CultureInfo.InvariantCulture)+"°";
+                                    labels.Add(new(p.Handle,"operator-angle",new(anchor.X+direction.X*4,anchor.Y+direction.Y*4),text,Anchor:anchor));
+                                }
+                            }
+                            else
+                                warnings.Add($"{p.Handle}: направление штурвала не читается в выбранном ракурсе.");
+                        }
+                        else warnings.Add($"{p.Handle}: в модели не задано направление штурвала.");
                     }
                 }
                 strokes.RemoveAll(stroke=>stroke.SourceId==p.Handle);librarySymbol=true;

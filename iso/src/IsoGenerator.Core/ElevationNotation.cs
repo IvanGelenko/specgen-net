@@ -13,22 +13,15 @@ internal static class ElevationNotation
         bool TapSurface(PipelineTopology.Node node)=>node.Kind!=RouteNodeKind.TapAxis&&snapshot.Parts.Any(p=>p.Handle==node.Source&&p.Ports.Any(port=>port.Name==node.PortName&&port.EndCondition.Trim().Equals("TAP",StringComparison.OrdinalIgnoreCase)));
         var candidates=graph.Nodes.Select((n,i)=>(Node:n,Root:graph.Root(i))).Where(x=>x.Node.Kind is RouteNodeKind.Axis or RouteNodeKind.TapAxis||degree.GetValueOrDefault(x.Root)==1)
             .Where(x=>!supports.Contains(x.Node.Source)&&!SupportStation(x.Node)&&!TapSurface(x.Node)&&snapshot.Parts.Any(p=>p.Handle==x.Node.Source&&!p.IsConnector))
-            .OrderBy(x=>degree.GetValueOrDefault(x.Root)==1?0:x.Node.Kind==RouteNodeKind.Axis?1:2).ThenBy(x=>x.Node.Source,StringComparer.Ordinal);
+            .OrderBy(x=>x.Node.Kind==RouteNodeKind.Axis&&snapshot.Parts.Any(p=>p.Handle==x.Node.Source&&p.Component==ComponentKind.Elbow)
+                ?0:degree.GetValueOrDefault(x.Root)==1?1:x.Node.Kind==RouteNodeKind.Axis?2:3).ThenBy(x=>x.Node.Source,StringComparer.Ordinal);
         foreach(var level in candidates.GroupBy(x=>Math.Round(x.Node.Point.Z,0)))
         {
             SheetPoint At(ModelPoint point,string source)=>projectSource is null?project(point):projectSource(point,source);
             var node=level.First().Node;var anchor=At(node.Point,node.Source);
             double meters=node.Point.Z/1000;
             string text="ОТМ. "+meters.ToString("+0.000;-0.000;0.000",CultureInfo.InvariantCulture)+"*";
-                        var alternatives=snapshot.Parts.SelectMany(p=>p.Ports.Select(port=>(Part:p,Port:port))).Where(p=>Math.Abs(p.Port.Position.Z-node.Point.Z)<.001).Select(p=>At(p.Port.Position,p.Part.Handle)).ToList();
-            foreach(var part in snapshot.Parts.Where(p=>p.Component==ComponentKind.Pipe))
-            {
-                var ends=part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
-                if(ends.Length!=2||ends.Any(p=>Math.Abs(p.Position.Z-node.Point.Z)>.001))continue;
-                var a=At(ends[0].Position,part.Handle);var b=At(ends[1].Position,part.Handle);
-                foreach(double t in new[]{.2,.5,.8})alternatives.Add(new(a.X+(b.X-a.X)*t,a.Y+(b.Y-a.Y)*t));
-            }
-            labels.Add(new(node.Source,"elevation",anchor,text,Anchor:anchor,NearbyAnchors:alternatives.Distinct().ToArray()));
+            labels.Add(new(node.Source,"elevation",anchor,text,Anchor:anchor));
         }
     }
 }

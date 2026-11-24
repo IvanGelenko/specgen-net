@@ -86,6 +86,10 @@ namespace Plant3dMcp
                     return PlantTools.GetPorts(args);
                 case "delete_objects":
                     return PlantTools.DeleteObjects(args);
+                case "list_spec_parts":
+                    return PlantTools.ListSpecParts(args);
+                case "insert_spec_part":
+                    return PlantTools.InsertSpecPart(args);
                 case "list_specs":
                     return PlantTools.ListSpecs();
                 case "send_command":
@@ -106,7 +110,9 @@ namespace Plant3dMcp
             if (!string.Equals(document.Database.Filename, drawing, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The active drawing changed. Check document_info before capturing.");
             using var documentLock = document.LockDocument();
-            var drawingLines = PipingSpecPlugin.Commands.AuditLineCatalog.ReadLiveIsometric(document.Database).DrawingLines();
+            var project = Autodesk.ProcessPower.PlantInstance.PlantApplication.CurrentProject;
+            var piping = project?.ProjectParts["Piping"] as Autodesk.ProcessPower.P3dProjectParts.PipingProject;
+            var drawingLines = PipingSpecPlugin.Commands.AuditLineCatalog.ReadLiveIsometric(document.Database, piping?.DataLinksManager).DrawingLines();
             var handles = drawingLines.Where(p => string.Equals(p.Value, line, StringComparison.OrdinalIgnoreCase)).Select(p => p.Key).ToArray();
             var snapshot = IsoGenerator.AutoCAD.PlantSnapshotReader.Capture(
                 document.Database, document.Database.Filename, ObjectId.Null, line, handles, drawingLines: drawingLines);

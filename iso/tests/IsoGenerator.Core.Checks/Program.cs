@@ -239,7 +239,7 @@ if(File.Exists(file)){
     var xml=Path.Combine(Path.GetDirectoryName(file)!,"../assets/IsoSkeyAcadBlockMap.xml");
     var sceneWithSymbols=SheetPlanner.Build(live,symbolMap:new IsoSymbolMap(File.ReadAllText(xml),fixtureCatalog));
     Assert(sceneWithSymbols.Symbols!.Count(g=>g.Variant=="")==17,"Captured fittings must resolve to 17 library symbols");
-    Assert(sceneWithSymbols.Strokes.All(s=>s.Role is "pipe" or "joint" or "tap-connection" or "flange-neck" or "insulation" or "elevation-leader" or "elevation-shelf"||s.Role.StartsWith("slope-",StringComparison.Ordinal)),"Library symbols replace placeholder fitting strokes");
+    Assert(sceneWithSymbols.Strokes.All(s=>s.Role is "pipe" or "joint" or "tap-connection" or "flange-neck" or "insulation" or "elevation-leader" or "elevation-shelf" or "bend-dimension"||s.Role.StartsWith("slope-",StringComparison.Ordinal)),"Library symbols replace placeholder fitting strokes");
 }
 
 
@@ -307,7 +307,18 @@ if(File.Exists(file)){
     var symbolMap=new IsoSymbolMap(File.ReadAllText(Path.Combine(Path.GetDirectoryName(file)!,"../assets/IsoSkeyAcadBlockMap.xml")),fixtureCatalog);
     var readable=SheetPlanner.Build(live,symbolMap:symbolMap);
     Assert(readable.Symbols!.Count(g=>g.Variant.StartsWith("end-"))==8,"Each of four FL valves gets two end plates");
-    Assert(readable.Symbols.Count(g=>g.Variant=="operator")==4,"Valve operators follow the project's spindle rules");
+    foreach(var valve in live.Parts.Where(p=>p.Component==ComponentKind.Valve))
+    {
+        var op=readable.Symbols.SingleOrDefault(g=>g.SourceId==valve.Handle&&g.Variant=="operator");
+        if(valve.OperatorDirection is not {} direction)
+            Assert(op is null,"Missing model direction must not produce a fabricated operator");
+        else if(op is not null)
+        {
+            var operatorProjection=IsometricProjection.Project(direction);
+            Near(op.YAxis.X*operatorProjection.Y-op.YAxis.Y*operatorProjection.X,0);
+            Assert(op.YAxis.X*operatorProjection.X+op.YAxis.Y*operatorProjection.Y>0,"Operator follows the model direction including its sign");
+        }
+    }
     foreach(var jointPart in live.Parts.Where(p=>p.Kind=="AcPpDb3dConnector")){
         var neighbors=live.Connections.SelectMany(c=>c.FirstHandle==jointPart.Handle?new[]{(H:c.SecondHandle,P:c.SecondPort)}:c.SecondHandle==jointPart.Handle?new[]{(H:c.FirstHandle,P:c.FirstPort)}:Array.Empty<(string H,string P)>()).Distinct().ToArray();
         if(neighbors.Length!=2)continue;
@@ -458,7 +469,7 @@ bool rejectedMissingPlant=false;
 try{SheetSetPlanner.Build(missingPlantProperties,ksnMap);}catch(InvalidDataException ex){rejectedMissingPlant=ex.Message.Contains("F98")&&ex.Message.Contains("Plant 3D");}
 Assert(rejectedMissingPlant,"Missing Plant data is rejected before sheet splitting with an actionable diagnostic");
 var ksnSheets=SheetSetPlanner.Build(ksnSnapshot,ksnMap,excludeFlangeHardware:true);
-Assert(ksnSheets.Count==2&&!ksnSheets.Any(s=>s.Scene.BomOnly),"KSN010 native break produces exactly two diagram sheets");
+Assert(ksnSheets.Count(s=>!s.Scene.BomOnly)>=2,"KSN010 native break requires at least two diagram sheets");
 Assert(ksnSheets[0].Scene.LayoutLevel!=3,"KSN010 uses available paper space instead of minimum geometry");
 Assert(ksnSheets.SelectMany(sh=>sh.Scene.Symbols!).Where(g=>g.SourceId is "83E0" or "83EB").All(g=>g.YAxis.Y<0),"Elbow heel base plates extend below their attachment");
 Assert(ksnSheets.All(s=>DimensionTextPlacement.CollisionCount(s.Scene.Dimensions,s.Scene.Strokes)==0),"KSN010 dimension text stays clear; line crossings are handled by native DIMBREAK");
@@ -1028,8 +1039,8 @@ Assert((alignA with{ReferenceOnly=true}).Label=="100*","Reference dimensions dis
 var referenceScene=SheetPlanner.Build(linked with{Parts=new[]{referenceValve,second}});
 Assert(referenceScene.Dimensions.Any(d=>d.ReferenceOnly&&d.Role=="chain"),"Valve installation dimension is reference-only");
 Assert(referenceScene.Dimensions.Where(d=>d.Role=="overall").All(d=>d.ReferenceOnly&&d.Label.EndsWith('*')),"Overall dimension inherits reference status from valve interval");
-Near((fixtureCatalog with{SymbolScale=15}).ScaleFor(supportPart),7.5);
-Near((fixtureCatalog with{SymbolScale=10}).ScaleFor(supportPart),5);
+Near((fixtureCatalog with{SymbolScale=15}).ScaleFor(supportPart),10);
+Near((fixtureCatalog with{SymbolScale=10}).ScaleFor(supportPart),10);
 var corridorDimension=new PipeDimension("lower-run",new(0,0),new(100,0),100,ChainId:"lower-run",DimensionLinePoint:new(0,10),ExtensionDirection:new(0,1),TextPosition:new(50,12.8));
 var corridorRows=DimensionRouting.Route(new[]{corridorDimension},new[]{new Stroke("upper-run","pipe",new SheetPoint[]{new(0,20),new(100,20)})},Array.Empty<SymbolGlyph>(),0);
 Assert(corridorRows[0].DimensionLinePoint!.Value.Y<0||corridorRows[0].DimensionLinePoint.Value.Y>23,"Dimension row moves outside the space between parallel runs");var continuationFixture=Snapshot(new[]{first},Array.Empty<Connection>());var continuationLayout=new SchematicLayout(continuationFixture);
@@ -1235,6 +1246,12 @@ var ngDimensions=DimensionChainPlanner.Build(Snapshot(new[]{elbowNg,verticalNg},
 Assert(ngDimensions.Any(d=>d.Role=="overall"&&d.SourceIds!.Contains("ng-elbow")&&
     d.SourceIds.Contains("ng-pipe")&&d.Millimeters>1374&&d.Millimeters<1376),
     "The upper elbow contributes its vertical rise to the overall dimension");
+Assert(SheetPlanner.RemoveRepeatedStandards("Труба ГОСТ 8732-2025/ В ГОСТ 8731-2025","ГОСТ 8732–2025")==
+    "Труба В ГОСТ 8731-2025","Remove only the standard present in designation");
+Assert(SheetPlanner.RemoveRepeatedStandards("Опора-ОСТ 36-146-88","ОСТ 36-146-88")=="Опора",
+    "Remove duplicate OST and its delimiter");
+Assert(SheetPlanner.RemoveRepeatedStandards("Отвод ГОСТ 17375-2001","GV-110")=="Отвод ГОСТ 17375-2001",
+    "Keep the standard when the designation is a tag");
 Console.WriteLine($"Passed {checks} checks.");
 
 

@@ -17,8 +17,8 @@ public sealed class GenerateCommand
     public void Generate()=>App.DocumentManager.MdiActiveDocument?.SendStringToExecute("PSISOMETRIC ",true,false,false);
 
     // Version each contract independently so unrelated rebuilds do not discard accepted work.
-    const int LayoutVersion=19;
-    const int DrawingVersion=5;
+    const int LayoutVersion=32;
+    const int DrawingVersion=7;
     const int DocumentVersion=3;
     static int busy;
     public void GenerateForLine(string line,IReadOnlyCollection<string> handles,string outputDirectory,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,Action<string>? onCompleted=null,int quarterTurns=0,bool excludeFlangeHardware=false,bool ignoreBreakPoints=false,string? templatePath=null,double symbolScale=10,bool instrumentCalloutsOnly=true,bool automaticView=false,string valvesDocument="",string supportsDocument="",string stampDocument="",bool rememberLayout=false,bool recalculateLine=false,double minimumPipeLength=10,IsoAdvancedSettings? advancedSettings=null) =>
@@ -378,10 +378,31 @@ public sealed class GenerateCommand
                     string merged=Path.Combine(job,"merged.pdf");
                     var drawingPdfs=pages.Select(page=>page.Pdf).ToArray();
                     string[] stagedDocuments=Array.Empty<string>();
-                    if(front is null)PdfSetPublisher.Merge(drawingPdfs,merged,pdfStem);
-                    else
+                    var retainedPdfPages=new HashSet<int>();
+                    if(overwrite&&appendPdfHash is null&&File.Exists(names.Pdf))
                     {
-                        PdfSetPublisher.MergeReport(front.CoverPdf,front.ContentsPdf,drawingPdfs,merged,stampDocument);
+                        int offset=0;
+                        foreach(var line in prepared)
+                        {
+                            var previous=line.Plan.Previous;
+                            if(previous is not null&&comparer.Equals(previous.PublishedPdf,names.Pdf)&&
+                               previous.Pages.Length==line.Pages.Length&&(document is not null||prepared.Count==1))
+                                for(int i=0;i<line.Pages.Length;i++)
+                                    if(ReferenceEquals(previous.Pages[i],line.Pages[i])&&ReusePublishedDrawing(offset+i))
+                                        retainedPdfPages.Add(offset+i);
+                            offset+=line.Pages.Length;
+                        }
+                    }
+                    if(retainedPdfPages.Count>0)
+                    {
+                        appendPdfHash=RememberedIsoOutput.HashFile(names.Pdf);
+                        PdfSetPublisher.MergeWithRetainedPages(drawingPdfs,merged,front is null?pdfStem:stampDocument,
+                            front?.CoverPdf,front?.ContentsPdf,names.Pdf,retainedPdfPages);
+                    }
+                    else if(front is null)PdfSetPublisher.Merge(drawingPdfs,merged,pdfStem);
+                    else PdfSetPublisher.MergeReport(front.CoverPdf,front.ContentsPdf,drawingPdfs,merged,stampDocument);
+                    if(front is not null)
+                    {
                         string archiveStage=Path.Combine(job,"append-data.json");
                         File.WriteAllText(archiveStage,JsonSerializer.Serialize(new AppendArchive(1,archiveProfile,
                             RememberedIsoOutput.HashFile(merged),planned.Select(item=>new ArchivedLine(

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Linq;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
@@ -34,6 +35,8 @@ namespace PipingSpecPlugin.Spec
         // separately so the required-column check below can reference it
         // by identity instead of a fragile array index.
         static readonly Action<VtRowData, string> NNAssign = (r, v) => r.NN = v;
+        static readonly Action<VtRowData, string> ServiceLifeAssign = (r, v) => r.ServiceLife = v;
+        static readonly Action<VtRowData, string> CorrosionRateAssign = (r, v) => r.CorrosionRate = v;
 
         // Row-1 header text -> VtRowData field. Matched by trimmed,
         // whitespace-collapsed equality (headers wrap onto two lines in
@@ -51,8 +54,17 @@ namespace PipingSpecPlugin.Spec
             ("Классификация по ТР ТС 032-2013", (r, v) => r.TrTsGroup = v),
             ("Плотность, кг/м3", (r, v) => r.Density = v),
             ("t°С",              (r, v) => r.DensityTemperature = v),
-            ("Скорость коррозии, мм/год", (r, v) => r.CorrosionRate = v),
-            ("Срок службы трубопровода/отбраковочная толщина стенки, лет/мм", (r, v) => r.ServiceLife = v),
+            ("Скорость коррозии, мм/год",  CorrosionRateAssign),
+            ("Скорость коррозии",          CorrosionRateAssign),
+            ("Скорость коррозии, мм/год.", CorrosionRateAssign),
+            ("Скорость коррозии (мм/год)", CorrosionRateAssign),
+            ("Скорость коррозии мм/год",   CorrosionRateAssign),
+            ("Скорость коррозии, мм./год", CorrosionRateAssign),
+            ("Срок службы трубопровода",  ServiceLifeAssign),
+            ("Срок службы трубопровода/отбраковочная толщина стенки, лет/мм", ServiceLifeAssign),
+            ("Срок службы трубопровода, лет", ServiceLifeAssign),
+            ("Срок службы, лет",         ServiceLifeAssign),
+            ("Срок службы",              ServiceLifeAssign),
             ("Неразрушающий контроль сварных швов, %", (r, v) => r.NdControl = v),
             ("Термообработка сварных соединений",      (r, v) => r.HeatTreatment = v),
             ("Дополнительные указания",  (r, v) => r.Additional = v),
@@ -79,7 +91,8 @@ namespace PipingSpecPlugin.Spec
             var result = new VtReadResult();
             try
             {
-                using var doc = SpreadsheetDocument.Open(path, false);
+                using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                using var doc = SpreadsheetDocument.Open(stream, false);
                 var wbPart = doc.WorkbookPart;
                 var sheet = wbPart.Workbook.Descendants<Sheet>().FirstOrDefault();
                 if (sheet == null) { result.Error = "В книге не найден ни один лист."; return result; }
@@ -89,6 +102,10 @@ namespace PipingSpecPlugin.Spec
                 if (sheetData == null) { result.Error = "Лист пуст."; return result; }
 
                 var sst = wbPart.SharedStringTablePart?.SharedStringTable;
+                // Pre-cache shared strings for O(1) indexed lookups
+                var sharedStrings = sst != null
+                    ? sst.Elements<SharedStringItem>().Select(s => s.InnerText ?? "").ToList()
+                    : null;
 
                 // Section-title rows ("873.РД-001-ТХМ.ВТ (Цех №1)") are
                 // authored as a wide merged cell in the workbook — collect
@@ -133,10 +150,10 @@ namespace PipingSpecPlugin.Spec
                     var raw = cell.CellValue.InnerText;
                     if (cell.DataType != null && cell.DataType.Value == CellValues.SharedString)
                     {
-                        if (sst == null) return raw;
+                        if (sharedStrings == null) return raw;
                         if (int.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var idx)
-                            && idx >= 0 && idx < sst.ChildElements.Count)
-                            return sst.ElementAt(idx).InnerText;
+                            && idx >= 0 && idx < sharedStrings.Count)
+                            return sharedStrings[idx];
                         return raw;
                     }
                     // Unmarked / numeric cells store the value in Excel's
@@ -218,6 +235,50 @@ namespace PipingSpecPlugin.Spec
                     var match = SingleColumnFields.FirstOrDefault(f =>
                         string.Equals(f.Header, kv.Value, StringComparison.OrdinalIgnoreCase));
                     if (match.Assign != null) singleAssign[kv.Key] = match.Assign;
+                }
+
+                // Fallback for ServiceLife: if not matched by exact header, check if any
+                // column header starts with "срок службы", or if column "T" carries it.
+                if (!singleAssign.Values.Any(a => ReferenceEquals(a, ServiceLifeAssign)))
+                {
+                    var colByPrefix = col2Header.FirstOrDefault(kv =>
+                        kv.Value.StartsWith("Срок службы", StringComparison.OrdinalIgnoreCase)).Key;
+                    if (colByPrefix != null)
+                    {
+                        singleAssign[colByPrefix] = ServiceLifeAssign;
+                    }
+                    else if (col2Header.TryGetValue("T", out var tHeader) &&
+                             (string.IsNullOrWhiteSpace(tHeader) || tHeader.IndexOf("срок", StringComparison.OrdinalIgnoreCase) >= 0))
+                    {
+                        singleAssign["T"] = ServiceLifeAssign;
+                    }
+                }
+
+                // Fallback for CorrosionRate: if not matched by exact header, check if any
+                // column header starts with "скорость коррозии", or contains "корроз",
+                // or if column "S" carries it (standard column before T).
+                if (!singleAssign.Values.Any(a => ReferenceEquals(a, CorrosionRateAssign)))
+                {
+                    var colByPrefix = col2Header.FirstOrDefault(kv =>
+                        kv.Value.StartsWith("Скорость коррозии", StringComparison.OrdinalIgnoreCase)).Key;
+                    if (colByPrefix != null)
+                    {
+                        singleAssign[colByPrefix] = CorrosionRateAssign;
+                    }
+                    else
+                    {
+                        var colByContains = col2Header.FirstOrDefault(kv =>
+                            kv.Value.IndexOf("корроз", StringComparison.OrdinalIgnoreCase) >= 0).Key;
+                        if (colByContains != null)
+                        {
+                            singleAssign[colByContains] = CorrosionRateAssign;
+                        }
+                        else if (col2Header.TryGetValue("S", out var sHeader) &&
+                                 (string.IsNullOrWhiteSpace(sHeader) || sHeader.IndexOf("корроз", StringComparison.OrdinalIgnoreCase) >= 0))
+                        {
+                            singleAssign["S"] = CorrosionRateAssign;
+                        }
+                    }
                 }
                 var groupedAssign = new Dictionary<string, Action<VtRowData, string>>(StringComparer.Ordinal);
                 foreach (var kv in col2SubHeader)

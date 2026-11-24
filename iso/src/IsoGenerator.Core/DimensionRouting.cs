@@ -73,16 +73,16 @@ public static class DimensionRouting
             .SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>new Segment(a,b,true))).ToArray();
         return MakeChoices(rows, isoAxes, TextObstacles(strokes,symbols), symbols, geometry, FittingEdges(symbols));
     }
-    static Choice[] MakeChoices(PipeDimension[] rows, SheetPoint[] isoAxes, IReadOnlyList<Stroke> strokes, IReadOnlyList<SymbolGlyph> symbols, Segment[] geometry, Segment[] fittings,PlanningExecution? execution=null)
+    static Choice[] MakeChoices(PipeDimension[] rows, SheetPoint[] isoAxes, IReadOnlyList<Stroke> strokes, IReadOnlyList<SymbolGlyph> symbols, Segment[] geometry, Segment[] fittings,PlanningExecution? execution=null,bool joinCorner=false)
     {
         var overall=rows.FirstOrDefault(d=>d.Role=="overall")??rows[0];var axis=Unit(Sub(overall.End,overall.Start));var n=new SheetPoint(-axis.Y,axis.X);
         if(Dot(n,overall.ExtensionDirection!.Value)<0)n=new(-n.X,-n.Y);
         bool hasChain=rows.Any(d=>d.Role=="chain");
         var exs=new List<SheetPoint>{overall.ExtensionDirection!.Value};
         bool vertical=Math.Abs(axis.X)<.05;
-        if(vertical)
-            exs.AddRange(isoAxes.Where(ex=>Math.Abs(Dot(ex,n))>.5&&Math.Abs(Dot(ex,exs[0]))<.999));
-        // A standing run can use either vertical isometric plane.
+        if(vertical||joinCorner)exs.AddRange(isoAxes.Where(ex=>Math.Abs(Dot(ex,n))>.5&&Math.Abs(Dot(ex,exs[0]))<.999));
+        // Try only the nearest lanes for alternate witness directions.
+
         var source=rows.SelectMany(d=>d.SourceIds??new[]{d.SourceId}).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var contour=strokes.Where(s=>s.Role!="insulation"&&source.Contains(s.SourceId)).SelectMany(s=>s.Points).Concat(symbols.Where(g=>source.Contains(g.SourceId)).SelectMany(SymbolFootprint.Corners)).ToArray();
         var contextSegments=strokes.Where(s=>s.Role.StartsWith("context-",StringComparison.Ordinal)).SelectMany(s=>s.Points.Zip(s.Points.Skip(1),(a,b)=>new Segment(a,b,false))).ToArray();
@@ -95,7 +95,7 @@ public static class DimensionRouting
         {
             double envelope=contour.Select(p=>Dot(Sub(p,overall.Start),n)*side).Where(v=>v>=0&&v<=25).DefaultIfEmpty(0).Max();
             double first=MinimumPipeClearance+envelope;
-            foreach(var ex in exs)for(int lane=0;lane<=2*IsoAdvancedSettings.Current.DimensionLaneCount;lane++)
+            foreach(var ex in exs)for(int lane=0;lane<=(vertical||ex.Equals(exs[0])?2*IsoAdvancedSettings.Current.DimensionLaneCount:Math.Min(6,2*IsoAdvancedSettings.Current.DimensionLaneCount));lane++)
             {
                 execution?.Check();
                 var placed=new List<PipeDimension>();
@@ -135,7 +135,7 @@ public static class DimensionRouting
                 double cost=corridorPenalty+contextCost+
                     DimensionTextPlacement.CollisionCount(placed,strokes,textSegments)*1000000+
                     lines.Where(line=>line.Baseline).Sum(line=>symbolEdges.Count(edge=>Cross(line,edge)))*5000+
-                    modelCross*5000+witnessLength+(side==-1?.5:0)+(!exs[0].Equals(ex)?1:0);
+                    modelCross*5000+witnessLength+(side==-1?.5:0)+(!exs[0].Equals(ex)?(vertical?1:6):0);
                 choices.Add(new(placed.ToArray(),lines,cost));
             }
         }
@@ -301,14 +301,50 @@ public static class DimensionRouting
         var fittings=FittingEdges(symbols);
         bool crossesSymbols=input.Any(d=>{var (a,b)=Line(d);return symbolSegments.Any(g=>Cross(new Segment(a,b,true),g));});
         bool crossesGeometry=input.Any(d=>{var (a,b)=Line(d);var line=new Segment(a,b,true);return geometry.Any(g=>Cross(line,g))||TooCloseToFitting(line,fittings);});
-        if(CrossingCount(input)==0&&LongWitnessThroughParallelRun(input,strokes) is null&&PipeClearanceViolations(input,strokes)==0&&!crossesGeometry&&!crossesSymbols&&!input.Any(d=>InCorridor(d,strokes))&&DimensionTextPlacement.CollisionCount(input,textStrokes)==0)return input;
         var groups=input.GroupBy(d=>d.ChainId).Select(g=>g.ToArray()).ToArray();
+        PipeDimension Overall(PipeDimension[] rows)=>rows.FirstOrDefault(d=>d.Role=="overall")??rows[0];
+        var corners=new Dictionary<(string,string),(bool FirstAtEnd,bool SecondAtEnd)>();
+        if(execution?.PreferDimensionCorners==true)
+        for(int i=0;i<groups.Length;i++)
+        for(int j=i+1;j<groups.Length;j++)
+        {
+            var first=Overall(groups[i]);var second=Overall(groups[j]);
+            if(Math.Abs(Dot(Unit(Sub(first.End,first.Start)),Unit(Sub(second.End,second.Start))))>.995)continue;
+            foreach(bool endA in new[]{false,true})
+            foreach(bool endB in new[]{false,true})
+            {
+                var modelA=endA?first.ModelEnd:first.ModelStart;
+                var modelB=endB?second.ModelEnd:second.ModelStart;
+                if(modelA is not {} a||modelB is not {} b||a.DistanceTo(b)>.01)continue;
+                var pointA=endA?first.End:first.Start;var pointB=endB?second.End:second.Start;
+                if(Dot(Sub(pointA,pointB),Sub(pointA,pointB))>.01)continue;
+                corners[(first.ChainId,second.ChainId)]=(endA,endB);
+                corners[(second.ChainId,first.ChainId)]=(endB,endA);
+            }
+        }
+        SheetPoint InnerEnd(PipeDimension[] rows,bool atEnd)
+        {
+            var overall=Overall(rows);
+            var point=atEnd?overall.End:overall.Start;
+            var row=rows.FirstOrDefault(d=>d.Role=="chain"&&(d.Start==point||d.End==point))??overall;
+            var line=Line(row);
+            return row.Start==point?line.A:line.B;
+        }
+        double CornerCost(PipeDimension[] first,PipeDimension[] second)
+        {
+            if(!corners.TryGetValue((first[0].ChainId,second[0].ChainId),out var ends))return 0;
+            var delta=Sub(InnerEnd(first,ends.FirstAtEnd),InnerEnd(second,ends.SecondAtEnd));
+            double gap=Math.Sqrt(Dot(delta,delta));
+            return Math.Min(gap,30)*3;
+        }
+        if(corners.Count==0&&CrossingCount(input)==0&&LongWitnessThroughParallelRun(input,strokes) is null&&PipeClearanceViolations(input,strokes)==0&&!crossesGeometry&&!crossesSymbols&&!input.Any(d=>InCorridor(d,strokes))&&DimensionTextPlacement.CollisionCount(input,textStrokes)==0)return input;
         double Extent(PipeDimension[] rows){var d=rows.FirstOrDefault(x=>x.Role=="overall")??rows[0];return Dot(Sub(d.End,d.Start),Sub(d.End,d.Start));}
         var isoAxes = new[] { new ModelPoint(1, 0, 0), new ModelPoint(0, 1, 0), new ModelPoint(0, 0, 1) }
             .Select(v => IsometricProjection.Project(v, quarterTurns: turns))
             .Select(v => { double l = Math.Sqrt(v.X * v.X + v.Y * v.Y); return new SheetPoint(v.X / l, v.Y / l); })
             .ToArray();
-        Choice[] Choices(PipeDimension[] rows) => MakeChoices(rows, isoAxes, textStrokes, symbols, geometry, fittings,execution);
+        Choice[] Choices(PipeDimension[] rows) => MakeChoices(rows, isoAxes, textStrokes, symbols, geometry, fittings,execution,
+            corners.Keys.Any(pair=>pair.Item1==rows[0].ChainId));
         var options=groups.ToDictionary(g=>g[0].ChainId,Choices);
         foreach(var group in groups)
             if(options[group[0].ChainId].Length==0)
@@ -331,6 +367,14 @@ public static class DimensionRouting
             conflictCache[(a,b)]=value;
             return value;
         }
+        var cornerCache=new Dictionary<(Choice,Choice),double>();
+        double CachedCornerCost(Choice a,Choice b)
+        {
+            if(!corners.ContainsKey((a.Rows[0].ChainId,b.Rows[0].ChainId)))return 0;
+            if(!cornerCache.TryGetValue((a,b),out double cost))
+                cornerCache[(a,b)]=cost=CornerCost(a.Rows,b.Rows);
+            return cost;
+        }
         State? best=null;
         foreach(var order in new[]{groups.OrderByDescending(Extent).ToArray(),groups.OrderBy(Extent).ToArray(),groups.OrderByDescending(g=>g.Length).ToArray()})
         {
@@ -342,12 +386,17 @@ public static class DimensionRouting
                 foreach(var state in beam)foreach(var choice in options[group[0].ChainId])
                 {
                     int crossings=0;
-                    foreach(var old in state.Choices)crossings+=CachedConflicts(old,choice);
+                    double cornerCost=0;
+                    foreach(var old in state.Choices)
+                    {
+                        crossings+=CachedConflicts(old,choice);
+                        cornerCost+=CachedCornerCost(old,choice);
+                    }
                     var bounds=choiceBounds[choice];
                     double left=Math.Min(state.Left,bounds.Left),bottom=Math.Min(state.Bottom,bounds.Bottom),right=Math.Max(state.Right,bounds.Right),top=Math.Max(state.Top,bounds.Top);
                     double width=right-left,height=top-bottom;
                     double overflow=Math.Max(0,width-SheetComposition.Paper.Width)+Math.Max(0,height-SheetComposition.Paper.Height);
-                    expanded.Add((state,choice,state.Cost+choice.Cost+crossings*1000000+overflow*10000,left,bottom,right,top));
+                    expanded.Add((state,choice,state.Cost+choice.Cost+cornerCost+crossings*1000000+overflow*10000,left,bottom,right,top));
                 }
                 beam=expanded.OrderBy(s=>s.Cost).Take(IsoAdvancedSettings.Current.DimensionBeamWidth).Select(s=>new State(s.Parent.Choices.Append(s.Choice).ToList(),s.Cost,s.Left,s.Bottom,s.Right,s.Top)).ToArray();
             }

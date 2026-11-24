@@ -256,6 +256,25 @@ public static class SheetSetPlanner
             Accessories=source.Accessories?.Where(p=>handles.Contains(p.Properties.GetValueOrDefault("ConnectorHandle",""))).ToArray(),
             Connections=source.Connections.Where(c=>handles.Contains(c.FirstHandle)&&handles.Contains(c.SecondHandle)).ToArray()
         });
+        PlannedSheet ImproveDimensionCorners(PlannedSheet baseline,Func<PlannedSheet> rebuild)
+        {
+            if(!execution.CanTryOptionalVariant()||baseline.Scene.Dimensions.Select(d=>d.ChainId).Distinct().Take(2).Count()<2)
+                return baseline;
+            execution.PreferDimensionCorners=true;
+            try
+            {
+                execution.Report("Стыковка размерных линий в углах",variant:true);
+                var candidate=rebuild();
+                if(LayoutQuality.Dimensions(candidate.Scene).CompareTo(LayoutQuality.Dimensions(baseline.Scene))<=0&&
+                   LayoutQuality.Leaders(candidate.Scene).CompareTo(LayoutQuality.Leaders(baseline.Scene))<=0&&
+                   DimensionCongestion.FindRepair(candidate.Snapshot,candidate.Scene,includeProximity:false) is null)
+                    return candidate;
+            }
+            catch(SheetCapacityException){}
+            catch(PlanningLimitException){cancellationToken.ThrowIfCancellationRequested();}
+            finally{execution.PreferDimensionCorners=false;}
+            return baseline;
+        }
         IReadOnlyList<PlannedSheet> Finish(IReadOnlyList<PlannedSheet> sheets)
         {
             SheetSetIntegrity.Validate(source,sheets,excludeFlangeHardware);
@@ -277,7 +296,13 @@ public static class SheetSetPlanner
                 SheetPlanner.Build(Prepare(source),quarterTurns,symbolMap,compactLevel:level,
                     pipeExtensions:extensions,excludeFlangeHardware:excludeFlangeHardware,
                     instrumentCalloutsOnly:instrumentCalloutsOnly,paperMargin:margin,fixedScale:scaleOverride,execution:execution,checkValveClearance:true));
-            return Finish(BomPagination.Apply(new[]{new PlannedSheet(1,1,source,expanded,raw)}));
+            var sheet=new PlannedSheet(1,1,source,expanded,raw);
+            var geometry=SheetGeometry.From(expanded);
+            sheet=ImproveDimensionCorners(sheet,()=>sheet with{Scene=SheetComposition.Center(SheetPlanner.Build(
+                Prepare(source),quarterTurns,symbolMap,compactLevel:geometry.Level,pipeExtensions:geometry.Extensions,
+                excludeFlangeHardware:excludeFlangeHardware,instrumentCalloutsOnly:instrumentCalloutsOnly,
+                paperMargin:geometry.Margin,fixedScale:geometry.Scale,execution:execution))});
+            return Finish(BomPagination.Apply(new[]{sheet}));
         }
         catch(SheetCapacityException){}
         bool Fits(PipelineSnapshot snapshot,bool quick=false)
@@ -637,11 +662,46 @@ public static class SheetSetPlanner
                             }
                         }
                     }
+                    if(!improved)
+                    {
+                        for(int index=0;index<best.Sheets.Length&&!improved&&remainingTrials>0;index++)
+                        {
+                            var scene=best.Sheets[index].Scene;
+                            var quality=LayoutQuality.Dimensions(scene);
+                            var leaders=LayoutQuality.Leaders(scene);
+                            if(quality.Clearance==0&&quality.FittingCrossings==0&&quality.Crossings==0&&
+                               leaders.Crossings==0)continue;
+                            var snapshots=best.Layout.Snapshots;
+                            var current=snapshots[index];
+                            var unchanged=snapshots.Where((_,other)=>other!=index).ToArray();
+                            foreach(var cut in FindCuts(current).Where(c=>InstallationUnits.SplitCount(installationUnits,c.A,c.B)==0))
+                            {
+                                if(remainingTrials==0||!execution.CanTryOptionalVariant())break;
+                                var candidate=unchanged.Concat(new[]{Subset(cut.A),Subset(cut.B)}).ToArray();
+                                string key=string.Join(";",candidate.Select(Key).OrderBy(k=>k,StringComparer.Ordinal));
+                                if(!tested.Add(key))continue;
+                                remainingTrials--;
+                                try
+                                {
+                                    execution.Report("Проверка разбиения для читаемости",variant:true);
+                                    var layout=CreatePartition(candidate,quick:true);
+                                    var trial=Expand((layout,Enumerable.Range(0,layout.Count).Select(layout.Compose).ToArray()));
+                                    SheetSetIntegrity.Validate(source,BomPagination.Apply(trial.Sheets),excludeFlangeHardware);
+                                    if(LayoutQuality.Compare(trial.Sheets,best.Sheets)>=0)continue;
+                                    best=trial;
+                                    improved=true;
+                                    break;
+                                }
+                                catch(SheetCapacityException){}
+                            }
+                        }
+                    }
                     if(!improved)break;
                 }
             }
             catch(PlanningLimitException){cancellationToken.ThrowIfCancellationRequested();}
-            return BomPagination.Apply(best.Sheets);
+            var finalized=best.Sheets.Select((sheet,index)=>ImproveDimensionCorners(sheet,()=>best.Layout.Compose(index))).ToArray();
+            return BomPagination.Apply(finalized);
         }
 
         (PartitionLayout Layout,PlannedSheet[] Sheets) Expand((PartitionLayout Layout,PlannedSheet[] Sheets) candidate)

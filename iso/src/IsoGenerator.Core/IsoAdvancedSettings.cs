@@ -60,8 +60,8 @@ public sealed class IsoAdvancedSettings
     [Category("Трубы и символы"),DisplayName("Отступ линии изоляции, мм"),Range(0.1,20)]
     public double InsulationOffset { get; set; } = 3;
 
-    [Category("Трубы и символы"),DisplayName("Делитель масштаба опор"),Range(1,10)]
-    public double SupportScaleDivisor { get; set; } = 2;
+    [Category("Трубы и символы"),DisplayName("Масштаб опор"),Range(0.1,100)]
+    public double SupportSymbolScale { get; set; } = 10;
 
     [Category("Размеры"),DisplayName("Отступ размерной линии от трубы и арматуры, мм"),Range(1,50)]
     public double DimensionClearance { get; set; } = 10;

@@ -31,7 +31,8 @@ internal sealed class IsometricDialog : Form
     readonly Button generate=new();
     readonly Label details=new();
     readonly CheckBox overrideNorth=new();
-    readonly CheckBox excludeHardware=new(),ignoreBreaks=new(),instrumentCallouts=new();
+    readonly CheckBox excludeHardware=new(),ignoreBreaks=new();
+    bool instrumentCalloutsOnly=true;
     readonly TextBox template=new();
     public IsoDocumentDetails Documents {get;private set;}
     public IsometricTitleDetails TitleDetails {get;private set;}
@@ -44,7 +45,7 @@ internal sealed class IsometricDialog : Form
     readonly NumericUpDown scale=new();
     public IsoAdvancedSettings AdvancedSettings {get;private set;}
     public double MinimumPipeLength {get;private set;}
-    public bool InstrumentCalloutsOnly=>instrumentCallouts.Checked;
+    public bool InstrumentCalloutsOnly=>instrumentCalloutsOnly;
     public bool IgnoreBreakPoints=>ignoreBreaks.Checked;
     public string TemplatePath=>template.Text.Trim();
     public double SymbolScale=>(double)scale.Value;
@@ -101,7 +102,6 @@ internal sealed class IsometricDialog : Form
         Controls.Add(new Label{Text="Масштаб элементов",Left=18,Top=455,Width=145,Height=24,Anchor=AnchorStyles.Bottom|AnchorStyles.Left});
         scale.SetBounds(170,453,120,28);scale.DecimalPlaces=4;scale.Minimum=.0001m;scale.Maximum=100000;scale.Increment=1;scale.Value=double.IsFinite(symbolScale)&&symbolScale>0&&symbolScale<=100000?(decimal)symbolScale:10;scale.Anchor=AnchorStyles.Bottom|AnchorStyles.Left;Controls.Add(scale);
         ignoreBreaks.Text="Игнорировать точки разрыва на модели";ignoreBreaks.SetBounds(18,569,724,27);ignoreBreaks.Anchor=AnchorStyles.Bottom|AnchorStyles.Left;Controls.Add(ignoreBreaks);
-        instrumentCallouts.Text="КИП: только выноска с ИД, без символа и позиции в спецификации";instrumentCallouts.Checked=true;instrumentCallouts.SetBounds(18,601,724,27);instrumentCallouts.Anchor=AnchorStyles.Bottom|AnchorStyles.Left;Controls.Add(instrumentCallouts);
         overrideNorth.Text="Ракурс вручную (иначе — автоподбор для линии)";overrideNorth.SetBounds(18,497,425,27);overrideNorth.Anchor=AnchorStyles.Bottom|AnchorStyles.Left;Controls.Add(overrideNorth);
         north.SetBounds(450,497,292,28);north.DropDownStyle=ComboBoxStyle.DropDownList;north.Items.AddRange(new object[]{"↖ Левый верхний","↗ Правый верхний","↙ Левый нижний","↘ Правый нижний"});north.SelectedIndex=0;north.Enabled=false;north.Anchor=AnchorStyles.Bottom|AnchorStyles.Right;Controls.Add(north);
         overrideNorth.CheckedChanged+=(s,e)=>north.Enabled=overrideNorth.Checked;
@@ -136,6 +136,8 @@ internal sealed class IsometricDialog : Form
         var pipeLength=new NumericUpDown{Width=100,DecimalPlaces=1,Minimum=MinimumPipeLengthLimit,
             Maximum=MaximumPipeLengthLimit,Value=(decimal)MinimumPipeLength,AccessibleName=pipeLengthLabel.Text};
         pipeSettings.Controls.AddRange(new Control[]{pipeLengthLabel,pipeLength});
+        var instrumentCallouts=new CheckBox{Text="КИП: только выноска с ИД, без символа и позиции в спецификации",
+            Checked=instrumentCalloutsOnly,Dock=DockStyle.Top,Height=30,Padding=new Padding(8,0,0,0)};
         var grid=new PropertyGrid{Dock=DockStyle.Fill,SelectedObject=draft,ToolbarVisible=false};
         var buttons=new FlowLayoutPanel{Dock=DockStyle.Bottom,Height=42,FlowDirection=FlowDirection.RightToLeft};
         var save=new Button{Text="Сохранить",AutoSize=true};
@@ -145,12 +147,14 @@ internal sealed class IsometricDialog : Form
             draft=new IsoAdvancedSettings();
             grid.SelectedObject=draft;
             pipeLength.Value=DefaultMinimumPipeLength;
+            instrumentCallouts.Checked=true;
         };
         save.Click+=(_,_)=>{
             try
             {
                 draft.Validate();
                 AdvancedSettings=draft;
+                instrumentCalloutsOnly=instrumentCallouts.Checked;
                 MinimumPipeLength=(double)pipeLength.Value;
                 window.DialogResult=DialogResult.OK;
             }
@@ -158,7 +162,7 @@ internal sealed class IsometricDialog : Form
             {MessageBox.Show(window,error.Message,window.Text,MessageBoxButtons.OK,MessageBoxIcon.Warning);}
         };
         buttons.Controls.AddRange(new Control[]{save,cancel,reset});
-        window.Controls.Add(grid);window.Controls.Add(buttons);window.Controls.Add(pipeSettings);
+        window.Controls.Add(grid);window.Controls.Add(buttons);window.Controls.Add(instrumentCallouts);window.Controls.Add(pipeSettings);
         window.CancelButton=cancel;
         window.ShowDialog(this);
     }
@@ -316,7 +320,7 @@ internal sealed class IsometricDialog : Form
                 north.SelectedIndex=Math.Max(0,Array.IndexOf(new[]{0,3,1,2},remembered.QuarterTurns));
                 excludeHardware.Checked=remembered.ExcludeHardware;
                 ignoreBreaks.Checked=remembered.IgnoreBreaks;
-                instrumentCallouts.Checked=remembered.InstrumentsOnly;
+                instrumentCalloutsOnly=remembered.InstrumentsOnly;
                 if(double.IsFinite(remembered.SymbolScale)&&remembered.SymbolScale>=(double)scale.Minimum&&
                    remembered.SymbolScale<=(double)scale.Maximum)scale.Value=(decimal)remembered.SymbolScale;
             }

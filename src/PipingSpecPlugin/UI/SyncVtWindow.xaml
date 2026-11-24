@@ -32,7 +32,18 @@
             <TextBlock x:Name="SummaryText" TextWrapping="Wrap" Text="Файл не загружен."/>
         </GroupBox>
 
-        <GroupBox Grid.Row="2" Header="Внутренняя ведомость трубопроводов (текущее состояние линий с заполненным ID)" Padding="6" Margin="0,0,0,10">
+        <GroupBox Grid.Row="2" Padding="6" Margin="0,0,0,10">
+            <GroupBox.Header>
+                <DockPanel>
+                    <CheckBox DockPanel.Dock="Right" x:Name="CollapseDuplicatesChk"
+                              Content="Объединять повторные строки"
+                              VerticalAlignment="Center" Margin="16,0,4,0"
+                              Checked="CollapseDuplicatesChk_Changed"
+                              Unchecked="CollapseDuplicatesChk_Changed"/>
+                    <TextBlock Text="Внутренняя ведомость трубопроводов (текущее состояние линий с заполненным ID)"
+                               VerticalAlignment="Center"/>
+                </DockPanel>
+            </GroupBox.Header>
             <DataGrid x:Name="LedgerGrid" AutoGenerateColumns="False"
                       IsReadOnly="True" CanUserAddRows="False"
                       GridLinesVisibility="All" HeadersVisibility="Column"

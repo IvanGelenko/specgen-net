@@ -62,9 +62,29 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Theory]
+        [InlineData("0.1", "0.1")]
+        [InlineData("0,1", "0.1")]
+        [InlineData("0,1 мм/год", "0.1")]
+        [InlineData("0.05*", "0.05")]
+        public void ExtractCorrosionRate_Extracts_Rate_From_Cell(string cell, string expected)
+        {
+            Assert.Equal(expected, VtValueParsing.ExtractCorrosionRate(cell));
+        }
+
+        [Fact]
+        public void ExtractCorrosionRate_Returns_Null_For_Invalid()
+        {
+            Assert.Null(VtValueParsing.ExtractCorrosionRate(null));
+            Assert.Null(VtValueParsing.ExtractCorrosionRate(""));
+            Assert.Null(VtValueParsing.ExtractCorrosionRate("н/д"));
+        }
+
+        [Theory]
         [InlineData("20/2", "20")]
         [InlineData("20", "20")]
         [InlineData("15,5/1", "15.5")]
+        [InlineData("20 лет", "20")]
+        [InlineData("20 лет / 2 мм", "20")]
         public void ExtractServiceLifeYears_Takes_First_Number_Of_Composite_Cell(string cell, string expected)
         {
             Assert.Equal(expected, VtValueParsing.ExtractServiceLifeYears(cell));
@@ -82,6 +102,8 @@ namespace PipingSpecPlugin.Tests
         [InlineData("0.1", "20/2", "2")]
         [InlineData("0,1", "20", "2")]
         [InlineData("0.5", "15,5/1", "7.75")]
+        [InlineData("0,1 мм/год", "20 лет", "2")]
+        [InlineData("0.08", "25", "2")]
         public void ComputeCorrosionAllowance_Multiplies_Rate_By_Service_Life_Years(
             string rateCell, string serviceLifeCell, string expected)
         {
@@ -95,6 +117,27 @@ namespace PipingSpecPlugin.Tests
             Assert.Null(VtValueParsing.ComputeCorrosionAllowance("0.1", null));
             Assert.Null(VtValueParsing.ComputeCorrosionAllowance("н/д", "20/2"));
             Assert.Null(VtValueParsing.ComputeCorrosionAllowance("0.1", "н/д"));
+        }
+
+        [Theory]
+        [InlineData("2", "0.1", "20")]
+        [InlineData("1", "0.05", "20")]
+        [InlineData("2.4", "0.12", "20")]
+        [InlineData("2,0", "0,1 мм/год", "20")]
+        public void ComputeServiceLifeFromCorrosion_Divides_Corrosion_By_Rate(
+            string corrosion, string rate, string expected)
+        {
+            Assert.Equal(expected, VtValueParsing.ComputeServiceLifeFromCorrosion(corrosion, rate));
+        }
+
+        [Fact]
+        public void ComputeServiceLifeFromCorrosion_Returns_Null_For_Invalid()
+        {
+            Assert.Null(VtValueParsing.ComputeServiceLifeFromCorrosion(null, "0.1"));
+            Assert.Null(VtValueParsing.ComputeServiceLifeFromCorrosion("2", null));
+            Assert.Null(VtValueParsing.ComputeServiceLifeFromCorrosion("0", "0.1"));
+            Assert.Null(VtValueParsing.ComputeServiceLifeFromCorrosion("2", "0"));
+            Assert.Null(VtValueParsing.ComputeServiceLifeFromCorrosion("н/д", "0.1"));
         }
 
         [Theory]

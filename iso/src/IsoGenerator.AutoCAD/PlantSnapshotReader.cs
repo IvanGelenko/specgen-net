@@ -24,14 +24,23 @@ internal static class PlantSnapshotReader
         // Resolve links against the actual drawing, as the audit reader does.
         // A project-level manager can miss rows for a DWG opened through another path.
         var manager=Autodesk.ProcessPower.DataLinks.DataLinksManager.GetManager(db)??throw new InvalidOperationException("Не найден менеджер данных Plant 3D текущего DWG.");
+        var projectManager=(project.ProjectParts["Piping"] as Autodesk.ProcessPower.P3dProjectParts.PipingProject)?.DataLinksManager;
+        Dictionary<string,string> ReadProperties(DataLinksManager links,ObjectId id)
+        {
+            int row;
+            try{row=links.FindAcPpRowId(id);}
+            catch(System.Exception ex) when(ex.Message.Contains("ObjectDoesNotHaveLink",StringComparison.OrdinalIgnoreCase)){row=0;}
+            return row>0?links.GetAllProperties(row,true).ToDictionary(p=>p.Key,p=>p.Value??"",StringComparer.OrdinalIgnoreCase):new(StringComparer.OrdinalIgnoreCase);
+        }
         Dictionary<string,string> Properties(ObjectId id)
         {
-            // A Plant-derived entity can exist without a project data row (for example a detached component).
-            // Only this expected lookup failure means "no properties"; other read failures must stop capture.
-            int row;
-            try{row=manager.FindAcPpRowId(id);}
-            catch(System.Exception ex) when(ex.Message.Contains("ObjectDoesNotHaveLink",StringComparison.OrdinalIgnoreCase)){row=0;}
-            var values=row>0?manager.GetAllProperties(row,true).ToDictionary(p=>p.Key,p=>p.Value??"",StringComparer.OrdinalIgnoreCase):new(StringComparer.OrdinalIgnoreCase);
+            var values=ReadProperties(manager,id);
+            if(projectManager is not null&&!ReferenceEquals(manager,projectManager)&&
+               string.IsNullOrWhiteSpace(values.GetValueOrDefault("PnPClassName")))
+            {
+                foreach(var pair in ReadProperties(projectManager,id))
+                    if(string.IsNullOrWhiteSpace(values.GetValueOrDefault(pair.Key)))values[pair.Key]=pair.Value;
+            }
             if(drawingLines?.TryGetValue(id.Handle.ToString(),out var resolved)==true)
                 values["LineNumberTag"]=resolved;
             return values;
@@ -182,10 +191,11 @@ internal static class PlantSnapshotReader
                 cancellationToken.ThrowIfCancellationRequested();
                 var candidates=BreakPointPreparation.HostCandidates(pipes,marker.Position);
                 if(!candidates.Any(pipe=>own.Contains(pipe.Handle)))continue;
+                string markerName=marker.InformationType==5?"точка начала":"точка разрыва";
                 if(candidates.Count==1)
                 {
                     markers.Add(marker with{HostHandle=candidates[0].Handle});
-                    warnings.Add($"{marker.Handle}: восстановлена привязка точки разрыва к трубе {candidates[0].Handle} по оси.");
+                    warnings.Add($"{marker.Handle}: {markerName} привязана к трубе {candidates[0].Handle} по оси.");
                 }
                 else
                 {
@@ -194,7 +204,7 @@ internal static class PlantSnapshotReader
                         string pipeLine=nativePipeIds.TryGetValue(pipe.Handle,out var nativeId)?LineOf(nativeId):pipe.Line;
                         return $"{pipe.Handle} ({(pipeLine.Length==0?"без номера линии":pipeLine)})";
                     }));
-                    warnings.Add($"{marker.Handle}: точка разрыва пропущена, найдены несколько труб в текущем DWG: {hosts}.");
+                    warnings.Add($"{marker.Handle}: {markerName} пропущена, найдены несколько труб в текущем DWG: {hosts}.");
                 }
             }
         }

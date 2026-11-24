@@ -18,8 +18,6 @@ public sealed class IsometricCommand
         using var logger=new RunLogger("PSISOMETRIC");
         try
         {
-            if(!DrawingSaveGuard.EnsureSavedForDiskRead(doc,doc.Database,"Изометрии",logger.Log))return;
-            // Exactly the same fresh saved-DWG reader, resolved line tags and stable handles as audit / SELECTBYLINE.
             var project=Autodesk.ProcessPower.PlantInstance.PlantApplication.CurrentProject??throw new InvalidOperationException("Откройте проект Plant 3D.");
             var piping=(Autodesk.ProcessPower.P3dProjectParts.PipingProject)project.ProjectParts["Piping"];
             string projectIso=Path.Combine(piping.ProjectDirectory,"Isometric");

@@ -4,6 +4,7 @@ internal static class SlopeNotation
 {
     public static void Add(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,int turns,List<Stroke> strokes,List<Annotation> labels,IReadOnlyList<PipeDimension> dimensions,Func<ModelPoint,string,SheetPoint>? projectSource=null)
     {
+        var dimensionedBends=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach(var fitting in snapshot.Parts.Where(part=>part.Component==ComponentKind.Elbow||part.CatalogClass=="PipeBend"))
         {
             var ports=fitting.Ports.Where(port=>port.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
@@ -14,11 +15,34 @@ internal static class SlopeNotation
             double cosine=(a.X*b.X+a.Y*b.Y+a.Z*b.Z)/lengths;
             double turn=Math.Acos(Math.Clamp(-cosine,-1d,1d))*180/Math.PI;
             if(Math.Abs(turn-90)<.01)continue;
+            dimensionedBends.Add(fitting.Handle);
             var first=projectSource?.Invoke(ports[0].Position,fitting.Handle)??project(ports[0].Position);
             var last=projectSource?.Invoke(ports[1].Position,fitting.Handle)??project(ports[1].Position);
             var center=new SheetPoint((first.X+last.X)/2,(first.Y+last.Y)/2);
+            SheetPoint? angularAnchor=null;
+            if(PipelineTopology.ElbowCorner(fitting,ports[0],ports[1]) is {} axisCorner)
+            {
+                var vertex=projectSource?.Invoke(axisCorner,fitting.Handle)??project(axisCorner);
+                var incoming=new SheetPoint(vertex.X-first.X,vertex.Y-first.Y);
+                var outgoing=new SheetPoint(last.X-vertex.X,last.Y-vertex.Y);
+                double u=Math.Sqrt(incoming.X*incoming.X+incoming.Y*incoming.Y);
+                double v=Math.Sqrt(outgoing.X*outgoing.X+outgoing.Y*outgoing.Y);
+                if(u>.01&&v>.01&&Math.Abs(incoming.X*outgoing.Y-incoming.Y*outgoing.X)>.001)
+                {
+                    double bx=incoming.X/u+outgoing.X/v,by=incoming.Y/u+outgoing.Y/v;
+                    double length=Math.Sqrt(bx*bx+by*by);
+                    if(length>.001)
+                    {
+                        const double reach=9;
+                        center=new(vertex.X+reach*bx/length,vertex.Y+reach*by/length);
+                        var ray=new SheetPoint(vertex.X+incoming.X,vertex.Y+incoming.Y);
+                        strokes.Add(new(fitting.Handle,"bend-dimension",new[]{vertex,ray,last,center}));
+                        angularAnchor=center;
+                    }
+                }
+            }
             labels.Add(new(fitting.Handle,"bend-angle",new(center.X+2,center.Y+3),
-                turn.ToString("0.##",CultureInfo.InvariantCulture)+"°"));
+                turn.ToString("0.##",CultureInfo.InvariantCulture)+"°",Anchor:angularAnchor));
         }
         var pipes=snapshot.Parts.Where(p=>p.Component==ComponentKind.Pipe)
             .Select(part=>(Part:part,Ports:part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray()))
@@ -33,6 +57,24 @@ internal static class SlopeNotation
             .SelectMany(row=>(row.SourceIds??new[]{row.SourceId}).Select(handle=>(Handle:handle,Row:row)))
             .ToLookup(item=>item.Handle,item=>item.Row,StringComparer.OrdinalIgnoreCase);
         var drawnRuns=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var partsByHandle=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
+        var redundantBends=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var neighbors=snapshot.Connections.SelectMany(c=>new[]{(From:c.FirstHandle,To:c.SecondHandle),(From:c.SecondHandle,To:c.FirstHandle)})
+            .ToLookup(link=>link.From,link=>link.To,StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> ConnectedBends(IEnumerable<string> sources)
+        {
+            var seen=sources.ToHashSet(StringComparer.OrdinalIgnoreCase);
+            foreach(string source in seen)
+                if(dimensionedBends.Contains(source))yield return source;
+            var queue=new Queue<string>(seen);
+            while(queue.TryDequeue(out string? handle))
+                foreach(var other in neighbors[handle])
+                {
+                    if(!seen.Add(other)||!partsByHandle.TryGetValue(other,out var neighbor))continue;
+                    if(neighbor.IsConnector)queue.Enqueue(other);
+                    else if(dimensionedBends.Contains(other))yield return other;
+                }
+        }
         foreach(var (part,ports) in pipes)
         {
             SheetPoint At(ModelPoint point)=>projectSource is null?project(point):projectSource(point,part.Handle);
@@ -99,10 +141,10 @@ internal static class SlopeNotation
             // The angular dimension is a projected circular arc in the actual 3D slope plane.
             var rise=new ModelPoint(dx-reference.X,dy-reference.Y,elevationPlane?dz:0);
             double riseLength=Math.Sqrt(rise.X*rise.X+rise.Y*rise.Y+rise.Z*rise.Z);
-            AddProjectionLength(part.Handle,start,corner,tip,refLength,labels);
-            AddProjectionLength(part.Handle,corner,tip,start,riseLength,labels);
+            AddProjectionLength(part.Handle,start,corner,tip,refLength,labels,strokes);
+            AddProjectionLength(part.Handle,corner,tip,start,riseLength,labels,strokes);
             double alpha=angle*Math.PI/180;
-            double radius=Math.Min(10,Math.Min(la,lb)*.5);
+            double radius=Math.Min(15,Math.Min(la,lb)*.65);
             SheetPoint Arc(double theta)
             {
                 var vector=new ModelPoint(reference.X/refLength*Math.Cos(theta)+rise.X/riseLength*Math.Sin(theta),reference.Y/refLength*Math.Cos(theta)+rise.Y/riseLength*Math.Sin(theta),rise.Z/riseLength*Math.Sin(theta));
@@ -120,10 +162,14 @@ internal static class SlopeNotation
             }
             Arrow(arc[0],arc[1]);Arrow(arc[^1],arc[^2]);
             var labelAnchor=Arc(alpha/2);
-            labels.Add(new(part.Handle,"slope-angle",new(labelAnchor.X+2,labelAnchor.Y+3),angle.ToString("0.#",CultureInfo.InvariantCulture)+"°"));
+            labels.Add(new(part.Handle,"slope-angle",new(labelAnchor.X-3,labelAnchor.Y+2),
+                angle.ToString("0.#",CultureInfo.InvariantCulture)+"°",Anchor:labelAnchor));
+            redundantBends.UnionWith(ConnectedBends(overall?.SourceIds??new[]{part.Handle}));
         }
+        labels.RemoveAll(label=>label.Role=="bend-angle"&&redundantBends.Contains(label.SourceId));
+        strokes.RemoveAll(stroke=>stroke.Role=="bend-dimension"&&redundantBends.Contains(stroke.SourceId));
     }
-    static void AddProjectionLength(string source,SheetPoint a,SheetPoint b,SheetPoint opposite,double length,List<Annotation> labels)
+    static void AddProjectionLength(string source,SheetPoint a,SheetPoint b,SheetPoint opposite,double length,List<Annotation> labels,List<Stroke> strokes)
     {
         if(length<.5)return;
         double dx=b.X-a.X,dy=b.Y-a.Y,span=Math.Sqrt(dx*dx+dy*dy);
@@ -134,7 +180,9 @@ internal static class SlopeNotation
         if((opposite.X-a.X)*nx+(opposite.Y-a.Y)*ny>0){nx=-nx;ny=-ny;}
         string text=Math.Round(length,MidpointRounding.AwayFromZero).ToString("0",CultureInfo.InvariantCulture);
         var point=new SheetPoint((a.X+b.X)/2+nx*4-ux*text.Length,(a.Y+b.Y)/2+ny*4-uy*text.Length);
-        labels.Add(new(source,"slope-projection",point,text,Rotation:Math.Atan2(uy,ux)));
+        var midpoint=new SheetPoint((a.X+b.X)/2,(a.Y+b.Y)/2);
+        strokes.Add(new(source,"slope-projection-dimension",new[]{a,b}));
+        labels.Add(new(source,"slope-projection",point,text,Anchor:midpoint,Rotation:Math.Atan2(uy,ux)));
     }
 
     static void Hatch(string source,SheetPoint a,SheetPoint b,SheetPoint c,List<Stroke> strokes)

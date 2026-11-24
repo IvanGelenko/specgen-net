@@ -21,7 +21,6 @@ public static class LineViewPlanner
         var perView=TimeSpan.FromSeconds(options.Advanced.ViewTimeSeconds);
         var failures=new List<string>();
         LineLayoutResult? best=null;
-        (int Diagrams,int Pages,int DimensionCrossings) bestScore=(int.MaxValue,int.MaxValue,int.MaxValue);
         foreach(int turn in views)
         {
             token.ThrowIfCancellationRequested();
@@ -36,15 +35,11 @@ public static class LineViewPlanner
                     rememberedView==turn?remembered:null,saveLayout?value=>cache=value:null,
                     remaining<perView?remaining:perView,options.MinimumPipeLength,options.Advanced);
 
-                var score=(Diagrams:sheets.Count(sheet=>!sheet.Scene.BomOnly),Pages:sheets.Count,
-                    DimensionCrossings:sheets.Sum(sheet=>DimensionRouting.CrossingCount(sheet.Scene.Dimensions)));
-                if(score.CompareTo(bestScore)<0)
+                if(best is null||LayoutQuality.Compare(sheets,best.Sheets)<0)
                 {
                     best=new(turn,sheets,cache);
-                    bestScore=score;
                 }
-                // A clean single sheet already satisfies the primary criteria.
-                if(!options.AutomaticView||rememberedView==turn||score is (1,1,0))break;
+                if(!options.AutomaticView||rememberedView==turn)break;
             }
             catch(Exception error) when(options.AutomaticView&&error is
                 (SheetCapacityException or PlanningLimitException or LayoutProjectionException))

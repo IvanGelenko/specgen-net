@@ -17,7 +17,9 @@ public sealed record PipeDimension(string SourceId, SheetPoint Start, SheetPoint
 }
 public sealed record BomRow(int Position, string Kind, string Description, string Standard, double Quantity, string Unit, IReadOnlyList<string> Handles,string Identifier = "",BomCategory Category=BomCategory.Miscellaneous)
 {
-    public string QuantityText => Unit.Trim()=="м" ? (Quantity>0?Math.Max(.1,Math.Ceiling(Quantity*10-1e-9)/10):0).ToString("0.0",CultureInfo.InvariantCulture) : Quantity.ToString("0.###",CultureInfo.InvariantCulture);
+    public string QuantityText => Unit.Trim()=="м"
+        ? Math.Round(Quantity,2,MidpointRounding.AwayFromZero).ToString("F2",CultureInfo.GetCultureInfo("ru-RU"))
+        : Quantity.ToString("0.######",CultureInfo.InvariantCulture);
     public string Designation => string.IsNullOrWhiteSpace(Identifier)?Standard:Identifier;
 }
 public sealed record SheetScene(string Line, IReadOnlyList<Stroke> Strokes, IReadOnlyList<Annotation> Annotations,
@@ -35,20 +37,22 @@ public static class SheetPlanner
     static readonly Regex BendAngle = new(@"(?<![\p{L}\d])(?:У|угол(?:\s+(?:гиба|изгиба))?)\s*=\s*("+BendNumber+@")\b(?:\s*(?:°|град\b\.?))?",CatalogTextOptions);
     static readonly Regex BendLength = new(@"(?<![\p{L}\d])длина(?:\s+трубы)?\s*=\s*("+BendNumber+@")\b(?:\s*мм\b)?",CatalogTextOptions);
     static readonly Regex BendTails = new(@"[,;]\s*[ДD][12]\s*=\s*"+BendNumber+@"(?:\s*мм\b)?(?=\s*[,;]|\s*$)",CatalogTextOptions);
-    static readonly Regex BendPipeText = new(@"(?<!\p{L})труба(?!\p{L})",CatalogTextOptions);
+    static readonly Regex PipeName = new(@"(?<!\p{L})труба(?!\p{L})",CatalogTextOptions);
     static readonly Regex BomStandard = new(
         @"(?<![\p{L}\p{N}])(?:ГОСТ(?:\s*Р)?|ОСТ)\s*\d+(?:\s*[-‐‑–—.]\s*\d+)*(?![\p{L}\p{N}]|\s*[-‐‑–—.]\s*\d)",
         CatalogTextOptions);
-    static string FormatBendBomDescription(string description,out string pipeStandard)
+    static string FormatBendBomDescription(string description)
     {
         description=BendRadius.Replace(description,"Р=$1");
         description=BendAngle.Replace(description,"α=$1°");
         description=BendLength.Replace(description,"L=$1");
-        description=BendTails.Replace(description,"");
-
+        return BendTails.Replace(description,"");
+    }
+    static string ExtractPipeStandard(string description,out string pipeStandard)
+    {
         // The slash separates the pipe standard from the material grade and its standard.
         pipeStandard="";
-        var pipe=BendPipeText.Match(description);
+        var pipe=PipeName.Match(description);
         if(!pipe.Success)return description;
         var standard=BomStandard.Match(description,pipe.Index+pipe.Length);
         if(!standard.Success)return description;
@@ -107,23 +111,19 @@ public static class SheetPlanner
         var symbols=new List<SymbolGlyph>();var strokes=new List<Stroke>();var labels=new List<Annotation>();var dimensions=new List<PipeDimension>();
         var rows=new List<BomRow>();var positions=new Dictionary<string,int>();
         foreach(var group in physical.Concat(snapshot.Accessories??Array.Empty<Part>())
-            .Where(p=>input.ValveKitExclusions?.Contains(p.Handle)!=true)
-            .Where(p=>!instrumentCalloutsOnly||BomCategories.Classify(p)!=BomCategory.Instruments)
-            .GroupBy(p=>string.Join("\u001f",p.CatalogClass,BomDescription(p),Get(p,"DesignStd"),Get(p,"Size"),Get(p,"WallThickness"),Get(p,"Spec"),Get(p,"Material"),BomCategories.Classify(p)==BomCategory.Fasteners?Get(p,"Length"):"",Get(p,"BoltSize"),Get(p,"IsoQuantityUnit"),PartIdentifier.Read(p))).OrderBy(g=>BomCategories.Classify(g.First())).ThenBy(g=>PartDiameter.Read(g.First())??double.MaxValue).ThenBy(g=>BomCategories.FittingOrder(g.First())).ThenBy(g=>g.Key,StringComparer.Ordinal))
+            .Where(p=>BomQuantities.Includes(p,input.ValveKitExclusions,instrumentCalloutsOnly))
+            .GroupBy(p=>string.Join("\u001f",p.CatalogClass,BomDescription(p),Get(p,"DesignStd"),Get(p,"Size"),Get(p,"WallThickness"),Get(p,"Spec"),Get(p,"Material"),BomCategories.Classify(p)==BomCategory.Fasteners?Get(p,"Length"):"",Get(p,"BoltSize"),BomQuantities.Unit(p,excludeFlangeHardware),PartIdentifier.Read(p))).OrderBy(g=>BomCategories.Classify(g.First())).ThenBy(g=>PartDiameter.Read(g.First())??double.MaxValue).ThenBy(g=>BomCategories.FittingOrder(g.First())).ThenBy(g=>g.Key,StringComparer.Ordinal))
         {
-            var first=group.First(); bool pipe=first.Component==ComponentKind.Pipe; double qty=0;
-            foreach(var p in group)
-            {
-                if(pipe){var e=Ends(p);if(e.Length!=2)throw new InvalidDataException($"{p.Handle}: pipe requires S1/S2");qty+=e[0].Position.DistanceTo(e[1].Position)/1000;}
-                else if(Get(p,"IsoQuantity").Length>0){if(!double.TryParse(Get(p,"IsoQuantity"),NumberStyles.Float,CultureInfo.InvariantCulture,out var amount)||!double.IsFinite(amount)||amount<=0)throw new InvalidDataException($"{p.Handle}: неверное количество в спецификации");qty+=amount;}
-                else qty++;
-            }
+            var first=group.First();
+            double qty=group.Sum(BomQuantities.Amount);
             int position=rows.Count+1;
             string standard=Get(first,"DesignStd"),identifier=PartIdentifier.Read(first);
             var description=BomDescription(first);
             string pipeStandard="";
             if(first.CatalogClass=="PipeBend")
-                description=FormatBendBomDescription(description,out pipeStandard);
+                description=FormatBendBomDescription(description);
+            if(first.Component==ComponentKind.Pipe||first.CatalogClass=="PipeBend")
+                description=ExtractPipeStandard(description,out pipeStandard);
             if(pipeStandard.Length>0)
             {
                 standard=pipeStandard;
@@ -133,10 +133,7 @@ public static class SheetPlanner
             else description=RemoveRepeatedStandards(description,string.IsNullOrWhiteSpace(identifier)?standard:identifier);
             if(BomCategories.Classify(first)==BomCategory.Fasteners&&Get(first,"Length").Length>0)description+=" (L="+Get(first,"Length")+" мм)";
             var category=BomCategories.Classify(first);
-            string unit=Get(first,"IsoQuantityUnit");
-            if(pipe)unit="м";
-            else if(excludeFlangeHardware&&category==BomCategory.Valves)unit="компл.";
-            else if(unit.Length==0)unit="шт.";
+            string unit=BomQuantities.Unit(first,excludeFlangeHardware);
             rows.Add(new(position,first.CatalogClass,description,standard,qty,unit,group.Select(p=>p.Handle).ToArray(),identifier,category));
             foreach(var p in group)positions[p.Handle]=position;
         }

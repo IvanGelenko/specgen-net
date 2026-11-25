@@ -45,14 +45,27 @@ internal static class SheetSetIntegrity
             if((supports.Contains(c.FirstHandle)||supports.Contains(c.SecondHandle))&&owner.TryGetValue(c.FirstHandle,out int a)&&owner.TryGetValue(c.SecondHandle,out int b)&&a!=b)
                 throw new InvalidDataException("A support was separated from its connected pipe.");
         var excluded=valveKitExclusions??(excludeFlangeHardware?ValveKitBomPolicy.Exclusions(source):null);
-        var expected=(source.Accessories??Array.Empty<Part>()).Select(p=>p.Handle)
-            .Where(handle=>excluded?.Contains(handle)!=true).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var bomHandles=sheets.SelectMany(s=>s.Scene.BillOfMaterials).SelectMany(r=>r.Handles).ToArray();
-        var actual=bomHandles.Where(expected.Contains).ToArray();
-        if(actual.Length!=expected.Count||!expected.SetEquals(actual))
-            throw new InvalidDataException("Sheet partition lost or duplicated connector accessories.");
-        if(excluded is not null&&bomHandles.Any(excluded.Contains))
-            throw new InvalidDataException("В спецификацию попали детали исключённого комплекта арматуры.");
+        bool instrumentsOnly=sheets.FirstOrDefault()?.Scene.InstrumentCalloutsOnly??false;
+        var expected=source.Parts.Concat(source.Accessories??Array.Empty<Part>())
+            .Where(part=>BomQuantities.Includes(part,excluded,instrumentsOnly))
+            .ToDictionary(part=>part.Handle,StringComparer.OrdinalIgnoreCase);
+        foreach(var sheet in sheets)
+        foreach(var row in sheet.Scene.BillOfMaterials)
+        {
+            double quantity=0;
+            foreach(string handle in row.Handles)
+            {
+                if(!expected.Remove(handle,out var part))
+                    throw new InvalidDataException($"Лист {sheet.Number}, позиция {row.Position}: лишний или повторный элемент {handle}.");
+                if(row.Unit!=BomQuantities.Unit(part,excludeFlangeHardware))
+                    throw new InvalidDataException($"Лист {sheet.Number}, позиция {row.Position}: неверная единица для {handle}.");
+                quantity+=BomQuantities.Amount(part);
+            }
+            if(row.Handles.Count==0||!double.IsFinite(quantity)||!double.IsFinite(row.Quantity)||Math.Abs(quantity-row.Quantity)>1e-9)
+                throw new InvalidDataException($"Лист {sheet.Number}, позиция {row.Position}: количество {row.Quantity:R} вместо {quantity:R}.");
+        }
+        if(expected.Count>0)
+            throw new InvalidDataException($"В спецификации пропущены элементы: {string.Join(", ",expected.Keys.Take(10))}.");
         var welds=sheets.SelectMany(s=>s.Scene.Welds??Array.Empty<WeldMarker>()).Select(w=>string.Join("|",new[]{w.FirstHandle+":"+w.FirstPort,w.SecondHandle+":"+w.SecondPort}.OrderBy(x=>x,StringComparer.OrdinalIgnoreCase))).ToArray();
         if(welds.Distinct(StringComparer.OrdinalIgnoreCase).Count()!=welds.Length)
             throw new InvalidDataException("A boundary weld was assigned to more than one sheet.");

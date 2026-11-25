@@ -22,9 +22,25 @@ if(Math.Abs(projected.X-sourceLength.Millimeters)<1) throw new Exception("Expect
 
 
 void Assert(bool value,string message){checks++;if(!value)throw new Exception(message);}
+foreach(var sample in new[]{(Value:1.01,Text:"1,01"),(Value:1.2,Text:"1,20"),(Value:.001,Text:"0,00"),
+    (Value:2.0,Text:"2,00"),(Value:1.234567,Text:"1,23"),(Value:1.235,Text:"1,24"),(Value:.005,Text:"0,01")})
+{
+    var row=new BomRow(1,"Pipe","","",sample.Value,"м",Array.Empty<string>());
+    Assert(row.QuantityText==sample.Text,$"Expected {sample.Text} in the length cell, got {row.QuantityText}");
+    Assert(row.Quantity==sample.Value,"Formatting must retain the original model length");
+}
 Part Pipe(string h,ModelPoint a,ModelPoint b)=>new("test.dwg",h,"AcPpDb3dPipe","L1",new[]{new Port("S1",a,new(-1,0,0)),new Port("S2",b,new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Pipe"},{"PartSizeLongDesc","Pipe 100"},{"Length","1000"}});
 var first=Pipe("A",new(0,0,0),new(1000,0,0));var second=Pipe("B",new(1000,0,0),new(2000,0,0));
 PipelineSnapshot Snapshot(Part[] parts,Connection[] links)=>new(1,"test.dwg",parts,links,Array.Empty<string>());
+var coldDrawnPipe=first with{Properties=new Dictionary<string,string>(first.Properties)
+    {["PartSizeLongDesc"]="Труба 32x3 ГОСТ 8734-75/В 09Г2С ГОСТ 8733-74"}};
+var coldDrawnRow=SheetPlanner.Build(Snapshot(new[]{coldDrawnPipe},Array.Empty<Connection>())).BillOfMaterials.Single();
+Assert(coldDrawnRow.Designation=="ГОСТ 8734-75"&&coldDrawnRow.Description=="Труба 32x3 В 09Г2С ГОСТ 8733-74",
+    "Straight pipe BOM extracts the product standard and retains the material standard when DesignStd is empty");
+var taggedPipe= coldDrawnPipe with{Properties=new Dictionary<string,string>(coldDrawnPipe.Properties){["Tag"]="P-01",["DesignStd"]="ГОСТ 8734-75"}};
+var taggedPipeRow=SheetPlanner.Build(Snapshot(new[]{taggedPipe},Array.Empty<Connection>())).BillOfMaterials.Single();
+Assert(taggedPipeRow.Designation=="P-01 / ГОСТ 8734-75"&&taggedPipeRow.Description==coldDrawnRow.Description,
+    "Straight pipe BOM places the product standard beside an existing identifier exactly once");
 foreach(int sign in new[]{-1,1})
 {
     var neck=Pipe("vent-drain",new(0,0,0),new(0,0,100*sign));
@@ -896,6 +912,27 @@ var hardwareSnapshot=linked with{Accessories=new[]{Accessory("g1","A","Gasket","
 var hardwareScene=SheetPlanner.Build(hardwareSnapshot);
 Near(hardwareScene.BillOfMaterials.Single(r=>r.Category==BomCategory.Gaskets).Quantity,2);
 Near(hardwareScene.BillOfMaterials.Single(r=>r.Category==BomCategory.Fasteners).Quantity,20);
+Assert(hardwareScene.BillOfMaterials.Single(r=>r.Category==BomCategory.Fasteners).Unit=="компл.",
+    "Catalog fastener kits retain their unit");
+var fastener=Accessory("b3","A","BoltSet","1");
+var fastenerProperties=new Dictionary<string,string>(fastener.Properties){{"NumberInSet","8"}};
+Near(BomQuantities.Amount(fastener with{Properties=fastenerProperties}),8);
+fastenerProperties["NumberInSet"]="7.5";
+bool invalidFastenersRejected=false;
+try{BomQuantities.Amount(fastener with{Properties=fastenerProperties});}
+catch(InvalidDataException){invalidFastenersRejected=true;}
+Assert(invalidFastenersRejected,"A fractional NumberInSet cannot silently become a kit quantity");
+foreach(var badScene in new[]
+{
+    hardwareScene with{BillOfMaterials=hardwareScene.BillOfMaterials.Where(row=>row.Unit!="м").ToArray()},
+    hardwareScene with{BillOfMaterials=hardwareScene.BillOfMaterials.Select(row=>row.Unit=="м"?row with{Quantity=row.Quantity+.001}:row).ToArray()}
+})
+{
+    bool rejected=false;
+    try{SheetSetIntegrity.Validate(hardwareSnapshot,new[]{new PlannedSheet(1,1,hardwareSnapshot,badScene)},false);}
+    catch(InvalidDataException){rejected=true;}
+    Assert(rejected,"Publication rejects missing pipe positions and a 1 mm discrepancy in a BOM row");
+}
 Assert(hardwareScene.Dimensions.Select(d=>d.Millimeters).SequenceEqual(scene.Dimensions.Select(d=>d.Millimeters)),"Gaskets and fasteners in BOM do not create extra dimension chains");
 Assert(!hardwareScene.Strokes.Any(s=>s.SourceId is "g1" or "g2" or "b1" or "b2"),"Connector accessories do not create schematic geometry");
 var splitHardware=SheetSetPlanner.Build(tallSnapshot with{Accessories=new[]{Accessory("left-gasket","T00","Gasket","1"),Accessory("right-gasket","T39","Gasket","1")}});
@@ -1300,17 +1337,13 @@ foreach(string diameter in new[]{"15","25","32","150"})
     Near((fixtureCatalog with{Style=uniformStyle}).ScaleFor(sized),10);
 }
 Assert(uniformStyle.SmallBoreDiameter==25&&uniformStyle.VentDrainMaxComponents==6&&uniformStyle.VentDrainMaxPipes==1,"Uniform symbol scaling preserves vent/drain recognition settings");
-foreach(var sample in new[]{(Value:1.01,Text:"1.1"),(Value:1.2,Text:"1.2"),(Value:1.2000000000000002,Text:"1.2"),(Value:.001,Text:"0.1"),(Value:2.0,Text:"2.0")})
-{
- var row=new BomRow(1,"Pipe","","",sample.Value,"м",Array.Empty<string>());Assert(row.QuantityText==sample.Text,"Meter quantities round upward to tenths for display");Near(row.Quantity,sample.Value);
-}
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","FlowMeter"},{"ContentIsoSymbolDefinition","TYPE=INSTRUMENT"}}})==BomCategory.Valves,"Flowmeters belong to pipeline valves even with an instrument ISO type");
 Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName","ControlValve"},{"ContentIsoSymbolDefinition","TYPE=INSTRUMENT"}}})==BomCategory.Valves,"Instrumented control valves remain pipeline valves");
 foreach(string instrument in new[]{"PressureGauge","Sensor","Thermometer"})Assert(BomCategories.Classify(first with{Properties=new Dictionary<string,string>{{"PnPClassName",instrument}}})==BomCategory.Instruments,"Sensors, gauges and thermometers remain instruments");
 var diameterParts=new[]{100,25,10}.Select((dn,i)=>Pipe("diameter-"+dn,new(0,i*1000,0),new(1302,i*1000,0)) with{Properties=new Dictionary<string,string>{{"PnPClassName","Pipe"},{"NominalDiameter",dn.ToString()},{"Size",dn.ToString()},{"PartSizeLongDesc","DN"+dn}}}).ToArray();
 var diameterScene=SheetPlanner.Build(Snapshot(diameterParts,Array.Empty<Connection>()));
 Assert(diameterScene.BillOfMaterials.Select(r=>r.Description).SequenceEqual(new[]{"DN10","DN25","DN100"}),"Pipe BOM sorts numeric diameter, not string or handle order");
-Assert(diameterScene.BillOfMaterials.All(r=>r.QuantityText=="1.4"&&Math.Abs(r.Quantity-1.302)<1e-8),"Displayed meter rounding does not change aggregated model lengths");
+Assert(diameterScene.BillOfMaterials.All(r=>r.QuantityText=="1,30"&&Math.Abs(r.Quantity-1.302)<1e-8),"Only displayed quantities round aggregated model lengths");
 var minimalPipe=Pipe("readable-short",new(0,0,0),new(1,0,0));var minimalLayout=new SchematicLayout(Snapshot(new[]{minimalPipe},Array.Empty<Connection>()),compactLevel:3);
 var minimalStart=minimalLayout.Project(minimalPipe.Ports[0].Position,minimalPipe.Handle);var minimalEnd=minimalLayout.Project(minimalPipe.Ports[1].Position,minimalPipe.Handle);
 double minimalPaperLength=Math.Sqrt(Math.Pow(minimalEnd.X-minimalStart.X,2)+Math.Pow(minimalEnd.Y-minimalStart.Y,2));

@@ -128,19 +128,20 @@ internal static class PlantSnapshotReader
                 {
                     var subpart=connector.GetSubPart(index);if(subpart is WeldSubPart)continue;
                     var properties=subpart.PartSizeProperties;
-                    if(properties is null)continue;
+                    if(properties is null)
+                        throw new InvalidDataException($"{id.Handle}#{index}: не прочитаны каталожные свойства детали соединения.");
                     var values=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
                     foreach(var propertyName in properties.PropNames)
                     {if(propertyName is not string key||string.IsNullOrWhiteSpace(key))continue;var value=properties.PropValue(key);if(value is not null&&value is not DBNull)values[key]=Convert.ToString(value,System.Globalization.CultureInfo.InvariantCulture)??"";}
-                    string kind=properties.Type??"";
-                    if(kind.Length==0)kind=subpart is BoltSetSubPart?"BoltSet":values.GetValueOrDefault("PnPClassName","");
+                    string kind=subpart is BoltSetSubPart?"BoltSet":properties.Type??"";
+                    if(kind.Length==0)kind=values.GetValueOrDefault("PnPClassName","");
                     values["PnPClassName"]=kind;values["ConnectorHandle"]=id.Handle.ToString();
                     if(string.IsNullOrWhiteSpace(values.GetValueOrDefault("DesignStd")))values["DesignStd"]=values.GetValueOrDefault("CompatibleStandard","");
                     if(subpart is BoltSetSubPart bolts)
                     {
                         values["Length"]=bolts.Length.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                        values["IsoQuantity"]=values.GetValueOrDefault("NumberInSet","1");values["IsoQuantityUnit"]="компл.";
-                        if(!values.ContainsKey("NumberInSet"))warnings.Add($"{id.Handle}: у крепёжного комплекта нет NumberInSet; учтён один комплект соединения.");
+                        values["IsoQuantity"]=values.GetValueOrDefault("NumberInSet","");
+                        values["IsoQuantityUnit"]="компл.";
                     }
                     else {values["IsoQuantity"]="1";values["IsoQuantityUnit"]="шт.";}
                     accessories.Add(new(filename,id.Handle+"#"+index,"ConnectorSubPart",line,Array.Empty<IsoGenerator.Core.Port>(),values));

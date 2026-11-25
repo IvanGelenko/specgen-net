@@ -79,8 +79,68 @@ public sealed class SchematicLayout
             incident[a].Add((b,i));incident[b].Add((a,i));
         }
         // Component geometry remains at the user-selected library scale.
+        var cycleSolver=new CycleLengthSolver(graph,quarterTurns);ClosedLoops=cycleSolver.Count;
         var pipeTotals=graph.Edges.Where(e=>e.Kind==ComponentKind.Pipe).GroupBy(e=>e.Source,StringComparer.OrdinalIgnoreCase).ToDictionary(g=>g.Key,g=>g.Sum(e=>graph.Nodes[e.A].Point.DistanceTo(graph.Nodes[e.B].Point)),StringComparer.OrdinalIgnoreCase);
-        var lowerBounds=graph.Edges.Select(edge=>edge.Kind==ComponentKind.Pipe?(execution?.MinimumPipeLength??10):0).ToArray();
+        var upperBounds=graph.Edges.Select(edge=>edge.Kind==ComponentKind.Pipe&&graph.CappedVentDrainPipes.Contains(edge.Source)
+            ?VentDrainPipePolicy.MaxPaperLength*graph.Nodes[edge.A].Point.DistanceTo(graph.Nodes[edge.B].Point)/pipeTotals[edge.Source]
+            :double.PositiveInfinity).ToArray();
+        double minimumPipeLength=execution?.MinimumPipeLength??10;
+        var dipLengths=new Dictionary<int,double>();
+        var dipPairs=new List<(int Left,int Right,double LeftRise,double RightRise,double MinRise,double MaxRise)>();
+        for(int i=0;i<graph.Edges.Count;i++)
+        {
+            var cross=graph.Edges[i];
+            var first=graph.Nodes[cross.A];var second=graph.Nodes[cross.B];
+            if(cross.Kind!=ComponentKind.Elbow||first.Kind!=RouteNodeKind.Axis||second.Kind!=RouteNodeKind.Axis||
+               Math.Abs(first.Point.Z-second.Point.Z)>.01||parts[cross.Source].CatalogClass!="PipeBend")continue;
+            var left=DipLeg(cross.A);var right=DipLeg(cross.B);
+            if(left is not {} a||right is not {} b||a.Edge==b.Edge||
+               Math.Abs(a.Top.Z-b.Top.Z)>.01||Math.Abs(a.Bottom.Z-b.Bottom.Z)>.01||
+               Math.Abs(a.OutletElevation-b.OutletElevation)>.01||
+               cycleSolver.UsesEdge(a.Edge)||cycleSolver.UsesEdge(b.Edge))continue;
+            double modelLength=((a.Top.Z-a.Bottom.Z)+(b.Top.Z-b.Bottom.Z))/2;
+            double paperLength=SymbolLength(cross)*modelLength/first.Point.DistanceTo(second.Point);
+            double limit=Math.Max(RoundPipeLength(minimumPipeLength),Math.Floor(paperLength/pipeGridStep)*pipeGridStep);
+            double minRise=Math.Max(Math.Min(minimumPipeLength,upperBounds[a.Edge])+a.SymbolRise,
+                Math.Min(minimumPipeLength,upperBounds[b.Edge])+b.SymbolRise);
+            double hardMaxRise=Math.Min(upperBounds[a.Edge]+a.SymbolRise,upperBounds[b.Edge]+b.SymbolRise);
+            if(hardMaxRise<minRise)continue;
+
+            // The compact limit follows model proportions. Allow only the extra length
+            // required for level outlets when the shorter leg is already at its minimum.
+            double maxRise=Math.Min(hardMaxRise,Math.Max(minRise,limit+Math.Min(a.SymbolRise,b.SymbolRise)));
+            dipLengths[a.Edge]=dipLengths[b.Edge]=modelLength;
+            upperBounds[a.Edge]=maxRise-a.SymbolRise;
+            upperBounds[b.Edge]=maxRise-b.SymbolRise;
+            dipPairs.Add((a.Edge,b.Edge,a.SymbolRise,b.SymbolRise,minRise,maxRise));
+
+            (int Edge,ModelPoint Bottom,ModelPoint Top,double OutletElevation,double SymbolRise)? DipLeg(int corner)
+            {
+                var tangent=incident[graph.Root(corner)].Where(link=>link.Edge!=i&&
+                    graph.Edges[link.Edge].Source==cross.Source).ToArray();
+                if(tangent.Length!=1||!incident.TryGetValue(tangent[0].Other,out var links)||links.Count!=2)return null;
+                var next=links.Single(link=>link.Edge!=tangent[0].Edge);
+                if(graph.Edges[next.Edge].Kind!=ComponentKind.Pipe)return null;
+                var bottom=graph.Nodes[tangent[0].Other].Point;var top=graph.Nodes[next.Other].Point;
+                var lowCorner=graph.Nodes[corner].Point;
+                if(top.Z<=bottom.Z+.01||bottom.Z<=lowCorner.Z||
+                   Math.Abs(bottom.X-lowCorner.X)>.01||Math.Abs(bottom.Y-lowCorner.Y)>.01||
+                   Math.Abs(top.X-bottom.X)>.01||Math.Abs(top.Y-bottom.Y)>.01)return null;
+                foreach(var rise in incident[next.Other].Where(link=>graph.Edges[link.Edge].Kind==ComponentKind.Elbow))
+                {
+                    var outletCorner=graph.Nodes[rise.Other].Point;
+                    if(Math.Abs(outletCorner.X-top.X)>.01||Math.Abs(outletCorner.Y-top.Y)>.01)continue;
+                    if(incident[rise.Other].Any(link=>link.Edge!=rise.Edge&&
+                       graph.Edges[link.Edge].Source==graph.Edges[rise.Edge].Source&&
+                       Math.Abs(graph.Nodes[link.Other].Point.Z-outletCorner.Z)<.01))
+                        return (next.Edge,bottom,top,outletCorner.Z,SymbolLength(graph.Edges[tangent[0].Edge])+
+                            Math.Sign(outletCorner.Z-top.Z)*SymbolLength(graph.Edges[rise.Edge]));
+                }
+                return null;
+            }
+        }
+        var lowerBounds=graph.Edges.Select((edge,i)=>edge.Kind==ComponentKind.Pipe
+            ?Math.Min(minimumPipeLength,upperBounds[i]):0).ToArray();
         var pipeReferences=graph.Edges.Where(e=>e.Kind==ComponentKind.Pipe).Select(e=>graph.Nodes[e.A].Point.DistanceTo(graph.Nodes[e.B].Point)).Where(l=>l>.001).OrderBy(l=>l).ToArray();
         double referencePipeLength=pipeReferences.Length>0?pipeReferences[pipeReferences.Length/2]:1;
         double PaperDemand(double length)=>compactLevel is 1 or 2 or 4 or 5?Math.Sqrt(length*referencePipeLength):length;
@@ -96,6 +156,7 @@ public sealed class SchematicLayout
             if(!isPipe[i]){adjustments[i]=hiddenGaskets.Contains(edge.Source)?1:SymbolLength(edge);continue;}
             var p=projected[graph.Root(edge.A)];var q=projected[graph.Root(edge.B)];
             double dx=q.X-p.X,dy=q.Y-p.Y,length=Math.Sqrt(dx*dx+dy*dy);
+            if(dipLengths.TryGetValue(i,out double dipLength)){demands[i]=PaperDemand(dipLength);continue;}
             demands[i]=PaperDemand(length);
             if(Math.Abs(dx)>Math.Abs(dy))demands[i]*=compactLevel==0?3:2;
             if(pipeExtensions is null||pipeExtensions.Count==0)continue;
@@ -104,7 +165,6 @@ public sealed class SchematicLayout
             adjustments[i]=pipeExtensions.GetValueOrDefault(edge.Source)*fraction+
                 pipeExtensions.GetValueOrDefault(PipeEdgeKey(edge.Source,a,b));
         }
-        var cycleSolver=new CycleLengthSolver(graph,quarterTurns);ClosedLoops=cycleSolver.Count;
         Dictionary<int,SheetPoint> Arrange(double scale,IReadOnlyDictionary<int,double>? pipeLengths=null)
         {
             execution?.Report("Согласование длин участков");
@@ -112,10 +172,19 @@ public sealed class SchematicLayout
             for(int i=0;i<graph.Edges.Count;i++)
             {
                 desired[i]=demands[i]*scale+adjustments[i];
-                if(pipeLengths is not null&&pipeLengths.TryGetValue(i,out double extended))desired[i]=extended;
-                if(isPipe[i])desired[i]=Math.Max(lowerBounds[i],RoundPipeLength(desired[i]));
+                if(pipeLengths is not null&&!dipLengths.ContainsKey(i)&&pipeLengths.TryGetValue(i,out double extended))desired[i]=extended;
+                if(isPipe[i])desired[i]=Math.Clamp(RoundPipeLength(desired[i]),lowerBounds[i],upperBounds[i]);
             }
             desired=cycleSolver.Constrain(desired,pipeGridStep,lowerBounds,execution);
+            // Match the full vertical runs after loop/grid adjustment. The two legs are
+            // outside the loops, and the rigid symbols may require an off-grid pipe length.
+            foreach(var dip in dipPairs)
+            {
+                double preferred=RoundPipeLength(demands[dip.Left]*scale)+Math.Max(dip.LeftRise,dip.RightRise);
+                double rise=Math.Clamp(preferred,dip.MinRise,dip.MaxRise);
+                desired[dip.Left]=rise-dip.LeftRise;
+                desired[dip.Right]=rise-dip.RightRise;
+            }
             var result=new Dictionary<int,SheetPoint>();var components=new List<List<int>>();
             foreach(int root in incident.Keys)
             {
@@ -178,6 +247,7 @@ public sealed class SchematicLayout
         BaseScale=low;
         var arranged=compactLevel==3?minimum:Arrange(low);
         var pipeEdges=Enumerable.Range(0,graph.Edges.Count).Where(i=>graph.Edges[i].Kind==ComponentKind.Pipe).ToArray();
+        var growablePipes=pipeEdges.Where(i=>double.IsPositiveInfinity(upperBounds[i])).ToArray();
         double EdgeLength(int i,Dictionary<int,SheetPoint> p)
         {
             var edge=graph.Edges[i];var a=p[graph.Root(edge.A)];var b=p[graph.Root(edge.B)];return Math.Sqrt(Math.Pow(a.X-b.X,2)+Math.Pow(a.Y-b.Y,2));
@@ -199,8 +269,8 @@ public sealed class SchematicLayout
         // for a longer upward leg. Component geometry stays fixed at its project-library size.
         for(int iteration=0;iteration<(fixedScale is null&&compactLevel==0&&!cycleSolver.HasCycles?10:0);iteration++)
         {
-            var options=(from i in pipeEdges from j in pipeEdges where i<j orderby lengths[i]+lengths[j] select new[]{i,j})
-                .Concat(pipeEdges.OrderBy(i=>lengths[i]).Select(i=>new[]{i}));
+            var options=(from i in growablePipes from j in growablePipes where i<j orderby lengths[i]+lengths[j] select new[]{i,j})
+                .Concat(growablePipes.OrderBy(i=>lengths[i]).Select(i=>new[]{i}));
             bool changed=false;
             // Optional visual growth must not enumerate every pipe pair on every pass.
             // The main scale fit has already filled the available drawing area.

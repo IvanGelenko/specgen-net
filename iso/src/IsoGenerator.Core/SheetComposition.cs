@@ -115,7 +115,12 @@ public static class SheetComposition
         {
             Strokes=scene.Strokes.Select(s=>s with{Points=s.Points.Select(P).ToArray()}).ToArray(),
             Symbols=scene.Symbols?.Select(g=>g with{Origin=P(g.Origin)}).ToArray(),
-            Annotations=scene.Annotations.Select(a=>a.Role is "title" or "status"?a:a with{Position=P(a.Position),Anchor=a.Anchor is {} p?P(p):null,LeaderKnee=a.LeaderKnee is {} k?P(k):null,NearbyAnchors=a.NearbyAnchors?.Select(P).ToArray()}).ToArray(),
+            Annotations=scene.Annotations.Select(a=>a.Role is "title" or "status"?a:a with
+            {
+                Position=P(a.Position),Anchor=a.Anchor is {} p?P(p):null,LeaderKnee=a.LeaderKnee is {} k?P(k):null,
+                NearbyAnchors=a.NearbyAnchors?.Select(P).ToArray(),
+                AngularDimension=a.AngularDimension is {} angle?new(P(angle.Vertex),P(angle.FirstRay),P(angle.SecondRay),P(angle.ArcPoint)):null
+            }).ToArray(),
             Dimensions=scene.Dimensions.Select(d=>d with{Start=P(d.Start),End=P(d.End),DimensionLinePoint=d.DimensionLinePoint is {} l?P(l):null,TextPosition=d.TextPosition is {} t?P(t):null}).ToArray(),
             Welds=scene.Welds?.Select(w=>w with{Position=P(w.Position)}).ToArray()
         };

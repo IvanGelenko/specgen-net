@@ -256,6 +256,23 @@ public class RenderCommands
             Trace("annotations");
             foreach(var label in scene.Annotations.Where(label=>label.Role is not ("title" or "status")))
             {
+                if(label.Role=="bend-angle"&&label.Text=="90°")continue;
+                if(label.Role=="slope-angle"&&label.AngularDimension is {} angle)
+                {
+                    var vertex=Pt(angle.Vertex);
+                    var first=Pt(angle.FirstRay);var second=Pt(angle.SecondRay);
+                    if((first-vertex).CrossProduct(second-vertex).Z<0)(first,second)=(second,first);
+                    // Leave text at AutoCAD's default angular position so it cannot flip the arc to the reflex sector.
+                    var dimension=new Point3AngularDimension(vertex,first,second,Pt(angle.ArcPoint),label.Text,dimensionStyle)
+                    {
+                        Dimtxt=tuning.DimensionTextHeight,Dimasz=tuning.ArrowSize,Dimtad=0,
+                        Dimtih=false,Dimtoh=false,Dimtix=true,Dimatfit=0,Dimse1=true,Dimse2=true,
+                        UsingDefaultTextPosition=true
+                    };
+                    Add(dimension,"ISO-DIMENSION",label.SourceId);
+                    dimensionIds.Add(dimension.ObjectId);
+                    continue;
+                }
                 if(label.Role=="slope-projection"&&label.Anchor is {} midpoint)
                 {
                     var edge=scene.Strokes.Where(stroke=>stroke.Role=="slope-projection-dimension"&&stroke.SourceId==label.SourceId)
@@ -275,33 +292,6 @@ public class RenderCommands
                     };
                     Add(dimension,"ISO-DIMENSION",label.SourceId);
                     dimensionIds.Add(dimension.ObjectId);
-                    continue;
-                }
-                var bend=label.Role=="bend-angle"?scene.Strokes.FirstOrDefault(stroke=>stroke.Role=="bend-dimension"&&stroke.SourceId==label.SourceId):null;
-                if(label.Role=="slope-angle"||bend is not null)
-                {
-                    Point3d center,first,second,arcPoint;
-                    if(bend is not null)
-                    {
-                        center=Pt(bend.Points[0]);first=Pt(bend.Points[1]);second=Pt(bend.Points[2]);arcPoint=Pt(bend.Points[3]);
-                    }
-                    else
-                    {
-                        var triangle=scene.Strokes.Single(stroke=>stroke.Role=="slope-triangle"&&stroke.SourceId==label.SourceId);
-                        var arc=scene.Strokes.Single(stroke=>stroke.Role=="slope-angle-arc"&&stroke.SourceId==label.SourceId);
-                        center=Pt(triangle.Points[0]);first=Pt(arc.Points[0]);second=Pt(arc.Points[^1]);arcPoint=Pt(arc.Points[arc.Points.Count/2]);
-                    }
-                    if((first-center).CrossProduct(second-center).Z<0)(first,second)=(second,first);
-                    // Preserve the true model angle in text, since projection changes the on-paper angle.
-                    var angular=new Point3AngularDimension(center,first,second,arcPoint,label.Text,dimensionStyle)
-                    {
-                        Dimtxt=tuning.DimensionTextHeight,Dimasz=tuning.ArrowSize,Dimtad=1,Dimtmove=2,Dimtix=true,
-                        Dimexo=tuning.ExtensionOffset,Dimexe=tuning.ExtensionOvershoot,UsingDefaultTextPosition=false
-                    };
-                    angular.TextPosition=Pt(new SheetPoint(label.Position.X+label.Text.Length*1.05*tuning.DimensionTextHeight/3.5,
-                        label.Position.Y+tuning.DimensionTextHeight/2));
-                    Add(angular,"ISO-DIMENSION",label.SourceId);
-                    dimensionIds.Add(angular.ObjectId);
                     continue;
                 }
                 if(label.Role=="slope-value"&&scene.Strokes.FirstOrDefault(stroke=>stroke.Role=="slope-indicator"&&stroke.SourceId==label.SourceId) is {} indicator)

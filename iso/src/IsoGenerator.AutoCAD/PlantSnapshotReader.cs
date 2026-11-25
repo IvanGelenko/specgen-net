@@ -14,7 +14,7 @@ internal static class PlantSnapshotReader
 {
     static ModelPoint Point(Autodesk.AutoCAD.Geometry.Point3d p)=>new(p.X,p.Y,p.Z);
     static ModelPoint Vector(Autodesk.AutoCAD.Geometry.Vector3d p)=>new(p.X,p.Y,p.Z);
-    internal static PipelineSnapshot Capture(Database db,string filename,ObjectId seedId,string? selectedLine=null,IReadOnlyCollection<string>? selectedHandles=null,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,CancellationToken cancellationToken=default,Action<int>? report=null,IReadOnlyDictionary<string,string>? drawingLines=null)
+    internal static PipelineSnapshot Capture(Database db,string filename,ObjectId seedId,string? selectedLine=null,IReadOnlyCollection<string>? selectedHandles=null,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,CancellationToken cancellationToken=default,Action<int>? report=null,IReadOnlyDictionary<string,string>? drawingLines=null,bool ignoreBreakPoints=false)
     {
         cancellationToken.ThrowIfCancellationRequested();
         if(db.Insunits!=UnitsValue.Millimeters)throw new InvalidOperationException("Поддерживаются чертежи в миллиметрах.");
@@ -204,6 +204,8 @@ internal static class PlantSnapshotReader
                         string pipeLine=nativePipeIds.TryGetValue(pipe.Handle,out var nativeId)?LineOf(nativeId):pipe.Line;
                         return $"{pipe.Handle} ({(pipeLine.Length==0?"без номера линии":pipeLine)})";
                     }));
+                    if(marker.InformationType==BreakPointPreparation.BreakPointInformationType&&!ignoreBreakPoints)
+                        throw new InvalidDataException($"Линия {line}, маркер {marker.Handle}. Не удалось однозначно привязать обязательную точку разрыва. Трубы-кандидаты: {hosts}. Проверьте привязку в Plant 3D.");
                     warnings.Add($"{marker.Handle}: {markerName} пропущена, найдены несколько труб в текущем DWG: {hosts}.");
                 }
             }

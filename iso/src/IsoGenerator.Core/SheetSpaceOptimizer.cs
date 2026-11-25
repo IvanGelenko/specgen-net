@@ -8,7 +8,7 @@ internal static class SheetSpaceOptimizer
         var best=baseline;
         var valves=snapshot.Parts.Where(part=>BomCategories.Classify(part)==BomCategory.Valves)
             .Select(part=>part.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var pipes=snapshot.Parts.Where(part=>part.Component==ComponentKind.Pipe)
+        var pipes=snapshot.Parts.Where(part=>part.Component==ComponentKind.Pipe&&!topology.CappedVentDrainPipes.Contains(part.Handle))
             .Select(part=>part.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var risers=baseline.Dimensions.Where(d=>d.Role=="chain"&&pipes.Contains(d.SourceId)&&
                 Math.Abs(d.End.Y-d.Start.Y)>5*Math.Abs(d.End.X-d.Start.X)&&
@@ -57,7 +57,7 @@ internal static class SheetSpaceOptimizer
             // Uniform growth quickly runs out of width on a long, shallow drawing.
             // Try giving the free height to steep pipes, including one trial funded by a long run.
             var growthBase=best;
-            var runs=growthBase.Strokes.Where(stroke=>stroke.Role=="pipe"&&stroke.Points.Count>=2)
+            var runs=growthBase.Strokes.Where(stroke=>stroke.Role=="pipe"&&stroke.Points.Count>=2&&pipes.Contains(stroke.SourceId))
                 .GroupBy(stroke=>stroke.SourceId,StringComparer.OrdinalIgnoreCase).Select(group=>
                 {
                     double x=group.Sum(stroke=>Math.Abs(stroke.Points[^1].X-stroke.Points[0].X));
@@ -90,7 +90,7 @@ internal static class SheetSpaceOptimizer
         if(best.LayoutLevel==3&&freeField)
         {
             var growthBase=best;
-            var longRuns=best.Strokes.Where(stroke=>stroke.Role=="pipe"&&stroke.Points.Count>=2)
+            var longRuns=best.Strokes.Where(stroke=>stroke.Role=="pipe"&&stroke.Points.Count>=2&&pipes.Contains(stroke.SourceId))
                 .GroupBy(stroke=>stroke.SourceId,StringComparer.OrdinalIgnoreCase)
                 .Select(group=>(Pipe:group.Key,Length:group.Sum(stroke=>
                     Math.Sqrt(Math.Pow(stroke.Points[^1].X-stroke.Points[0].X,2)+

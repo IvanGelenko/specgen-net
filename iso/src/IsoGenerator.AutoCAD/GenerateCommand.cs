@@ -17,9 +17,10 @@ public sealed class GenerateCommand
     public void Generate()=>App.DocumentManager.MdiActiveDocument?.SendStringToExecute("PSISOMETRIC ",true,false,false);
 
     // Version each contract independently so unrelated rebuilds do not discard accepted work.
-    const int LayoutVersion=32;
-    const int DrawingVersion=7;
+    const int LayoutVersion=40;
+    const int DrawingVersion=10;
     const int DocumentVersion=3;
+    const int ValveKitBomVersion=1;
     static int busy;
     public void GenerateForLine(string line,IReadOnlyCollection<string> handles,string outputDirectory,IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? propertyHints=null,string? projectIsoDirectory=null,Action<string>? onCompleted=null,int quarterTurns=0,bool excludeFlangeHardware=false,bool ignoreBreakPoints=false,string? templatePath=null,double symbolScale=10,bool instrumentCalloutsOnly=true,bool automaticView=false,string valvesDocument="",string supportsDocument="",string stampDocument="",bool rememberLayout=false,bool recalculateLine=false,double minimumPipeLength=10,IsoAdvancedSettings? advancedSettings=null) =>
         GenerateForLines(new[]{new LineRequest(line,handles,propertyHints,rememberLayout)},outputDirectory,projectIsoDirectory,onCompleted,
@@ -28,15 +29,15 @@ public sealed class GenerateCommand
 
 
     public sealed record LineRequest(string Line,IReadOnlyCollection<string> Handles,
-        IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? PropertyHints,bool RememberLayout);
+        IReadOnlyDictionary<string,IReadOnlyDictionary<string,string>>? PropertyHints,bool RememberLayout)
+    {
+        public int? ManualQuarterTurns {get;init;}
+    }
 
     sealed record CapturedLine(LineRequest Request,PipelineSnapshot Snapshot,string Job);
 
-    sealed record PlannedLine(CapturedLine Input,string LayoutKey,string RenderKey,int View,RememberedLayout? Layout,
-        RememberedIsoOutput.Entry? Previous,IReadOnlyList<PlannedSheet> Sheets,string[] Titles,int Warnings);
-
-    sealed record ArchivedLine(string Line,PipelineSnapshot Snapshot,IReadOnlyList<PlannedSheet> Sheets);
-    sealed record AppendArchive(int Version,string Profile,string PdfHash,ArchivedLine[] Lines);
+    sealed record PlannedLine(CapturedLine Input,string LayoutKey,string RenderKey,ArchivedLayoutOptions Options,
+        RememberedLayout? Layout,RememberedIsoOutput.Entry? Previous,IReadOnlyList<PlannedSheet> Sheets,string[] Titles,int Warnings);
 
     sealed record PreparedLine(PlannedLine Plan,RememberedIsoOutput.Page[] Pages,int Reused)
     {
@@ -53,10 +54,13 @@ public sealed class GenerateCommand
         var doc=App.DocumentManager.MdiActiveDocument;if(doc is null)return;
         if(Interlocked.CompareExchange(ref busy,1,0)!=0){System.Windows.Forms.MessageBox.Show("Создание изометрии уже выполняется. Дождитесь завершения или отмените его в окне прогресса.","Изометрии");return;}
         IsoProgressWindow? view=null;string job="";
+        IDisposable? jobLease=null;
         var dispatcher=System.Windows.Threading.Dispatcher.CurrentDispatcher;
         try
         {
             if(lines.Count==0)throw new InvalidDataException("Выберите хотя бы одну линию.");
+            if(lines.FirstOrDefault(line=>line.ManualQuarterTurns is <0 or >3) is {} invalidView)
+                throw new InvalidDataException($"Недопустимый ракурс линии {invalidView.Line}.");
             if(report is not null)stampDocument=report.Title.DocumentNumber;
             if(lines.Count>1&&string.IsNullOrWhiteSpace(stampDocument))
                 throw new InvalidDataException("Для общего PDF заполните поле «Документ для штампа».");
@@ -65,6 +69,9 @@ public sealed class GenerateCommand
             string publication=lines.Count==1?lines[0].Line:$"{lines.Count} линий · {pdfStem}";
             view=IsoProgressWindow.Start(publication,App.MainWindow.Handle);var token=view.Token;
             advancedSettings??=new IsoAdvancedSettings();advancedSettings.Validate();
+            LineLayoutOptions LayoutOptions(LineRequest request)=>new(automaticView&&request.ManualQuarterTurns is null,
+                request.ManualQuarterTurns??quarterTurns,excludeFlangeHardware,ignoreBreakPoints,
+                instrumentCalloutsOnly,minimumPipeLength,advancedSettings);
             if(!double.IsFinite(symbolScale)||symbolScale<=0)throw new InvalidDataException("Масштаб элементов должен быть положительным числом.");
             if(string.IsNullOrWhiteSpace(templatePath)||!File.Exists(templatePath))throw new FileNotFoundException("Выберите существующую локальную копию шаблона изометрии.",templatePath);
             templatePath=Path.GetFullPath(templatePath);
@@ -81,7 +88,7 @@ public sealed class GenerateCommand
             string folder=Path.GetFullPath(outputDirectory);
             // The Core Console must receive local script and working DWG paths.
             job=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"IsoGenerator","Jobs",Guid.NewGuid().ToString("N"));
-            Directory.CreateDirectory(job);
+            jobLease=IsoJobRetention.Begin(job,prune:true);
             if(report is not null)
             {
                 string titleSource=Path.Combine(job,"title-template.docx"),contentsSource=Path.Combine(job,"contents-template.docx");
@@ -104,16 +111,20 @@ public sealed class GenerateCommand
                 string lineJob=lines.Count==1?job:Path.Combine(job,$"line-{captured.Count+1:00}");
                 Directory.CreateDirectory(lineJob);
                 var snapshot=PlantSnapshotReader.Capture(doc.Database,doc.Name,ObjectId.Null,line,request.Handles,request.PropertyHints,
-                    drawingLines:drawingLines,cancellationToken:token,report:count=>view.Report("Этап 1 из 6 — чтение модели",$"{line} · прочитано объектов: {count}"));
+                    drawingLines:drawingLines,ignoreBreakPoints:ignoreBreakPoints,cancellationToken:token,
+                    report:count=>view.Report("Этап 1 из 6 — чтение модели",$"{line} · прочитано объектов: {count}"));
                 File.WriteAllText(Path.Combine(lineJob,"snapshot.json"),JsonSerializer.Serialize(snapshot,new JsonSerializerOptions{WriteIndented=true}));
-                File.WriteAllText(Path.Combine(lineJob,"run-settings.json"),JsonSerializer.Serialize(new{line,quarterTurns,automaticView,excludeFlangeHardware,ignoreBreakPoints,instrumentCalloutsOnly,templatePath,symbolScale,minimumPipeLength,advancedSettings,valvesDocument,supportsDocument,stampDocument,startedUtc=DateTimeOffset.UtcNow,sourceDrawing=snapshot.SourceDrawing,sourceObjects=snapshot.Parts.Count},new JsonSerializerOptions{WriteIndented=true}));
+                var options=LayoutOptions(request);
+                File.WriteAllText(Path.Combine(lineJob,"run-settings.json"),JsonSerializer.Serialize(new{line,quarterTurns=options.QuarterTurns,automaticView=options.AutomaticView,excludeFlangeHardware,ignoreBreakPoints,instrumentCalloutsOnly,templatePath,symbolScale,minimumPipeLength,advancedSettings,valvesDocument,supportsDocument,stampDocument,startedUtc=DateTimeOffset.UtcNow,sourceDrawing=snapshot.SourceDrawing,sourceObjects=snapshot.Parts.Count},new JsonSerializerOptions{WriteIndented=true}));
                 captured.Add(new(request,snapshot,lineJob));
             }
             token.ThrowIfCancellationRequested();
             view.Report("Этап 2 из 6 — подготовка обозначений","Чтение библиотеки символов проекта…");
             var catalog=SymbolCatalogCommands.Read(library,token,count=>view.Report("Этап 2 из 6 — подготовка обозначений",$"Прочитано блоков: {count}")) with{SymbolScale=symbolScale,Style=null};
             File.WriteAllText(Path.Combine(job,"symbols.json"),JsonSerializer.Serialize(catalog));
-            var map=new IsoSymbolMap(File.ReadAllText(mapping),catalog);
+            string mappingXml=File.ReadAllText(mapping);
+            string mappingHash=RememberedIsoOutput.HashFile(mapping);
+            var map=new IsoSymbolMap(mappingXml,catalog);
             string assembly=typeof(GenerateCommand).Assembly.Location;
             string engine=Path.Combine(Path.GetDirectoryName(Process.GetCurrentProcess().MainModule!.FileName)!,"accoreconsole.exe");
             if(!File.Exists(engine))throw new FileNotFoundException("Не найден AutoCAD Core Console",engine);
@@ -121,10 +132,15 @@ public sealed class GenerateCommand
             void Report(string stage,string line,string detail,int completed=0,int total=0)=>
                 progress.Report(stage,$"{line} · {detail}",completed,total);
 
-            PlannedLine Plan(CapturedLine input)
+            PlannedLine Plan(CapturedLine input,ArchivedLayoutOptions? archived=null)
             {
                 var snapshot=input.Snapshot;
                 string line=input.Request.Line,lineJob=input.Job;
+                var options=archived is null?LayoutOptions(input.Request):
+                    new LineLayoutOptions(false,archived.QuarterTurns,excludeFlangeHardware,archived.IgnoreBreakPoints,
+                        archived.InstrumentCalloutsOnly,archived.MinimumPipeLength,advancedSettings);
+                double lineSymbolScale=archived?.SymbolScale??symbolScale;
+                var lineMap=lineSymbolScale==symbolScale?map:new IsoSymbolMap(mappingXml,catalog with{SymbolScale=lineSymbolScale});
                 bool rememberLayout=input.Request.RememberLayout;
                 token.ThrowIfCancellationRequested();
                 var captureWarnings=snapshot.Warnings.Concat(SnapshotValidation.Validate(snapshot).Warnings).Distinct().ToArray();
@@ -148,19 +164,18 @@ public sealed class GenerateCommand
                     LayoutVersion,
                     Template=RememberedIsoOutput.HashFile(jobTemplate),
                     Library=RememberedIsoOutput.HashFile(library),
-                    Mapping=RememberedIsoOutput.HashFile(mapping),
-                    automaticView,quarterTurns,excludeFlangeHardware,ignoreBreakPoints,instrumentCalloutsOnly,symbolScale,minimumPipeLength,advancedSettings
+                    Mapping=mappingHash,
+                    automaticView=options.AutomaticView,quarterTurns=options.QuarterTurns,
+                    excludeFlangeHardware,ignoreBreakPoints,instrumentCalloutsOnly,symbolScale,minimumPipeLength,advancedSettings
                 }):"";
                 string renderKey=JsonSerializer.Serialize(new{DrawingVersion,valvesDocument,supportsDocument,stampDocument});
                 var previous=rememberLayout&&!recalculateLine?RememberedIsoOutput.Read(snapshot.SourceDrawing,line):null;
                 if(previous?.LayoutKey!=layoutKey)previous=null;
-                var options=new LineLayoutOptions(automaticView,quarterTurns,excludeFlangeHardware,
-                    ignoreBreakPoints,instrumentCalloutsOnly,minimumPipeLength,advancedSettings);
-                var result=LineViewPlanner.Plan(snapshot,map,options,previous?.Layout,previous?.QuarterTurns,rememberLayout,
+                var result=LineViewPlanner.Plan(snapshot,lineMap,options,previous?.Layout,previous?.QuarterTurns,rememberLayout,
                     token,observer,turn=>Report("Подбор ракурса",line,$"Проверяется ракурс {turn+1}."),
                     (_,message)=>File.AppendAllLines(Path.Combine(lineJob,"view-failures.log"),new[]{message}));
                 var sheets=result.Sheets;
-                File.WriteAllText(Path.Combine(lineJob,"view-selection.json"),JsonSerializer.Serialize(new{automaticView,quarterTurns=result.QuarterTurns}));
+                File.WriteAllText(Path.Combine(lineJob,"view-selection.json"),JsonSerializer.Serialize(new{automaticView=options.AutomaticView,quarterTurns=result.QuarterTurns}));
                 token.ThrowIfCancellationRequested();
                 var warnings=captureWarnings.Concat(sheets.SelectMany(sheet=>sheet.Scene.Warnings))
                     .Where(warning=>!warning.StartsWith("Schematic layout:",StringComparison.Ordinal)&&
@@ -168,7 +183,9 @@ public sealed class GenerateCommand
                     .Distinct(StringComparer.Ordinal).ToArray();
                 if(warnings.Length>0)File.WriteAllLines(warningPath,warnings);
                 var titles=DrawingTitles(line,sheets,lines.Count>1);
-                return new(input,layoutKey,renderKey,result.QuarterTurns,result.Remembered,previous,sheets,titles,warnings.Length);
+                return new(input,layoutKey,renderKey,new(result.QuarterTurns,options.IgnoreBreakPoints,
+                    options.InstrumentCalloutsOnly,options.MinimumPipeLength,lineSymbolScale),
+                    result.Remembered,previous,sheets,titles,warnings.Length);
             }
 
             static string[] DrawingTitles(string line,IReadOnlyList<PlannedSheet> sheets,bool alwaysNumber)=>
@@ -295,7 +312,12 @@ public sealed class GenerateCommand
                         try
                         {
                             return JsonSerializer.Deserialize<AppendArchive>(File.ReadAllText(archive)) is {Version:1,Lines.Length:>0} saved&&
-                                saved.Profile==archiveProfile&&RememberedIsoOutput.Matches(pdf,saved.PdfHash)?saved:null;
+                                saved.Profile==archiveProfile&&saved.LayoutVersion is >=0 and <=LayoutVersion&&
+                                saved.Lines.All(line=>line?.Snapshot?.Parts is {Count:>0}&&line.Sheets is {Count:>0} sheets&&
+                                    sheets.All(sheet=>sheet?.Scene?.ExcludeFlangeHardware==excludeFlangeHardware)&&
+                                    (line.Options is null||line.Options is {QuarterTurns:>=0 and <=3,MinimumPipeLength:>=1 and <=100000}
+                                        &&double.IsFinite(line.Options.SymbolScale)&&line.Options.SymbolScale>0))&&
+                                RememberedIsoOutput.Matches(pdf,saved.PdfHash)?saved:null;
                         }
                         catch(System.Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException){return null;}
                     }
@@ -312,9 +334,10 @@ public sealed class GenerateCommand
                     if(Conflicts())
                     {
                         var saved=ReadAppendArchive(names.Pdf);
+                        bool reuseArchivedLayout=saved?.CanReuseLayout(LayoutVersion,mappingHash,excludeFlangeHardware,ValveKitBomVersion)==true;
                         progress.Report("Выбор сохранения",saved is null?"Файлы уже существуют. Выберите замену или новый индекс.":
                             "Файлы уже существуют. Можно добавить линии с пересчётом содержания.");
-                        var choice=await progress.ChooseOutput(folder,saved is not null);
+                        var choice=await progress.ChooseOutput(folder,saved is not null,rebuildArchived:!reuseArchivedLayout);
                         if(choice==System.Windows.Forms.DialogResult.Yes)overwrite=true;
                         else if(choice==System.Windows.Forms.DialogResult.No)names=IndexedNames();
                         else if(choice==System.Windows.Forms.DialogResult.Retry&&saved is not null)
@@ -327,7 +350,16 @@ public sealed class GenerateCommand
                                     throw new InvalidDataException($"Линия {prior.Line} уже входит в комплект. Для добавления отметьте только новые линии.");
                                 var work=Path.Combine(job,$"archive-{combined.Count+1:00}");
                                 var input=new CapturedLine(new(prior.Line,Array.Empty<string>(),null,false),prior.Snapshot,work);
-                                combined.Add(new(input,"","",0,null,null,prior.Sheets,Array.Empty<string>(),0));
+                                var scene=prior.Sheets[0].Scene;
+                                var archiveOptions=prior.Options??new(scene.QuarterTurns,ignoreBreakPoints,
+                                    scene.InstrumentCalloutsOnly,minimumPipeLength,symbolScale);
+                                if(reuseArchivedLayout)
+                                    combined.Add(new(input,"","",archiveOptions,null,null,prior.Sheets,Array.Empty<string>(),0));
+                                else
+                                {
+                                    Directory.CreateDirectory(work);
+                                    combined.Add(ForLine(input,()=>Plan(input,archiveOptions)));
+                                }
                             }
                             combined.AddRange(planned);
                             numberAllDrawings=combined.Count>1;
@@ -379,15 +411,15 @@ public sealed class GenerateCommand
                     var drawingPdfs=pages.Select(page=>page.Pdf).ToArray();
                     string[] stagedDocuments=Array.Empty<string>();
                     var retainedPdfPages=new HashSet<int>();
+                    int unmatchedPdfPages=0;
                     if(overwrite&&appendPdfHash is null&&File.Exists(names.Pdf))
                     {
                         int offset=0;
                         foreach(var line in prepared)
                         {
                             var previous=line.Plan.Previous;
-                            if(previous is not null&&comparer.Equals(previous.PublishedPdf,names.Pdf)&&
-                               previous.Pages.Length==line.Pages.Length&&(document is not null||prepared.Count==1))
-                                for(int i=0;i<line.Pages.Length;i++)
+                            if(previous is not null&&comparer.Equals(previous.PublishedPdf,names.Pdf))
+                                for(int i=0;i<Math.Min(previous.Pages.Length,line.Pages.Length);i++)
                                     if(ReferenceEquals(previous.Pages[i],line.Pages[i])&&ReusePublishedDrawing(offset+i))
                                         retainedPdfPages.Add(offset+i);
                             offset+=line.Pages.Length;
@@ -396,8 +428,9 @@ public sealed class GenerateCommand
                     if(retainedPdfPages.Count>0)
                     {
                         appendPdfHash=RememberedIsoOutput.HashFile(names.Pdf);
-                        PdfSetPublisher.MergeWithRetainedPages(drawingPdfs,merged,front is null?pdfStem:stampDocument,
+                        int retained=PdfSetPublisher.MergeWithRetainedPages(drawingPdfs,merged,front is null?pdfStem:stampDocument,
                             front?.CoverPdf,front?.ContentsPdf,names.Pdf,retainedPdfPages);
+                        unmatchedPdfPages=retainedPdfPages.Count-retained;
                     }
                     else if(front is null)PdfSetPublisher.Merge(drawingPdfs,merged,pdfStem);
                     else PdfSetPublisher.MergeReport(front.CoverPdf,front.ContentsPdf,drawingPdfs,merged,stampDocument);
@@ -406,7 +439,8 @@ public sealed class GenerateCommand
                         string archiveStage=Path.Combine(job,"append-data.json");
                         File.WriteAllText(archiveStage,JsonSerializer.Serialize(new AppendArchive(1,archiveProfile,
                             RememberedIsoOutput.HashFile(merged),planned.Select(item=>new ArchivedLine(
-                                item.Input.Request.Line,item.Input.Snapshot,item.Sheets)).ToArray())));
+                                item.Input.Request.Line,item.Input.Snapshot,item.Sheets,item.Options)).ToArray(),
+                            ValveKitBomVersion,LayoutVersion,mappingHash)));
                         stagedDocuments=new[]{front.TitleDocx,front.ContentsDocx,archiveStage};
                     }
                     token.ThrowIfCancellationRequested();
@@ -450,7 +484,7 @@ public sealed class GenerateCommand
                         {
                             RememberedIsoOutput.MarkPublished(drawing,key,line.Input.Request.RememberLayout);
                             if(line.Plan.Layout is {} layout)
-                                RememberedIsoOutput.Save(drawing,key,new(line.Plan.LayoutKey,line.Plan.RenderKey,line.Plan.View,layout,
+                                RememberedIsoOutput.Save(drawing,key,new(line.Plan.LayoutKey,line.Plan.RenderKey,line.Plan.Options.QuarterTurns,layout,
                                     line.Pages,names.Pdf));
                         }
                         catch(System.Exception ex) when(ex is IOException or UnauthorizedAccessException or JsonException)
@@ -462,18 +496,21 @@ public sealed class GenerateCommand
                         }
                     }
                     progress.Finish("Изометрии созданы",$"Линий: {prepared.Count}. Листов: {pages.Length}. Использовано готовых листов: {prepared.Sum(line=>line.Reused)}.\n"+
-                        names.Pdf+(names.Documents.Length>0?"\nТитульный лист и содержание сохранены в DOCX.":"")+(warnings>0?$"\nПредупреждений: {warnings}. Диагностика: "+job:""),true,folder);
+                        names.Pdf+(names.Documents.Length>0?"\nТитульный лист и содержание сохранены в DOCX.":"")+
+                        (unmatchedPdfPages>0?$"\nНе удалось сопоставить страницы старого PDF ({unmatchedPdfPages}). Исходные страницы доступны в резервной копии: "+
+                            Path.Combine(job,"previous-output"):"")+
+                        (warnings>0?$"\nПредупреждений: {warnings}. Диагностика: "+job:""),true,folder);
                     _=dispatcher.BeginInvoke(new Action(()=>{try{onCompleted?.Invoke(folder);doc.Editor.WriteMessage($"\n[Изометрия] Готово. Листов: {pages.Length}. PDF: {names.Pdf}\n");}catch(System.Exception){}}));
                 }
                 catch(OperationCanceledException){progress.Finish("Создание отменено","Итоговые файлы не изменены. Промежуточные данные сохранены для диагностики.");}
                 catch(System.Exception ex){WriteFailure(job,ex);progress.Finish("Не удалось создать изометрии",ex.Message+"\nДиагностика: "+job,false,job);}
-                finally{Interlocked.Exchange(ref busy,0);}
+                finally{jobLease?.Dispose();Interlocked.Exchange(ref busy,0);}
             });
         }
-        catch(OperationCanceledException){Interlocked.Exchange(ref busy,0);view?.Finish("Создание отменено","Итоговые файлы не изменены.");}
+        catch(OperationCanceledException){jobLease?.Dispose();Interlocked.Exchange(ref busy,0);view?.Finish("Создание отменено","Итоговые файлы не изменены.");}
         catch(System.Exception ex)
         {
-            Interlocked.Exchange(ref busy,0);WriteFailure(job,ex);
+            jobLease?.Dispose();Interlocked.Exchange(ref busy,0);WriteFailure(job,ex);
             if(view is not null)view.Finish("Не удалось создать изометрии",ex.Message+(job.Length>0?"\nДиагностика: "+job:""),false,Directory.Exists(job)?job:null);
             else System.Windows.Forms.MessageBox.Show(ex.Message,"Изометрии");
         }

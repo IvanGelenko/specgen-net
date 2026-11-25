@@ -98,6 +98,7 @@ namespace PipingSpecPlugin.Settings
         public bool AuditStructureCollisions { get; set; } = true;
 
         public System.Collections.Generic.Dictionary<string,string[]> IsoSelectedLinesByDrawing { get; set; } = new();
+        public System.Collections.Generic.Dictionary<string,IsoViewPreferences> IsoViewsByDrawing { get; set; } = new();
         public string LastIsoOutputDirectory { get; set; } = "";
         public string LastIsoStyle { get; set; } = ""; // Legacy setting, no longer used.
         public string LastIsoTemplatePath { get; set; } = "";

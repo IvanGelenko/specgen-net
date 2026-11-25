@@ -53,6 +53,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\InsulationTakeoff.cs" Link="Spec\InsulationTakeoff.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\InsulationListWriter.cs" Link="Spec\InsulationListWriter.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\PluginSettings.cs" Link="Settings\PluginSettings.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Settings\IsoViewPreferences.cs" Link="Settings\IsoViewPreferences.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\PickerSelectionMemory.cs" Link="Settings\PickerSelectionMemory.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Settings\RunLogger.cs" Link="Settings\RunLogger.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Update\UpdateService.cs" Link="Update\UpdateService.cs" />

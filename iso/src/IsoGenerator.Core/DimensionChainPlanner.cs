@@ -56,11 +56,21 @@ public static class DimensionChainPlanner
         var allProjected=Enumerable.Range(0,nodes.Count).Select(ProjectNode).ToArray();
         var sceneCenter=new SheetPoint((allProjected.Min(p=>p.X)+allProjected.Max(p=>p.X))/2,(allProjected.Min(p=>p.Y)+allProjected.Max(p=>p.Y))/2);
         var includedPorts=FlangedJointPolicy.HiddenDimensionPorts(snapshot);
+        var bentPipes=snapshot.Parts.Where(part=>part.CatalogClass=="PipeBend")
+            .Select(part=>part.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var returnBends=nodes.Where(node=>node.Kind==RouteNodeKind.Axis&&bentPipes.Contains(node.Source))
+            .GroupBy(node=>node.Source,StringComparer.OrdinalIgnoreCase)
+            .Where(group=>group.Count()==2).Select(group=>group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // Return bends have no common tangent intersection. Only their transverse span
+        // is suitable as a standalone linear size.
+        bool IsBentPipe(PipelineTopology.Edge edge)=>edge.Kind==ComponentKind.Elbow&&bentPipes.Contains(edge.Source)&&
+            (!returnBends.Contains(edge.Source)||(nodes[edge.A].Kind==RouteNodeKind.Axis&&nodes[edge.B].Kind==RouteNodeKind.Axis));
         var dimensions=new List<PipeDimension>();int chainNumber=0;
         var runEnds=new Dictionary<string,DimensionRunEnds>();
         foreach(var group in Enumerable.Range(0,edges.Count).GroupBy(groups.Find))
         {
-            var indices=group.ToArray();if(indices.All(i=>edges[i].Kind==ComponentKind.Elbow))continue;
+            var indices=group.ToArray();
+            if(indices.All(i=>edges[i].Kind==ComponentKind.Elbow&&!IsBentPipe(edges[i])))continue;
             var direction=Direction(edges[indices.FirstOrDefault(i=>IsVerticalPipe(edges[i]),indices[0])]);
             // Canonical ordering keeps dimensions stable when connection enumeration changes.
             if(Math.Abs(direction.X)>1e-6?direction.X<0:Math.Abs(direction.Y)>1e-6?direction.Y<0:direction.Z<0)direction=Mul(direction,-1);
@@ -198,14 +208,15 @@ public static class DimensionChainPlanner
             // For a single interval, the overall is the dimension; never duplicate its label.
             if(ordered.Count>2)for(int i=1;i<ordered.Count;i++)
             {
-                var kinds=indices.Select(index=>edges[index]).Where(edge=>
+                var interval=indices.Select(index=>edges[index]).Where(edge=>
                 {
                     double ta=Dot(Sub(nodes[edge.A].Point,origin),direction),tb=Dot(Sub(nodes[edge.B].Point,origin),direction);
                     return Math.Max(ta,tb)>ordered[i-1].T+.001&&Math.Min(ta,tb)<ordered[i].T-.001;
-                }).Select(edge=>edge.Kind).ToArray();
+                }).ToArray();
                 // Flange-only intervals still have a real installation length. Omitting
                 // them leaves a hole between pipe dimensions even when hardware is hidden in BOM.
-                if(kinds.Length>0&&kinds.All(kind=>kind is ComponentKind.Joint or ComponentKind.Tee or ComponentKind.Elbow))continue;
+                if(interval.Length>0&&interval.All(edge=>(edge.Kind is ComponentKind.Joint or ComponentKind.Tee or ComponentKind.Elbow)&&
+                    !IsBentPipe(edge)))continue;
                 dimensions.Add(Dimension(i-1,i,"chain",firstOffset));
             }
             dimensions.Add(Dimension(0,ordered.Count-1,"overall",ordered.Count>2?firstOffset+7:firstOffset));

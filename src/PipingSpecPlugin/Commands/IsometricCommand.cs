@@ -33,9 +33,11 @@ public sealed class IsometricCommand
             string drawingKey=Path.GetFullPath(doc.Name).ToUpperInvariant();
             var selections=settings.IsoSelectedLinesByDrawing??=new();
             selections.TryGetValue(drawingKey,out var previousSelection);
+            var savedViews=settings.IsoViewsByDrawing??=new();
+            savedViews.TryGetValue(drawingKey,out var viewPreferences);
             using var dialog=new IsometricDialog(choices,doc.Name,outputFolder,template,settings.LastIsoSymbolScale,settings.LastIsoMinimumPipeLength,settings.IsoAdvanced,
                 new IsoDocumentDetails(settings.LastIsoValvesDocument??"",settings.LastIsoSupportsDocument??"",
-                    settings.LastIsoTitleTemplate??"",settings.LastIsoContentsTemplate??""),previousSelection);
+                    settings.LastIsoTitleTemplate??"",settings.LastIsoContentsTemplate??""),previousSelection,viewPreferences);
             var initialSelection=dialog.SelectedLines;
             var dialogResult=App.ShowModalDialog(dialog);
             var selectedLines=dialog.SelectedLines.ToArray();
@@ -50,6 +52,7 @@ public sealed class IsometricCommand
             }
             catalog.EnsureIsometricLinesReadable(selectedLines);
             selections[drawingKey]=selectedLines;
+            savedViews[drawingKey]=dialog.ViewPreferences;
             string selectedTemplate=dialog.TemplatePath;double selectedScale=dialog.SymbolScale;double selectedMinimum=dialog.MinimumPipeLength;
             var documents=dialog.Documents;
             settings.LastIsoTemplatePath=selectedTemplate;settings.LastIsoSymbolScale=selectedScale;settings.LastIsoMinimumPipeLength=selectedMinimum;settings.IsoAdvanced=dialog.AdvancedSettings;
@@ -66,7 +69,10 @@ public sealed class IsometricCommand
                 var selected=partsByLine[line];
                 var hints=selected.ToDictionary(p=>p.Key,p=>(IReadOnlyDictionary<string,string>)new Dictionary<string,string>
                     {{"Tag",p.Tag??""},{"InsulationThickness",p.InsulationThickness??""}},StringComparer.OrdinalIgnoreCase);
-                return new IsoGenerator.AutoCAD.GenerateCommand.LineRequest(line,selected.Select(p=>p.Key).ToArray(),hints,dialog.RememberLayout(line));
+                return new IsoGenerator.AutoCAD.GenerateCommand.LineRequest(line,selected.Select(p=>p.Key).ToArray(),hints,dialog.RememberLayout(line))
+                {
+                    ManualQuarterTurns=dialog.ManualQuarterTurns(line)
+                };
             }).ToArray();
             string contentsTemplate=string.IsNullOrWhiteSpace(documents.ContentsPath)?IsometricDialog.DefaultContentsTemplate:documents.ContentsPath;
             var report=new IsoGenerator.Publishing.IsometricReportDetails(documents.TitlePath,contentsTemplate,dialog.TitleDetails);

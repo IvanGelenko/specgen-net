@@ -47,7 +47,7 @@ internal static class LayoutQuality
         return Score(first).CompareTo(Score(second));
     }
 
-    static (int Clearance,int Fittings,int DimensionCrossings,int LeaderCrossings,int Sheets,int Pages,
+    static (int Clearance,int Fittings,int LeaderCrossings,int Sheets,int Pages,int DimensionCrossings,
         int LongExtensions,int LongLeaders,int Reach,int NonGrid,double Unused) Score(IReadOnlyList<PlannedSheet> sheets)
     {
         int clearance=0,fittings=0,crossings=0,extensions=0,nonGrid=0,count=0,leaderCrossings=0,longLeaders=0,reach=0;
@@ -68,6 +68,6 @@ internal static class LayoutQuality
             reach+=leader.Reach;
             area+=Footprint(sheet.Scene);
         }
-        return (clearance,fittings,crossings,leaderCrossings,count,sheets.Count,extensions,longLeaders,reach,nonGrid,-Math.Round(area));
+        return (clearance,fittings,leaderCrossings,count,sheets.Count,crossings,extensions,longLeaders,reach,nonGrid,-Math.Round(area));
     }
 }

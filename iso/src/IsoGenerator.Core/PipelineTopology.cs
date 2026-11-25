@@ -37,17 +37,19 @@ internal sealed class PipelineTopology
     }
     public IReadOnlyList<Node> Nodes {get;}
     public IReadOnlyList<Edge> Edges {get;}
+    public IReadOnlySet<string> CappedVentDrainPipes {get;}
     readonly int[] roots;
-    PipelineTopology(IReadOnlyList<Node> nodes,IReadOnlyList<Edge> edges,int[] roots)
+    PipelineTopology(IReadOnlyList<Node> nodes,IReadOnlyList<Edge> edges,int[] roots,IReadOnlySet<string> cappedVentDrainPipes)
     {
         Nodes=nodes;
         Edges=edges;
         this.roots=roots;
+        CappedVentDrainPipes=cappedVentDrainPipes;
     }
 
     public int Root(int node)=>roots[node];
 
-    public static PipelineTopology Build(PipelineSnapshot snapshot)
+    public static PipelineTopology Build(PipelineSnapshot snapshot,IReadOnlySet<string>? cappedVentDrainPipes=null)
     {
         var nodes=new List<Node>();var edges=new List<Edge>();var sets=new DisjointSets();var keys=new Dictionary<PortKey,int>(PortKeyComparer.Instance);
         var supportHandles=snapshot.Parts.Where(part=>BomCategories.Classify(part)==BomCategory.Supports)
@@ -138,6 +140,7 @@ internal sealed class PipelineTopology
                 if(supportHandles.Contains(c.FirstHandle))sets.Join(b,a);
                 else sets.Join(a,b);
             }
-        return new(nodes.ToArray(),edges.ToArray(),Enumerable.Range(0,nodes.Count).Select(sets.Find).ToArray());
+        return new(nodes.ToArray(),edges.ToArray(),Enumerable.Range(0,nodes.Count).Select(sets.Find).ToArray(),
+            cappedVentDrainPipes??VentDrainPipePolicy.Find(snapshot));
     }
 }

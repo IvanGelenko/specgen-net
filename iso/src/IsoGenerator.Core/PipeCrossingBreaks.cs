@@ -12,9 +12,40 @@ internal sealed class PipeValveOverlapException(string pipe,string valve)
     public string Valve{get;}=valve;
 }
 
+internal sealed class PipeProjectionOverlapException(string pipe,string otherPipe)
+    :SheetCapacityException($"Трубы {pipe} и {otherPipe} накладываются в проекции.",pipe,conflict:LayoutConflict.ComponentCollision)
+{
+    public string OtherPipe{get;}=otherPipe;
+}
+
 public static class PipeCrossingBreaks
 {
     public const double DefaultGapLength = 6.0;
+
+    internal static void CheckProjectedOverlaps(IReadOnlyList<Stroke> strokes)
+    {
+        const double clearance=.25;
+        const double minimumOverlap=1;
+        var pipes=strokes.Where(stroke=>stroke.Role=="pipe"&&stroke.Points.Count==2).ToArray();
+        for(int i=0;i<pipes.Length;i++)
+        {
+            var first=pipes[i];var start=first.Points[0];var end=first.Points[1];
+            double dx=end.X-start.X,dy=end.Y-start.Y,length=Math.Sqrt(dx*dx+dy*dy);
+            if(length<=minimumOverlap)continue;
+            dx/=length;dy/=length;
+            double Offset(SheetPoint point)=>(point.Y-start.Y)*dx-(point.X-start.X)*dy;
+            double Station(SheetPoint point)=>(point.X-start.X)*dx+(point.Y-start.Y)*dy;
+            for(int j=i+1;j<pipes.Length;j++)
+            {
+                var second=pipes[j];
+                if(StringComparer.OrdinalIgnoreCase.Equals(first.SourceId,second.SourceId)||
+                   Math.Abs(Offset(second.Points[0]))>clearance||Math.Abs(Offset(second.Points[1]))>clearance)continue;
+                double a=Station(second.Points[0]),b=Station(second.Points[1]);
+                if(Math.Min(length,Math.Max(a,b))-Math.Max(0,Math.Min(a,b))>minimumOverlap)
+                    throw new PipeProjectionOverlapException(first.SourceId,second.SourceId);
+            }
+        }
+    }
 
     readonly record struct PipeSegment(
         Stroke OriginalStroke,

@@ -11,7 +11,7 @@ internal static class NativeIsoWorker
     {
         string working=Path.Combine(work,"working.dwg"),script=Path.Combine(work,"generate.scr");
         File.Copy(template,working);
-        File.WriteAllLines(script,new[]{"SECURELOAD","0","_NETLOAD","\""+assembly+"\""}
+        File.WriteAllLines(script,new[]{"_NETLOAD","\""+assembly+"\""}
             .Concat(commands).Concat(new[]{"_QUIT","_Y"}),new UTF8Encoding(true));
         var start=new ProcessStartInfo(engine)
         {
@@ -40,14 +40,20 @@ internal static class NativeIsoWorker
             try{await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));}catch(TimeoutException){}
             await WriteLog();
             token.ThrowIfCancellationRequested();
-            throw new IOException($"Превышено время этапа «{stage}» ({limit.TotalSeconds:0} с). Журнал: {log}");
+            throw new IOException($"Превышено время этапа «{stage}» ({limit.TotalSeconds:0} с)."+TrustHint()+$" Журнал: {log}");
         }
         await WriteLog();
         token.ThrowIfCancellationRequested();
         var missing=expected.Where(path=>!File.Exists(path)).Select(Path.GetFileName).ToArray();
         if(process.ExitCode!=0||missing.Length>0)
+        {
             throw new IOException($"Сбой этапа «{stage}». Код Core Console: {process.ExitCode}."+
-                (missing.Length>0?$" Отсутствуют: {string.Join(", ",missing)}.":"")+$" Журнал: {log}");
+                (missing.Length>0?$" Отсутствуют: {string.Join(", ",missing)}."+TrustHint():"")+$" Журнал: {log}");
+        }
+
+        string TrustHint()=>start.Environment.TryGetValue("ISO_RENDER_TRACE",out var trace)&&
+            !string.IsNullOrEmpty(trace)&&!File.Exists(trace)
+            ?" Если журнал указывает на блокировку NETLOAD, проверьте доверие AutoCAD к папке установки SpecGen.":"";
 
         async Task WriteLog()
         {

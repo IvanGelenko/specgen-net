@@ -38,12 +38,16 @@ public static class SheetSetPlanner
         source=SnapshotPreparation.ForSheetPlanning(source,ignoreBreakPoints,instrumentCalloutsOnly,execution);
         var validation=SnapshotValidation.Validate(source);
         if(validation.Errors.Count>0)throw new InvalidDataException(string.Join("\n",validation.Errors));
+        var valveKitExclusions=excludeFlangeHardware?ValveKitBomPolicy.Exclusions(source):null;
+        var cappedVentDrainPipes=VentDrainPipePolicy.Find(source);
         var prepared=new System.Runtime.CompilerServices.ConditionalWeakTable<PipelineSnapshot,PreparedSheetInput>();
         PreparedSheetInput Prepare(PipelineSnapshot snapshot)=>prepared.GetValue(snapshot,
-            fragment=>PreparedSheetInput.Create(fragment,ReferenceEquals(fragment,source)?validation:null));
+            fragment=>PreparedSheetInput.Create(fragment,ReferenceEquals(fragment,source)?validation:null,valveKitExclusions,cappedVentDrainPipes));
         // Use the same density search for the whole line and every candidate fragment.
         // A rejected spacious layout is not proof that a fragment needs another sheet.
         var densityOrder=new[]{1,2,4,5,0,3};
+        var geometryOrder=new[]{(Level:1,Margin:0d),(Level:2,Margin:0d),(Level:0,Margin:40d),
+            (Level:4,Margin:0d),(Level:5,Margin:0d),(Level:0,Margin:0d),(Level:3,Margin:0d)};
         var plans=new Dictionary<string,SheetScene>(StringComparer.Ordinal);
         var rejectedPlans=new HashSet<string>(StringComparer.Ordinal);
         var manualSections=new HashSet<string>(StringComparer.Ordinal);
@@ -56,7 +60,7 @@ public static class SheetSetPlanner
             var seen=new HashSet<string>(StringComparer.OrdinalIgnoreCase){sourceId};var frontier=new[]{sourceId};
             for(int depth=0;depth<=10;depth++)
             {
-                var pipes=frontier.Where(h=>parts.TryGetValue(h,out var p)&&p.Component==ComponentKind.Pipe)
+                var pipes=frontier.Where(h=>parts.TryGetValue(h,out var p)&&p.Component==ComponentKind.Pipe&&!cappedVentDrainPipes.Contains(h))
                     .OrderBy(h=>{var ports=parts[h].Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();return ports.Length==2?ports[0].Position.DistanceTo(ports[1].Position):double.MaxValue;}).ThenBy(h=>h,StringComparer.Ordinal).ToArray();
                 if(pipes.Length>0)return pipes[0];
                 var current=frontier.ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -95,7 +99,7 @@ public static class SheetSetPlanner
             var axis=Axis(byHandle[crossingPipe]);
             double size=Math.Sqrt(axis.X*axis.X+axis.Y*axis.Y);
             return path.Where(handle=>handle!=crossingPipe&&handle!=lowerPipe&&
-                byHandle[handle].Component==ComponentKind.Pipe)
+                byHandle[handle].Component==ComponentKind.Pipe&&!cappedVentDrainPipes.Contains(handle))
                 .Select(handle=>
                 {
                     var candidate=Axis(byHandle[handle]);
@@ -105,7 +109,8 @@ public static class SheetSetPlanner
                 .Where(candidate=>candidate.Angle>.3)
                 .OrderByDescending(candidate=>preferNearCrossing?Math.Round(candidate.Angle,1):candidate.Angle)
                 .ThenByDescending(candidate=>preferNearCrossing?path.IndexOf(candidate.Handle):0).ThenBy(candidate=>candidate.Handle,StringComparer.Ordinal)
-                .Select(candidate=>candidate.Handle).Take(4).Append(crossingPipe).ToArray();
+                .Select(candidate=>candidate.Handle).Take(4)
+                .Concat(cappedVentDrainPipes.Contains(crossingPipe)?Array.Empty<string>():new[]{crossingPipe}).ToArray();
         }
         SheetScene Plan(PipelineSnapshot snapshot,bool quick=false)
         {
@@ -117,12 +122,12 @@ public static class SheetSetPlanner
             if(rejectedPlans.Contains(key))throw new SheetCapacityException("Проверенные варианты компоновки не поместились.");
             SheetCapacityException? failure=null;
             SheetScene? manualBaseline=null;
-            foreach(int level in quick?densityOrder.Take(2):densityOrder)
+            foreach(var (level,initialMargin) in quick?geometryOrder.Take(3):geometryOrder)
             {
                 var extension=requiredVentExtensions.TryGetValue(key,out var required)
                     ?new Dictionary<string,double>(required,StringComparer.OrdinalIgnoreCase)
                     :new Dictionary<string,double>(StringComparer.OrdinalIgnoreCase);
-                double paperMargin=0;
+                double paperMargin=initialMargin;
                 try
                 {
                     var congestionRetries=new Dictionary<string,int>(StringComparer.OrdinalIgnoreCase);
@@ -155,10 +160,12 @@ public static class SheetSetPlanner
                             {
                                 PipeSupportCrossingException collision=>collision.LowerPipe,
                                 PipeValveOverlapException overlap=>overlap.Valve,
+                                PipeProjectionOverlapException overlap=>overlap.OtherPipe,
                                 _=>null
                             };
                             string? local=other is not null&&other!=ex.SourceId
-                                ?TransverseRepairs(snapshot,ex.SourceId,other,ex is PipeValveOverlapException).FirstOrDefault(handle=>congestionRetries.GetValueOrDefault(handle)<(ex is PipeValveOverlapException?4:2))
+                                ?TransverseRepairs(snapshot,ex.SourceId,other,ex is PipeValveOverlapException or PipeProjectionOverlapException)
+                                    .FirstOrDefault(handle=>congestionRetries.GetValueOrDefault(handle)<(ex is PipeValveOverlapException?4:2))
                                 :NearestPipe(snapshot,ex.SourceId);
                             if(local is null)throw;
                             execution.Reject(ex,snapshot.Parts.Count,level,paperMargin,extension);
@@ -188,8 +195,14 @@ public static class SheetSetPlanner
                             if(Environment.GetEnvironmentVariable("ISO_PLANNER_TRACE")=="1")
                                 Console.Error.WriteLine($"Ручной участок: пригодно с локальной теснотой {pipe}.");
                         }
-                        execution.Reject(new SheetCapacityException("Сохраняется теснота размерных рядов.",
-                            pipe,conflict:LayoutConflict.DimensionCongestion),snapshot.Parts.Count,level,paperMargin,extension);
+                        var congestion=new SheetCapacityException("Сохраняется теснота размерных рядов.",
+                            pipe,conflict:LayoutConflict.DimensionCongestion);
+                        execution.Reject(congestion,snapshot.Parts.Count,level,paperMargin,extension);
+                        if(cappedVentDrainPipes.Contains(pipe))
+                        {
+                            pipe=NearestPipe(snapshot,pipe);
+                            if(pipe is null){failure=congestion;break;}
+                        }
                         if(Environment.GetEnvironmentVariable("ISO_PLANNER_TRACE")=="1")Console.Error.WriteLine($"CONGESTION parts={snapshot.Parts.Count} level={level} iteration={iteration} pipe={pipe}");
                         // After repeated failures on the same pipe, try another density
                         // instead of spending the whole local budget on one repair.
@@ -277,15 +290,19 @@ public static class SheetSetPlanner
         }
         IReadOnlyList<PlannedSheet> Finish(IReadOnlyList<PlannedSheet> sheets)
         {
-            SheetSetIntegrity.Validate(source,sheets,excludeFlangeHardware);
+            SheetSetIntegrity.Validate(source,sheets,excludeFlangeHardware,valveKitExclusions);
             remember?.Invoke(new RememberedLayout(source,sheets,minimumPipeLength,IsoAdvancedSettings.Signature));
             return sheets;
         }
         if(remembered is not null)
         {
-            var refreshed=IncrementalSheetPlanner.TryRefresh(source,remembered,Subset,
-                snapshot=>Plan(snapshot),FillPaper,symbolMap,quarterTurns,excludeFlangeHardware,instrumentCalloutsOnly,Prepare,execution);
-            if(refreshed is not null)return Finish(refreshed);
+            if(cappedVentDrainPipes.SetEquals(VentDrainPipePolicy.Find(remembered.Source))&&
+               (valveKitExclusions is null||valveKitExclusions.SetEquals(ValveKitBomPolicy.Exclusions(remembered.Source))))
+            {
+                var refreshed=IncrementalSheetPlanner.TryRefresh(source,remembered,Subset,
+                    snapshot=>Plan(snapshot),FillPaper,symbolMap,quarterTurns,excludeFlangeHardware,instrumentCalloutsOnly,Prepare,execution);
+                if(refreshed is not null)return Finish(refreshed);
+            }
             execution.Report("Сохранённая компоновка не подходит: полный пересчёт");
         }
         try
@@ -567,7 +584,7 @@ public static class SheetSetPlanner
                     }
                 }
                 if(sheets.Count!=partition.Count)continue;
-                SheetSetIntegrity.Validate(source,BomPagination.Apply(sheets),excludeFlangeHardware);
+                SheetSetIntegrity.Validate(source,BomPagination.Apply(sheets),excludeFlangeHardware,valveKitExclusions);
                 return (partition,sheets.ToArray());
             }
         }
@@ -607,16 +624,16 @@ public static class SheetSetPlanner
             var best=initial;
             try
             {
-                // Establish and retain a complete drawing before trying optional boundaries.
-                best=Expand(initial);
+                // Compare boundaries before spending the remaining search on filling the paper.
                 int remainingTrials=settings.PartitionTrials;
                 var tested=new HashSet<string>(StringComparer.Ordinal);
                 while(remainingTrials>0&&execution.CanTryOptionalVariant())
                 {
                     bool improved=false;
+                    foreach(bool mergeOnly in new[]{true,false})
                     foreach(var (first,second) in best.Layout.NeighborPairs())
                     {
-                        if(remainingTrials==0||!execution.CanTryOptionalVariant())break;
+                        if(improved||remainingTrials==0||!execution.CanTryOptionalVariant())break;
                         var snapshots=best.Layout.Snapshots;
                         var members=snapshots[first].Parts.Concat(snapshots[second].Parts)
                             .Select(p=>p.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -624,8 +641,7 @@ public static class SheetSetPlanner
                            HasInteriorGap(members))continue;
                         var union=Subset(members);
                         var unchanged=snapshots.Where((_,index)=>index!=first&&index!=second).ToArray();
-                        // Try the merge first, then nearby two-sheet boundaries if it is overcrowded.
-                        var options=new[]{new[]{union}}.Concat(ShiftBoundary());
+                        var options=mergeOnly?new[]{new[]{union}}:ShiftBoundary();
                         foreach(var option in options)
                         {
                             if(remainingTrials==0||!execution.CanTryOptionalVariant())break;
@@ -638,11 +654,13 @@ public static class SheetSetPlanner
                                 execution.Report("Проверка альтернативной границы листов",variant:true);
                                 var layout=CreatePartition(candidate,quick:true);
                                 var sheets=Enumerable.Range(0,layout.Count).Select(layout.Compose).ToArray();
-                                var trial=Expand((layout,sheets));
-                                SheetSetIntegrity.Validate(source,BomPagination.Apply(trial.Sheets),excludeFlangeHardware);
-                                if(LayoutQuality.Compare(trial.Sheets,best.Sheets)<0)
+                                var paginated=BomPagination.Apply(sheets);
+                                SheetSetIntegrity.Validate(source,paginated,excludeFlangeHardware,valveKitExclusions);
+                                int currentPages=BomPagination.Apply(best.Sheets).Count;
+                                if(paginated.Count<currentPages||
+                                   paginated.Count==currentPages&&LayoutQuality.Compare(sheets,best.Sheets)<0)
                                 {
-                                    best=trial;
+                                    best=(layout,sheets);
                                     improved=true;
                                     break;
                                 }
@@ -669,7 +687,7 @@ public static class SheetSetPlanner
                             var scene=best.Sheets[index].Scene;
                             var quality=LayoutQuality.Dimensions(scene);
                             var leaders=LayoutQuality.Leaders(scene);
-                            if(quality.Clearance==0&&quality.FittingCrossings==0&&quality.Crossings==0&&
+                            if(quality.Clearance==0&&quality.FittingCrossings==0&&
                                leaders.Crossings==0)continue;
                             var snapshots=best.Layout.Snapshots;
                             var current=snapshots[index];
@@ -685,8 +703,8 @@ public static class SheetSetPlanner
                                 {
                                     execution.Report("Проверка разбиения для читаемости",variant:true);
                                     var layout=CreatePartition(candidate,quick:true);
-                                    var trial=Expand((layout,Enumerable.Range(0,layout.Count).Select(layout.Compose).ToArray()));
-                                    SheetSetIntegrity.Validate(source,BomPagination.Apply(trial.Sheets),excludeFlangeHardware);
+                                    var trial=(Layout:layout,Sheets:Enumerable.Range(0,layout.Count).Select(layout.Compose).ToArray());
+                                    SheetSetIntegrity.Validate(source,BomPagination.Apply(trial.Sheets),excludeFlangeHardware,valveKitExclusions);
                                     if(LayoutQuality.Compare(trial.Sheets,best.Sheets)>=0)continue;
                                     best=trial;
                                     improved=true;
@@ -698,6 +716,7 @@ public static class SheetSetPlanner
                     }
                     if(!improved)break;
                 }
+                best=Expand(best);
             }
             catch(PlanningLimitException){cancellationToken.ThrowIfCancellationRequested();}
             var finalized=best.Sheets.Select((sheet,index)=>ImproveDimensionCorners(sheet,()=>best.Layout.Compose(index))).ToArray();

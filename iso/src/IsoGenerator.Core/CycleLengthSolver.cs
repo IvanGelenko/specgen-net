@@ -5,9 +5,11 @@ internal sealed class CycleLengthSolver
     readonly List<double[]> cycles=new();readonly int[] variables;readonly SheetPoint[] directions;
     public bool HasCycles=>cycles.Count>0;
     public int Count=>cycles.Count/2;
+    public bool UsesEdge(int edge)=>cycles.Any(row=>Math.Abs(row[edge])>1e-9);
     public CycleLengthSolver(PipelineTopology graph,int turns)
     {
-        int count=graph.Edges.Count;directions=new SheetPoint[count];variables=Enumerable.Range(0,count).Where(i=>graph.Edges[i].Kind==ComponentKind.Pipe).ToArray();
+        int count=graph.Edges.Count;directions=new SheetPoint[count];variables=Enumerable.Range(0,count)
+            .Where(i=>graph.Edges[i].Kind==ComponentKind.Pipe&&!graph.CappedVentDrainPipes.Contains(graph.Edges[i].Source)).ToArray();
         var parent=new Dictionary<int,int>();var tree=new Dictionary<int,List<(int Node,int Edge)>>();
         int Find(int n){if(!parent.ContainsKey(n))parent[n]=n;int root=n;while(parent[root]!=root)root=parent[root];while(parent[n]!=n){int next=parent[n];parent[n]=root;n=next;}return root;}
         for(int i=0;i<count;i++)

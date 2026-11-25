@@ -40,19 +40,19 @@ internal static class AnnotationPlacement
         SheetPoint Move(SheetPoint p){double t=((line.X-p.X)*nx+(line.Y-p.Y)*ny)/dot;return new(p.X+ex.X*t,p.Y+ex.Y*t);}
         return (Move(d.Start),Move(d.End));
     }
-    public static IReadOnlyList<Annotation> Place(IReadOnlyList<Annotation> labels,List<Stroke> strokes,IReadOnlyList<SymbolGlyph> symbols,IReadOnlyList<PipeDimension> dimensions,PlanningExecution? execution=null,DrawingBounds? fixedGeometry=null)
+    public static IReadOnlyList<Annotation> Place(IReadOnlyList<Annotation> labels,List<Stroke> strokes,IReadOnlyList<SymbolGlyph> symbols,IReadOnlyList<PipeDimension> dimensions,PlanningExecution? execution=null,DrawingBounds? fixedGeometry=null,bool reuseBendPositions=false)
     {
         int start=strokes.Count;
-        try{return PlaceCore(labels,strokes,symbols,dimensions,execution,compactValves:true,fixedGeometry);}
+        try{return PlaceCore(labels,strokes,symbols,dimensions,execution,compactValves:true,fixedGeometry,reuseBendPositions);}
         catch(SheetCapacityException) when(labels.Any(label=>label.Role=="valve-tag"))
         {
             strokes.RemoveRange(start,strokes.Count-start);
-            return PlaceCore(labels,strokes,symbols,dimensions,execution,compactValves:false,fixedGeometry);
+            return PlaceCore(labels,strokes,symbols,dimensions,execution,compactValves:false,fixedGeometry,reuseBendPositions);
         }
     }
 
     static IReadOnlyList<Annotation> PlaceCore(IReadOnlyList<Annotation> labels,List<Stroke> strokes,
-        IReadOnlyList<SymbolGlyph> symbols,IReadOnlyList<PipeDimension> dimensions,PlanningExecution? execution,bool compactValves,DrawingBounds? fixedGeometry)
+        IReadOnlyList<SymbolGlyph> symbols,IReadOnlyList<PipeDimension> dimensions,PlanningExecution? execution,bool compactValves,DrawingBounds? fixedGeometry,bool reuseBendPositions)
     {
         var dimensionInk=dimensions.Select(d=>
         {
@@ -309,7 +309,8 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                         label.SourceId,conflict:LayoutConflict.Annotation);
                 }
             }
-            var origin=label.Role=="position"&&label.Anchor is {} attachment?attachment:new SheetPoint(label.Position.X-2,label.Position.Y-3);
+            var origin=label.Role is ("position" or "bend-angle" or "slope-angle")&&label.Anchor is {} attachment
+                ?attachment:new SheetPoint(label.Position.X-2,label.Position.Y-3);
             var anchors=new[]{origin}.Concat(label.NearbyAnchors??Array.Empty<SheetPoint>()).ToArray();
             var candidates=new List<(SheetPoint Point,SheetPoint Anchor,double Score)>();
             if(label.Role is ("slope-angle" or "bend-angle")&&label.Anchor is {} angleAnchor)
@@ -320,7 +321,8 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                     candidates.Add((new(angleAnchor.X-halfText+slide,angleAnchor.Y+lift),angleAnchor,lift+Math.Abs(slide)));
             }
             var positionDirs = label.Role is "position" or "position-group"?new[]{(1.0,1.0),(-1.0,1.0),(1.0,-1.0),(-1.0,-1.0),(1.0,0.0),(-1.0,0.0),(0.0,1.0),(0.0,-1.0),(1.0,.5),(-1.0,.5),(1.0,-.5),(-1.0,-.5),(.5,1.0),(-.5,1.0),(.5,-1.0),(-.5,-1.0)}:new[]{(1.0,1.0),(-1.0,1.0),(1.0,-1.0),(-1.0,-1.0),(1.0,0.0),(-1.0,0.0),(0.0,1.0),(0.0,-1.0)};
-            if(label.Role is not ("slope-angle" or "bend-angle")||label.Anchor is null)
+            // Prefer the standard position above the arc and use other sides if that space is occupied.
+            double angleFallbackPenalty=label.Role is ("slope-angle" or "bend-angle")&&label.Anchor.HasValue?30:0;
             foreach(var near in anchors)
             foreach(double radius in label.Role is "slope-angle" or "bend-angle"?new[]{4.0,6,8,10,14,18,24,30,36,42,48}:label.Role=="slope-value"?new[]{4.0,6,8,10,14,18,24,30}:label.Role=="position-group"?new[]{2.5,3.5,4.5,6,8,10,12,14,18,22,26,30,35,40}:new[]{1.5,2,2.5,3,3.5,4.5,6,8,10,12,14})
                 foreach(var dir in positionDirs)
@@ -328,10 +330,10 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
                     double dlen=Math.Sqrt(dir.Item1*dir.Item1+dir.Item2*dir.Item2);
                     var point=new SheetPoint(near.X+dir.Item1/dlen*radius-(dir.Item1<=0?label.Text.Length*2.1:0),near.Y+dir.Item2/dlen*radius);
                     double distance=Math.Pow(point.X+label.Text.Length*1.05-near.X,2)+Math.Pow(point.Y+1.75-near.Y,2);
-                    candidates.Add((point,near,distance+.001*(Math.Pow(near.X-origin.X,2)+Math.Pow(near.Y-origin.Y,2))));
+                    candidates.Add((point,near,distance+angleFallbackPenalty+.001*(Math.Pow(near.X-origin.X,2)+Math.Pow(near.Y-origin.Y,2))));
                 }
-            if(label.Role=="slope-projection")
-                candidates.Insert(0,(label.Position,origin,-1));
+            if(label.Role=="slope-projection"||reuseBendPositions&&label.Role=="bend-angle")
+                candidates.Insert(0,(label.Position,label.Anchor??origin,-1));
             SheetPoint? chosen=null;SheetPoint chosenAnchor=origin;
             foreach(var option in candidates.OrderBy(option=>Overflow(TextBox(option.Point,label.Text,
                 label.Role is "position" or "position-group",label.Rotation))).ThenBy(option=>option.Score))
@@ -371,6 +373,57 @@ if(!placed&&Environment.GetEnvironmentVariable("ISO_LAYOUT_TRACE")=="1")Console.
             if(chosen is null)throw new SheetCapacityException($"No readable annotation position for {label.SourceId} ({label.Role}: {label.Text}); sheet needs more space",label.SourceId,conflict:LayoutConflict.Annotation);
             result.Add(label with{Position=chosen.Value,Anchor=label.Role=="slope-projection"?label.Anchor:chosenAnchor});
         }
+        // Keep the readable fallback during layout. Move a degree value into the hatch only
+        // once dimensions, positions and continuation leaders have claimed their space.
+        for(int i=0;i<result.Count;i++)
+        {
+            var label=result[i];
+            if(label.Role!="slope-angle")continue;
+            var triangle=strokes.Where(s=>s.Role=="slope-triangle"&&s.SourceId==label.SourceId)
+                .MinBy(s=>PointDistance(s.Points[0],label.AngularDimension?.Vertex??label.Anchor??label.Position));
+            var fallback=Bounds(label);
+            occupied.Remove(fallback);
+            var angular=triangle is null?null:AngularCandidates(label,triangle).FirstOrDefault(candidate=>
+            {
+                var box=Bounds(candidate);
+                return box.Left>=20&&box.Right<=570&&box.Bottom>=20&&box.Top<=390&&Overflow(box)<1e-6&&
+                    !occupied.Any(b=>b.Overlaps(box))&&!bodies.Any(b=>b.Overlaps(box))&&
+                    !lines.Any(line=>Hits(line.A,line.B,box))&&!insulationLines.Any(line=>Hits(line.A,line.B,box));
+            });
+            occupied.Add(angular is null?fallback:Bounds(angular));
+            result[i]=label with{AngularDimension=angular?.AngularDimension};
+        }
         return result;
+    }
+
+    static double PointDistance(SheetPoint a,SheetPoint b)=>Math.Sqrt(Math.Pow(a.X-b.X,2)+Math.Pow(a.Y-b.Y,2));
+
+    static IEnumerable<Annotation> AngularCandidates(Annotation label,Stroke triangle)
+    {
+        var vertex=triangle.Points[0];var first=triangle.Points[1];var second=triangle.Points[2];
+        double a=PointDistance(vertex,first),b=PointDistance(vertex,second),opposite=PointDistance(first,second);
+        if(Math.Min(a,Math.Min(b,opposite))<.01)yield break;
+        double ux=(first.X-vertex.X)/a,uy=(first.Y-vertex.Y)/a,vx=(second.X-vertex.X)/b,vy=(second.Y-vertex.Y)/b;
+        double cross=ux*vy-uy*vx,cosine=Math.Clamp(ux*vx+uy*vy,-1d,1d);
+        double chordPerRadius=2*Math.Sin(Math.Acos(cosine)/2);
+        double bisectorLength=Math.Sqrt(2+2*cosine);
+        if(Math.Abs(cross)<1e-6||bisectorLength<1e-6)yield break;
+        double bx=(ux+vx)/bisectorLength,by=(uy+vy)/bisectorLength;
+        var tuning=IsoAdvancedSettings.Current;
+        double width=TextLength(label.Text)*2.1*tuning.DimensionTextHeight/3.5;
+        double minimum=(width+2*tuning.ArrowSize+2)/chordPerRadius;
+        // The radius cannot exceed the distance to the closing side of the hatch triangle.
+        double maximum=a*b*Math.Abs(cross)/opposite-1;
+        double rotation=Math.Atan2(bx,-by);
+        if(rotation>Math.PI/2)rotation-=Math.PI;
+        if(rotation<=-Math.PI/2)rotation+=Math.PI;
+        for(double radius=minimum;radius<=maximum;radius+=3)
+        {
+            var arc=new SheetPoint(vertex.X+radius*bx,vertex.Y+radius*by);
+            double tx=Math.Cos(rotation),ty=Math.Sin(rotation);
+            var baseline=new SheetPoint(arc.X-tx*width/2+ty*tuning.DimensionTextHeight/2,
+                arc.Y-ty*width/2-tx*tuning.DimensionTextHeight/2);
+            yield return label with{Position=baseline,Rotation=rotation,AngularDimension=new(vertex,first,second,arc)};
+        }
     }
 }

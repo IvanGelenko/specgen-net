@@ -1,1 +1,18 @@
-<Project Sdk="Microsoft.NET.Sdk"><PropertyGroup><OutputType>WinExe</OutputType><TargetFramework>net8.0-windows</TargetFramework><UseWindowsForms>true</UseWindowsForms><ImplicitUsings>enable</ImplicitUsings><Nullable>disable</Nullable></PropertyGroup><ItemGroup><Compile Include="../../src/PipingSpecPlugin/UI/IsometricDialog.cs" Link="IsometricDialog.cs" /></ItemGroup></Project>
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>annotations</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../iso/src/IsoGenerator.Core/IsoGenerator.Core.csproj" />
+    <ProjectReference Include="../../iso/src/IsoGenerator.Publishing/IsoGenerator.Publishing.csproj" />
+    <Compile Include="../../src/PipingSpecPlugin/UI/IsometricDialog.cs" Link="IsometricDialog.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/UI/IsometricHelp.cs" Link="IsometricHelp.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/UI/IsoDocumentProfileFile.cs" Link="IsoDocumentProfileFile.cs" />
+    <Compile Include="../../src/PipingSpecPlugin/Settings/IsoViewPreferences.cs" Link="IsoViewPreferences.cs" />
+    <Compile Include="../../iso/src/IsoGenerator.AutoCAD/RememberedIsoOutput.cs" Link="RememberedIsoOutput.cs" />
+  </ItemGroup>
+</Project>

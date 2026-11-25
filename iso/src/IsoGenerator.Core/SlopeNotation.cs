@@ -4,8 +4,8 @@ internal static class SlopeNotation
 {
     public static void Add(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,int turns,List<Stroke> strokes,List<Annotation> labels,IReadOnlyList<PipeDimension> dimensions,Func<ModelPoint,string,SheetPoint>? projectSource=null)
     {
-        var dimensionedBends=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach(var fitting in snapshot.Parts.Where(part=>part.Component==ComponentKind.Elbow||part.CatalogClass=="PipeBend"))
+        var suppressibleElbows=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach(var fitting in snapshot.Parts.Where(part=>part.Component==ComponentKind.Elbow))
         {
             var ports=fitting.Ports.Where(port=>port.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
             if(ports.Length!=2)continue;
@@ -14,8 +14,14 @@ internal static class SlopeNotation
             if(!double.IsFinite(lengths)||lengths<1e-10)continue;
             double cosine=(a.X*b.X+a.Y*b.Y+a.Z*b.Z)/lengths;
             double turn=Math.Acos(Math.Clamp(-cosine,-1d,1d))*180/Math.PI;
-            if(Math.Abs(turn-90)<.01)continue;
-            dimensionedBends.Add(fitting.Handle);
+            string angleText=turn.ToString("0.##",CultureInfo.InvariantCulture)+"°";
+            if(angleText=="90°")continue;
+            if(fitting.CatalogClass!="PipeBend")
+            {
+                if(Math.Abs(turn-90)<.01)continue;
+                // The incline dimension may replace an elbow label. A bent pipe keeps its fabrication angle.
+                suppressibleElbows.Add(fitting.Handle);
+            }
             var first=projectSource?.Invoke(ports[0].Position,fitting.Handle)??project(ports[0].Position);
             var last=projectSource?.Invoke(ports[1].Position,fitting.Handle)??project(ports[1].Position);
             var center=new SheetPoint((first.X+last.X)/2,(first.Y+last.Y)/2);
@@ -35,14 +41,11 @@ internal static class SlopeNotation
                     {
                         const double reach=9;
                         center=new(vertex.X+reach*bx/length,vertex.Y+reach*by/length);
-                        var ray=new SheetPoint(vertex.X+incoming.X,vertex.Y+incoming.Y);
-                        strokes.Add(new(fitting.Handle,"bend-dimension",new[]{vertex,ray,last,center}));
                         angularAnchor=center;
                     }
                 }
             }
-            labels.Add(new(fitting.Handle,"bend-angle",new(center.X+2,center.Y+3),
-                turn.ToString("0.##",CultureInfo.InvariantCulture)+"°",Anchor:angularAnchor));
+            labels.Add(new(fitting.Handle,"bend-angle",new(center.X+2,center.Y+3),angleText,Anchor:angularAnchor));
         }
         var pipes=snapshot.Parts.Where(p=>p.Component==ComponentKind.Pipe)
             .Select(part=>(Part:part,Ports:part.Ports.Where(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray()))
@@ -52,27 +55,28 @@ internal static class SlopeNotation
             var (run,rise)=RunAndRise(pipe.Ports[0].Position,pipe.Ports[1].Position);
             return IsGrade(run,rise);
         }).Select(pipe=>pipe.Part.Line).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var runs=HatchRuns(dimensions)
+        var hatchRuns=HatchRuns(dimensions);
+        var runs=hatchRuns
             .OrderByDescending(row=>row.ModelStart!.Value.DistanceTo(row.ModelEnd!.Value))
             .SelectMany(row=>(row.SourceIds??new[]{row.SourceId}).Select(handle=>(Handle:handle,Row:row)))
             .ToLookup(item=>item.Handle,item=>item.Row,StringComparer.OrdinalIgnoreCase);
         var drawnRuns=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var partsByHandle=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
-        var redundantBends=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var redundantElbows=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var neighbors=snapshot.Connections.SelectMany(c=>new[]{(From:c.FirstHandle,To:c.SecondHandle),(From:c.SecondHandle,To:c.FirstHandle)})
             .ToLookup(link=>link.From,link=>link.To,StringComparer.OrdinalIgnoreCase);
-        IEnumerable<string> ConnectedBends(IEnumerable<string> sources)
+        IEnumerable<string> ConnectedElbows(IEnumerable<string> sources)
         {
             var seen=sources.ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach(string source in seen)
-                if(dimensionedBends.Contains(source))yield return source;
+                if(suppressibleElbows.Contains(source))yield return source;
             var queue=new Queue<string>(seen);
             while(queue.TryDequeue(out string? handle))
                 foreach(var other in neighbors[handle])
                 {
                     if(!seen.Add(other)||!partsByHandle.TryGetValue(other,out var neighbor))continue;
                     if(neighbor.IsConnector)queue.Enqueue(other);
-                    else if(dimensionedBends.Contains(other))yield return other;
+                    else if(suppressibleElbows.Contains(other))yield return other;
                 }
         }
         foreach(var (part,ports) in pipes)
@@ -114,60 +118,63 @@ internal static class SlopeNotation
                 var delta=Delta(overall.ModelStart!.Value,overall.ModelEnd!.Value);
                 (dx,dy,dz)=(delta.X,delta.Y,delta.Z);
                 (pa,pb)=(overall.Start,overall.End);
-                planAngle=Math.Atan2(Math.Min(Math.Abs(dx),Math.Abs(dy)),Math.Max(Math.Abs(dx),Math.Abs(dy)));
             }
-            // Reference plane is horizontal for a rise, XY for a horizontal skew.
-            double run=Math.Sqrt(dx*dx+dy*dy);
-            bool elevationPlane=Math.Abs(dz)>.001&&!(IsGrade(run,Math.Abs(dz))&&planAngle>Math.PI/180);
-            var reference=elevationPlane?new ModelPoint(dx,dy,0):Math.Abs(dx)>=Math.Abs(dy)?new ModelPoint(dx,0,0):new ModelPoint(0,dy,0);
-            double refLength=Math.Sqrt(reference.X*reference.X+reference.Y*reference.Y);
-            double angle=(elevationPlane?Math.Atan2(Math.Abs(dz),refLength):planAngle)*180/Math.PI;
-            var modelVector=IsometricProjection.Project(new(dx,dy,dz),quarterTurns:turns);
-            double projectedLength=Math.Sqrt(modelVector.X*modelVector.X+modelVector.Y*modelVector.Y);
-            double scale=Math.Sqrt(Math.Pow(pb.X-pa.X,2)+Math.Pow(pb.Y-pa.Y,2))/projectedLength;
-            var start=pa;var tip=pb;
-            var r=IsometricProjection.Project(reference,quarterTurns:turns);
-            var corner=new SheetPoint(start.X+r.X*scale,start.Y+r.Y*scale);
-            if(Math.Abs((corner.X-start.X)*(tip.Y-start.Y)-(corner.Y-start.Y)*(tip.X-start.X))<.1)continue;
+            if(!AddDeviation(part.Handle,new(dx,dy,dz),pa,pb,turns,strokes,labels))continue;
             if(overall is not null)drawnRuns.Add(overall.ChainId);
-            strokes.Add(new(part.Handle,"slope-triangle",new[]{start,corner,tip}));
-            Hatch(part.Handle,start,corner,tip,strokes);
-            var legA=new SheetPoint(start.X-corner.X,start.Y-corner.Y);var legB=new SheetPoint(tip.X-corner.X,tip.Y-corner.Y);
-            double la=Math.Sqrt(legA.X*legA.X+legA.Y*legA.Y),lb=Math.Sqrt(legB.X*legB.X+legB.Y*legB.Y);
-            double square=Math.Min(2.5,Math.Min(la,lb)*.2);
-            var qa=new SheetPoint(corner.X+legA.X/la*square,corner.Y+legA.Y/la*square);
-            var qb=new SheetPoint(corner.X+legB.X/lb*square,corner.Y+legB.Y/lb*square);
-            strokes.Add(new(part.Handle,"slope-right-angle",new[]{qa,new SheetPoint(qa.X+legB.X/lb*square,qa.Y+legB.Y/lb*square),qb}));
-            // The angular dimension is a projected circular arc in the actual 3D slope plane.
-            var rise=new ModelPoint(dx-reference.X,dy-reference.Y,elevationPlane?dz:0);
-            double riseLength=Math.Sqrt(rise.X*rise.X+rise.Y*rise.Y+rise.Z*rise.Z);
-            AddProjectionLength(part.Handle,start,corner,tip,refLength,labels,strokes);
-            AddProjectionLength(part.Handle,corner,tip,start,riseLength,labels,strokes);
-            double alpha=angle*Math.PI/180;
-            double radius=Math.Min(15,Math.Min(la,lb)*.65);
-            SheetPoint Arc(double theta)
-            {
-                var vector=new ModelPoint(reference.X/refLength*Math.Cos(theta)+rise.X/riseLength*Math.Sin(theta),reference.Y/refLength*Math.Cos(theta)+rise.Y/riseLength*Math.Sin(theta),rise.Z/riseLength*Math.Sin(theta));
-                var v=IsometricProjection.Project(vector,quarterTurns:turns);return new(start.X+v.X*radius,start.Y+v.Y*radius);
-            }
-            var arc=Enumerable.Range(0,33).Select(i=>Arc(alpha*i/32)).ToArray();
-            strokes.Add(new(part.Handle,"slope-angle-arc",arc));
-            void Arrow(SheetPoint point,SheetPoint inside)
-            {
-                double tx=point.X-inside.X,ty=point.Y-inside.Y,l=Math.Sqrt(tx*tx+ty*ty);tx/=l;ty/=l;
-                const double arrowLength=2.5;double half=arrowLength*Math.Tan(10*Math.PI/180);
-                var a1=new SheetPoint(point.X-tx*arrowLength-ty*half,point.Y-ty*arrowLength+tx*half);
-                var a2=new SheetPoint(point.X-tx*arrowLength+ty*half,point.Y-ty*arrowLength-tx*half);
-                strokes.Add(new(part.Handle,"slope-angle-arrow",new[]{point,a1,a2,point}));
-            }
-            Arrow(arc[0],arc[1]);Arrow(arc[^1],arc[^2]);
-            var labelAnchor=Arc(alpha/2);
-            labels.Add(new(part.Handle,"slope-angle",new(labelAnchor.X-3,labelAnchor.Y+2),
-                angle.ToString("0.#",CultureInfo.InvariantCulture)+"°",Anchor:labelAnchor));
-            redundantBends.UnionWith(ConnectedBends(overall?.SourceIds??new[]{part.Handle}));
+            redundantElbows.UnionWith(ConnectedElbows(overall?.SourceIds??new[]{part.Handle}));
         }
-        labels.RemoveAll(label=>label.Role=="bend-angle"&&redundantBends.Contains(label.SourceId));
-        strokes.RemoveAll(stroke=>stroke.Role=="bend-dimension"&&redundantBends.Contains(stroke.SourceId));
+        foreach(var run in hatchRuns)
+        {
+            var sources=(run.SourceIds??new[]{run.SourceId}).Select(id=>partsByHandle.GetValueOrDefault(id)).ToArray();
+            if(!sources.Any(part=>part?.CatalogClass=="PipeBend")||
+                sources.Any(part=>part is not null&&!part.IsConnector&&part.CatalogClass!="PipeBend"))continue;
+            AddDeviation(run.SourceId,Delta(run.ModelStart!.Value,run.ModelEnd!.Value),run.Start,run.End,turns,strokes,labels);
+        }
+        labels.RemoveAll(label=>label.Role=="bend-angle"&&redundantElbows.Contains(label.SourceId));
+    }
+
+    static bool AddDeviation(string source,ModelPoint delta,SheetPoint start,SheetPoint tip,int turns,List<Stroke> strokes,List<Annotation> labels)
+    {
+        var (dx,dy,dz)=delta;
+        double length=delta.DistanceTo(default);
+        if(length<.001||Math.Max(Math.Abs(dx),Math.Max(Math.Abs(dy),Math.Abs(dz)))/length>Math.Cos(.01*Math.PI/180))return false;
+        double planAngle=Math.Atan2(Math.Min(Math.Abs(dx),Math.Abs(dy)),Math.Max(Math.Abs(dx),Math.Abs(dy)));
+        // Reference plane is horizontal for a rise, XY for a horizontal skew.
+        double run=Math.Sqrt(dx*dx+dy*dy);
+        bool elevationPlane=Math.Abs(dz)>.001&&!(IsGrade(run,Math.Abs(dz))&&planAngle>Math.PI/180);
+        var reference=elevationPlane?new ModelPoint(dx,dy,0):Math.Abs(dx)>=Math.Abs(dy)?new ModelPoint(dx,0,0):new ModelPoint(0,dy,0);
+        double refLength=Math.Sqrt(reference.X*reference.X+reference.Y*reference.Y);
+        double angle=(elevationPlane?Math.Atan2(Math.Abs(dz),refLength):planAngle)*180/Math.PI;
+        string angleText=angle.ToString("0.#",CultureInfo.InvariantCulture);
+        if(angleText=="0")return false;
+        var modelVector=IsometricProjection.Project(delta,quarterTurns:turns);
+        double projectedLength=Math.Sqrt(modelVector.X*modelVector.X+modelVector.Y*modelVector.Y);
+        if(projectedLength<.001)return false;
+        double scale=Math.Sqrt(Math.Pow(tip.X-start.X,2)+Math.Pow(tip.Y-start.Y,2))/projectedLength;
+        var r=IsometricProjection.Project(reference,quarterTurns:turns);
+        var corner=new SheetPoint(start.X+r.X*scale,start.Y+r.Y*scale);
+        if(Math.Abs((corner.X-start.X)*(tip.Y-start.Y)-(corner.Y-start.Y)*(tip.X-start.X))<.1)return false;
+        strokes.Add(new(source,"slope-triangle",new[]{start,corner,tip}));
+        Hatch(source,start,corner,tip,strokes);
+        var legA=new SheetPoint(start.X-corner.X,start.Y-corner.Y);var legB=new SheetPoint(tip.X-corner.X,tip.Y-corner.Y);
+        double la=Math.Sqrt(legA.X*legA.X+legA.Y*legA.Y),lb=Math.Sqrt(legB.X*legB.X+legB.Y*legB.Y);
+        double square=Math.Min(2.5,Math.Min(la,lb)*.2);
+        var qa=new SheetPoint(corner.X+legA.X/la*square,corner.Y+legA.Y/la*square);
+        var qb=new SheetPoint(corner.X+legB.X/lb*square,corner.Y+legB.Y/lb*square);
+        strokes.Add(new(source,"slope-right-angle",new[]{qa,new SheetPoint(qa.X+legB.X/lb*square,qa.Y+legB.Y/lb*square),qb}));
+        var rise=new ModelPoint(dx-reference.X,dy-reference.Y,elevationPlane?dz:0);
+        double riseLength=Math.Sqrt(rise.X*rise.X+rise.Y*rise.Y+rise.Z*rise.Z);
+        AddProjectionLength(source,start,corner,tip,refLength,labels,strokes);
+        AddProjectionLength(source,corner,tip,start,riseLength,labels,strokes);
+        // Position the degree label within the projected angle without drawing a circular dimension.
+        double halfAngle=angle*Math.PI/360;
+        var across=IsometricProjection.Project(rise,quarterTurns:turns);
+        double reach=Math.Min(15,Math.Min(la,lb)*.65);
+        double alongScale=Math.Cos(halfAngle)*reach/refLength,acrossScale=Math.Sin(halfAngle)*reach/riseLength;
+        var anchor=new SheetPoint(start.X+r.X*alongScale+across.X*acrossScale,
+            start.Y+r.Y*alongScale+across.Y*acrossScale);
+        labels.Add(new(source,"slope-angle",new(anchor.X-3,anchor.Y+2),angleText+"°",Anchor:anchor));
+        return true;
     }
     static void AddProjectionLength(string source,SheetPoint a,SheetPoint b,SheetPoint opposite,double length,List<Annotation> labels,List<Stroke> strokes)
     {

@@ -25,6 +25,82 @@ void Assert(bool value,string message){checks++;if(!value)throw new Exception(me
 Part Pipe(string h,ModelPoint a,ModelPoint b)=>new("test.dwg",h,"AcPpDb3dPipe","L1",new[]{new Port("S1",a,new(-1,0,0)),new Port("S2",b,new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Pipe"},{"PartSizeLongDesc","Pipe 100"},{"Length","1000"}});
 var first=Pipe("A",new(0,0,0),new(1000,0,0));var second=Pipe("B",new(1000,0,0),new(2000,0,0));
 PipelineSnapshot Snapshot(Part[] parts,Connection[] links)=>new(1,"test.dwg",parts,links,Array.Empty<string>());
+foreach(int sign in new[]{-1,1})
+{
+    var neck=Pipe("vent-drain",new(0,0,0),new(0,0,100*sign));
+    var valve=Pipe("terminal-valve",new(0,0,100*sign),new(0,0,150*sign)) with
+        {Properties=new Dictionary<string,string>{{"PnPClassName","Valve"}}};
+    var terminalJoint=new Connection(neck.Handle,"S2",valve.Handle,"S1");
+    var terminal=Snapshot(new[]{neck,valve},new[]{terminalJoint});
+    double PaperSpan(SchematicLayout layout)=>Math.Abs(layout.Project(neck.Ports[0].Position,neck.Handle).Y-
+        layout.Project(neck.Ports[1].Position,neck.Handle).Y);
+    Near(PaperSpan(new SchematicLayout(terminal)),20);
+    Near(PaperSpan(new SchematicLayout(terminal,compactLevel:1,
+        pipeExtensions:new Dictionary<string,double>{{neck.Handle,120}},fixedScale:.5)),20);
+    var throughPipe=Pipe("downstream",new(0,0,150*sign),new(0,0,300*sign));
+    var through=Snapshot(new[]{neck,valve,throughPipe},new[]{terminalJoint,new Connection(valve.Handle,"S2",throughPipe.Handle,"S1")});
+    Assert(PaperSpan(new SchematicLayout(through,fixedScale:.5))>20,
+        "A vertical through-run with an inline valve retains its normal paper scale");
+}
+var sideNeck=Pipe("side-neck",new(20,0,0),new(120,0,0));
+var sideValve=Pipe("side-valve",new(120,0,0),new(170,0,0)) with
+    {Properties=new Dictionary<string,string>{{"PnPClassName","Valve"}}};
+var sideTee=new Part("test.dwg","side-tee","AcPpDb3dPipeInlineAsset","L1",new[]{
+    new Port("S1",new(0,0,-30),new(0,0,-1)),new Port("S2",new(0,0,30),new(0,0,1)),
+    new Port("S3",new(20,0,0),new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Tee"}});
+var sideWeld=sideNeck with{Handle="side-weld",Kind="AcPpDb3dConnector",
+    Ports=new[]{new Port("S1",new(20,0,0),new(-1,0,0)),new Port("S2",new(20,0,0),new(1,0,0))},
+    Properties=new Dictionary<string,string>()};
+var sideFixture=Snapshot(new[]{sideTee,sideWeld,sideNeck,sideValve},new[]{
+    new Connection(sideTee.Handle,"S3",sideWeld.Handle,"S1"),new Connection(sideWeld.Handle,"S2",sideNeck.Handle,"S1"),
+    new Connection(sideNeck.Handle,"S2",sideValve.Handle,"S1")});
+double SidePaperSpan(PipelineSnapshot snapshot)
+{
+    var layout=new SchematicLayout(snapshot,fixedScale:.5);
+    var neck=snapshot.Parts.Single(part=>part.Handle==sideNeck.Handle);
+    var start=layout.Project(neck.Ports[0].Position,neck.Handle);
+    var end=layout.Project(neck.Ports[1].Position,neck.Handle);
+    return Math.Sqrt(Math.Pow(end.X-start.X,2)+Math.Pow(end.Y-start.Y,2));
+}
+Near(SidePaperSpan(sideFixture),20);
+Port ShiftSidePort(Port port)=>port with{Position=port.Position with{X=port.Position.X+158}};
+var longerSide=sideFixture with{Parts=new[]{sideTee,sideWeld,
+    sideNeck with{Ports=new[]{sideNeck.Ports[0],ShiftSidePort(sideNeck.Ports[1])}},
+    sideValve with{Ports=sideValve.Ports.Select(ShiftSidePort).ToArray()}}};
+Near(SidePaperSpan(longerSide),20);
+var tappedHost=Pipe("tapped-host",new(0,0,-150),new(0,0,150));
+tappedHost=tappedHost with{Ports=tappedHost.Ports.Append(
+    new Port("D1",new(20,0,0),new(1,0,0),"TAP")).ToArray()};
+var tapFixture=sideFixture with{Parts=new[]{tappedHost,sideWeld,sideNeck,sideValve},
+    Connections=sideFixture.Connections.Select(link=>link.FirstHandle==sideTee.Handle?
+        link with{FirstHandle=tappedHost.Handle,FirstPort="D1"}:link).ToArray()};
+Near(SidePaperSpan(tapFixture),20);
+var takeoffReducer=Pipe("takeoff-reducer",new(20,0,0),new(60,0,0)) with
+    {Properties=new Dictionary<string,string>{{"PnPClassName","Reducer"}}};
+var reducedSideNeck=sideNeck with{Ports=new[]{sideNeck.Ports[0] with{Position=new(60,0,0)},sideNeck.Ports[1]}};
+var reducedTap=Snapshot(new[]{tappedHost,takeoffReducer,reducedSideNeck,sideValve},new[]{
+    new Connection(tappedHost.Handle,"D1",takeoffReducer.Handle,"S1"),
+    new Connection(takeoffReducer.Handle,"S2",sideNeck.Handle,"S1"),
+    new Connection(sideNeck.Handle,"S2",sideValve.Handle,"S1")});
+Near(SidePaperSpan(reducedTap),20);
+var straightHost=Pipe("side-host",new(-100,0,0),new(20,0,0));
+var inlineFixture=sideFixture with{Parts=new[]{straightHost,sideWeld,sideNeck,sideValve},
+    Connections=sideFixture.Connections.Select(link=>link.FirstHandle==sideTee.Handle?
+        link with{FirstHandle=straightHost.Handle,FirstPort="S2"}:link).ToArray()};
+Assert(SidePaperSpan(inlineFixture)>20,"A short inline valve connection is not a side tap");
+var reducedInline=reducedTap with{Parts=new[]{straightHost,takeoffReducer,reducedSideNeck,sideValve},
+    Connections=reducedTap.Connections.Select(link=>link.FirstHandle==tappedHost.Handle?
+        link with{FirstHandle=straightHost.Handle,FirstPort="S2"}:link).ToArray()};
+Assert(SidePaperSpan(reducedInline)>20,"An inline reducer does not make a terminal valve connection a side tap");
+var overlapFirst=new Stroke("vertical-a","pipe",new SheetPoint[]{new(10,5),new(10,25)});
+var overlapSecond=new Stroke("vertical-b","pipe",new SheetPoint[]{new(10,13),new(10,30)});
+bool projectedOverlapRejected=false;
+try{PipeCrossingBreaks.CheckProjectedOverlaps(new[]{overlapFirst,overlapSecond});}
+catch(PipeProjectionOverlapException ex){projectedOverlapRejected=ex.SourceId=="vertical-a"&&ex.OtherPipe=="vertical-b";}
+Assert(projectedOverlapRejected,"Distinct pipes with overlapping projected centerlines are rejected by their source handles");
+PipeCrossingBreaks.CheckProjectedOverlaps(new[]{overlapFirst,
+    overlapSecond with{Points=new SheetPoint[]{new(10,25),new(10,30)}},
+    new Stroke("crossing","pipe",new SheetPoint[]{new(5,15),new(15,15)})});
 var skewBend=new Part("test.dwg","skew-bend","AcPpDb3dPipeInlineAsset","L1",new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(100,100,3),new(0,1,0))},
     new Dictionary<string,string>{["PnPClassName"]="PipeBend",["InsulationThickness"]="40"});
 var skewBendSnapshot=Snapshot(new[]{skewBend},Array.Empty<Connection>());
@@ -144,6 +220,22 @@ var crossNumbered=DocumentSheetReferences.Apply(crossPlan,"other",5,numberedDocu
 Assert(crossNumbered.Annotations.Any(label=>label.Text=="см. 150-KSN011-LS025C-HN(L3) лист 5\nОТМ. +0.000*")&&
        crossNumbered.Annotations.Any(label=>label.Text=="см. OUTSIDE"),
        "An external line reference finds the connected part on a later sheet and leaves outside documents intact");
+var placedReturnAngle=new Annotation("return-bend","bend-angle",new(130,60),"180°",Anchor:new SheetPoint(100,60));
+var bendDocumentScene=crossScene with
+{
+    Annotations=crossScene.Annotations.Append(placedReturnAngle).ToArray(),
+    Strokes=new[]{2d,3,4.5,6,8,12,16,22}.Select(lift=>new Stroke("neighbor","pipe",
+        new[]{new SheetPoint(80,61+lift),new SheetPoint(125,61+lift)})).ToArray()
+};
+var reflowedBend=DocumentSheetReferences.Apply(crossPlan with{Scene=bendDocumentScene},"other",5,numberedDocument);
+Assert(reflowedBend.Annotations.Single(label=>label.Role=="bend-angle").Position==placedReturnAngle.Position&&
+       reflowedBend.Annotations.Any(label=>label.Text.Contains("лист 5",StringComparison.Ordinal)),
+       "Document reference reflow can reuse a clear return-bend angle position outside the above-anchor candidates");
+var crowdedBendAngle=placedReturnAngle with{Position=new(102,63),Text="90°"};
+var placedCrowdedBend=AnnotationPlacement.Place(new[]{crowdedBendAngle},bendDocumentScene.Strokes.ToList(),
+    Array.Empty<SymbolGlyph>(),Array.Empty<PipeDimension>()).Single();
+Assert(placedCrowdedBend.Anchor==crowdedBendAngle.Anchor&&placedCrowdedBend.Position.Y<60,
+    "Bend angle can move below an occluded arc on initial placement while preserving its anchor");
 var gap=second with{Ports=new[]{new Port("S1",new(1005,0,0),new(-1,0,0)),second.Ports[1]}};
 Assert(SnapshotValidation.Validate(linked with{Parts=new[]{first,gap}}).Errors.Count>0,"Reject inconsistent connected ports");
 Assert(SnapshotValidation.Validate(linked with{Parts=new[]{first,first}}).Errors.Count>0,"Reject duplicate handles");
@@ -432,9 +524,31 @@ Near(Math.Atan2(riseLine.Points[1].Y-riseLine.Points[0].Y,riseLine.Points[1].X-r
 Assert(Path.GetFileName(DrawingFileNames.Dwg("out","150-FL007-LS016B-HN",1,1))=="150-FL007-LS016B-HN.dwg","Single sheet file matches line number");
 Assert(Path.GetFileName(DrawingFileNames.Dwg("out","150-FL007-LS016B-HN",2,3))=="150-FL007-LS016B-HN(L2).dwg","Multiple sheets use the requested L index");
 Assert(DrawingFileNames.LineStem("LINE/1:2")=="LINE_1_2","Invalid Windows filename characters are replaced deterministically");
-Assert(riseScene.Strokes.Count(s=>s.Role=="slope-angle-arrow")==2,"Angular dimension has two filled arrows");
-Assert(riseScene.Strokes.Count(s=>s.Role=="slope-angle-arc")==1,"Incline has a projected angular dimension arc");
+Assert(!riseScene.Strokes.Any(s=>s.Role is "slope-angle-arc" or "slope-angle-arrow"),
+    "An incline delegates the angle arc and arrowheads to the native dimension");
+Assert(riseScene.Annotations.Single(a=>a.Role=="slope-angle").AngularDimension is not null,
+    "A roomy hatch triangle carries a native angular dimension");
+foreach(int side in new[]{1,-1})
+{
+    var vertex=new SheetPoint(100,140);
+    var shallowHatch=new List<Stroke>{new("shallow-angle","slope-triangle",
+        new SheetPoint[]{vertex,new(300,140),new(300,140+side*20)})};
+    var angle=AnnotationPlacement.Place(new[]{new Annotation("shallow-angle","slope-angle",new(105,140),"3°",Anchor:vertex)},
+        shallowHatch,Array.Empty<SymbolGlyph>(),Array.Empty<PipeDimension>()).Single();
+    Assert(angle.AngularDimension is {} native&&native.ArcPoint.X>200&&native.ArcPoint.X<300&&
+        (native.ArcPoint.Y-140)*side>0,"A shallow angle moves along the hatch until the arrows and degree text fit");
+}
 Assert(riseScene.Strokes.Count(s=>s.Role=="slope-right-angle")==1,"Incline triangle has a right angle mark");
+var nearAxis=Pipe("near-axis",new(0,0,0),new(1000,0.5,0));
+var slightlySkewed=Pipe("slightly-skewed",new(0,50,0),new(1000,53.5,0));
+var smallDeviationStrokes=new List<Stroke>();
+var smallDeviationLabels=new List<Annotation>();
+SlopeNotation.Add(Snapshot(new[]{nearAxis,slightlySkewed},Array.Empty<Connection>()),
+    p=>IsometricProjection.Project(p),0,smallDeviationStrokes,smallDeviationLabels,Array.Empty<PipeDimension>());
+Assert(!smallDeviationLabels.Any(a=>a.SourceId==nearAxis.Handle&&a.Role=="slope-angle")&&
+    !smallDeviationStrokes.Any(s=>s.SourceId==nearAxis.Handle&&s.Role=="slope-triangle")&&
+    smallDeviationLabels.Any(a=>a.SourceId==slightlySkewed.Handle&&a.Role=="slope-angle"&&a.Text=="0.2°"),
+    "Deviations invisible at the displayed precision omit 0° without dropping meaningful nearby angles");
 if(File.Exists(file))
 {
     var live=System.Text.Json.JsonSerializer.Deserialize<PipelineSnapshot>(File.ReadAllText(file))!;
@@ -788,12 +902,12 @@ var splitHardware=SheetSetPlanner.Build(tallSnapshot with{Accessories=new[]{Acce
 Near(splitHardware.Sum(s=>s.Scene.BillOfMaterials.Where(r=>r.Category==BomCategory.Gaskets).Sum(r=>r.Quantity)),2);
 Assert(splitHardware.SelectMany(s=>s.Snapshot.Accessories??Array.Empty<Part>()).Select(p=>p.Handle).Distinct().Count()==2,"Accessories belong to their owner's sheet exactly once");
 var filteredHardware=SheetPlanner.Build(hardwareSnapshot,excludeFlangeHardware:true);
-Assert(filteredHardware.BillOfMaterials.All(r=>r.Category is not (BomCategory.Gaskets or BomCategory.Fasteners)),"Hardware exclusion removes only BOM rows");
+Assert(filteredHardware.BillOfMaterials.SelectMany(r=>r.Handles).ToHashSet().SetEquals(hardwareScene.BillOfMaterials.SelectMany(r=>r.Handles)),"Valve hardware exclusion preserves accessories without a valve connection");
 Assert(filteredHardware.Dimensions.Select(d=>d.Millimeters).SequenceEqual(hardwareScene.Dimensions.Select(d=>d.Millimeters)),"Hardware BOM exclusion preserves engineering dimensions");
 var filteredFlange=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap,excludeFlangeHardware:true);
-Assert(filteredFlange.BillOfMaterials.All(r=>r.Kind!="Flange"),"Flange BOM exclusion removes flange positions");
+Assert(filteredFlange.BillOfMaterials.Any(r=>r.Handles.Contains("weld-flange")),"A flange attached only to a pipe remains in the BOM");
 Assert(filteredFlange.Symbols!.Count==weldFlangeScene.Symbols!.Count&&filteredFlange.Welds!.Count==weldFlangeScene.Welds!.Count,"Flange BOM exclusion preserves flange symbols and welds");
-Assert(!filteredFlange.Annotations.Any(a=>a.SourceId=="weld-flange"&&a.Role=="position"),"Excluded flange has no orphaned BOM position");
+Assert(filteredFlange.Annotations.Any(a=>a.SourceId=="weld-flange"&&a.Role=="position"),"A standalone flange keeps its BOM position");
 Assert(filteredFlange.ExcludeFlangeHardware,"BOM exclusion is recorded in the published scene");
 foreach(int turn in Enumerable.Range(0,4))
 {
@@ -864,7 +978,51 @@ var fgbScene=SheetPlanner.Build(fgbSnapshot,symbolMap:weldFlangeMap);
 int flangeNumber=fgbScene.BillOfMaterials.Single(r=>r.Kind=="Flange").Position,boltNumber=fgbScene.BillOfMaterials.Single(r=>r.Kind=="BoltSet").Position,gasketNumber=fgbScene.BillOfMaterials.Single(r=>r.Kind=="Gasket").Position;
 Assert(fgbScene.Annotations.Any(a=>a.Role=="position-group"&&a.Text==$"{flangeNumber},{boltNumber},{gasketNumber}"),"Flange, bolt set and gasket share their current BOM numbers in the requested order");
 Assert(!fgbScene.Annotations.Any(a=>a.Role=="position"&&a.SourceId=="weld-flange"),"Grouped flange position replaces its single numeric label");
-Assert(!SheetPlanner.Build(fgbSnapshot,symbolMap:weldFlangeMap,excludeFlangeHardware:true).Annotations.Any(a=>a.Role=="position-group"),"Excluded hardware has no grouped numeric annotations");
+Assert(SheetPlanner.Build(fgbSnapshot,symbolMap:weldFlangeMap,excludeFlangeHardware:true).Annotations.Any(a=>a.Role=="position-group"),"A standalone flange keeps its grouped hardware position");
+Part KitPart(string handle,string kind,int start,int end,string firstEnd="FL",string secondEnd="FL",string definition="")=>
+    new("test.dwg",handle,kind==""?"AcPpDb3dConnector":"AcPpDb3dInlineAsset","L1",
+        new[]{new Port("S1",new(start,0,0),new(-1,0,0),firstEnd),new Port("S2",new(end,0,0),new(1,0,0),secondEnd)},
+        new Dictionary<string,string>{{"PnPClassName",kind},{"ContentIsoSymbolDefinition",definition}});
+var kitParts=new[]{
+    Pipe("kit-inlet",new(-1000,0,0),new(0,0,0)),
+    KitPart("kit-flange-a","Flange",0,80,"BV"),
+    KitPart("kit-joint-a","",80,85),
+    KitPart("kit-valve","Valve",85,385),
+    KitPart("kit-joint-b","",385,390),
+    KitPart("kit-blind","BlindDisk",390,420,definition:"TYPE=MISC-COMPONENT,SKEY=SB"),
+    KitPart("kit-joint-c","",420,425),
+    KitPart("kit-flange-b","Flange",425,505,secondEnd:"BV"),
+    Pipe("kit-spacer",new(505,0,0),new(1505,0,0)),
+    KitPart("pair-flange-a","Flange",1505,1585,"BV"),
+    KitPart("pair-joint","",1585,1590),
+    KitPart("pair-flange-b","Flange",1590,1670,secondEnd:"BV"),
+    Pipe("kit-outlet",new(1670,0,0),new(2670,0,0))};
+var kitLinks=kitParts.Zip(kitParts.Skip(1),(a,b)=>new Connection(a.Handle,"S2",b.Handle,"S1")).ToArray();
+var kitAccessories=new[]{"kit-joint-a","kit-joint-b","kit-joint-c","pair-joint"}
+    .SelectMany(joint=>new[]{Accessory(joint+"-gasket",joint,"Gasket","1"),Accessory(joint+"-bolts",joint,"BoltSet","8")}).ToArray();
+var kitSnapshot=Snapshot(kitParts,kitLinks) with{Accessories=kitAccessories};
+var kitExcluded=new[]{"kit-flange-a","kit-flange-b","kit-blind"}.Concat(kitAccessories
+    .Where(p=>p.Handle.StartsWith("kit-",StringComparison.Ordinal)).Select(p=>p.Handle)).ToHashSet();
+var completeKit=SheetPlanner.Build(kitSnapshot);
+var compactKit=SheetPlanner.Build(kitSnapshot,excludeFlangeHardware:true);
+Assert(completeKit.BillOfMaterials.SelectMany(row=>row.Handles).Where(kitExcluded.Contains).ToHashSet().SetEquals(kitExcluded),
+    "Disabling valve kit exclusion counts every flange, blind, gasket and fastener");
+Assert(compactKit.BillOfMaterials.SelectMany(row=>row.Handles).ToHashSet().SetEquals(
+    completeKit.BillOfMaterials.SelectMany(row=>row.Handles).Where(handle=>!kitExcluded.Contains(handle))),
+    "Valve kit exclusion follows the valve through the blind and keeps both flanges and hardware of the independent pipe joint");
+Assert(compactKit.Dimensions.Select(d=>d.Millimeters).SequenceEqual(completeKit.Dimensions.Select(d=>d.Millimeters)),
+    "Valve kit BOM exclusion preserves engineering dimensions");
+foreach(string endCondition in new[]{"WF","LUG"})
+{
+    var specialValve=kitParts[3] with{Ports=kitParts[3].Ports.Select(port=>port with{EndCondition=endCondition}).ToArray()};
+    var specialKit=kitSnapshot with{Parts=kitParts.Select(part=>part.Handle==specialValve.Handle?specialValve:part).ToArray()};
+    Assert(SheetPlanner.Build(specialKit,excludeFlangeHardware:true).BillOfMaterials.SelectMany(row=>row.Handles).ToHashSet().SetEquals(
+        compactKit.BillOfMaterials.SelectMany(row=>row.Handles)),"Wafer and lugged valves exclude their mating flanged hardware");
+}
+var splitKit=SheetSetPlanner.Build(kitSnapshot with{RequiredCuts=new[]{kitLinks[5]}},excludeFlangeHardware:true);
+Assert(splitKit.Count>=2&&splitKit.SelectMany(sheet=>sheet.Scene.BillOfMaterials).SelectMany(row=>row.Handles).ToHashSet().SetEquals(
+    compactKit.BillOfMaterials.SelectMany(row=>row.Handles)),
+    "Splitting through a valve kit does not restore excluded items or remove an independent flange pair");
 PipelineSnapshot LoopFixture(ModelPoint[] nodes,(int A,int B)[] links,int valve=-1)
 {
     var parts=links.Select((e,i)=>Pipe("loop-"+i,nodes[e.A],nodes[e.B])).ToArray();
@@ -910,6 +1068,21 @@ var detachedRun=new SheetRunContinuity(Snapshot(continuityParts,Array.Empty<Conn
 Assert(!detachedRun.HasInteriorGap(new[]{"run-left","run-right"}),"Disconnected collinear pipes do not form a run");
 var familyPipes=continuityParts.Take(2).Select(p=>p with{Properties=new Dictionary<string,string>(p.Properties){["PartSizeLongDesc"]="",["PartFamilyLongDesc"]=p.Handle}}).ToArray();
 Assert(SheetPlanner.Build(Snapshot(familyPipes,new[]{new Connection("run-left","S2","run-middle","S1")})).BillOfMaterials.Count==2,"Different displayed family descriptions get distinct BOM positions");
+var catalogBend=new Part("test.dwg","catalog-bend","AcPpDb3dPipeBend","L1",
+    new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(0,80,0),new(-1,0,0))},
+    new Dictionary<string,string>{["PnPClassName"]="PipeBend",["PartSizeLongDesc"]=
+        "ИЗГИБ ТРУБЫ, Р = 40, У = 180 град, Д1 = 100, Д2 = 100, ДЛИНА ТРУБЫ=325.6637, Труба 25x4 ГОСТ 8734-75/В 20 ГОСТ 8733-74"});
+var catalogBendRow=SheetPlanner.Build(Snapshot(new[]{catalogBend},Array.Empty<Connection>())).BillOfMaterials.Single();
+Assert(catalogBendRow.Description=="ИЗГИБ ТРУБЫ, Р=40, α=180°, L=325.6637, Труба 25x4 В 20 ГОСТ 8733-74",
+    "Pipe bend BOM shows compact catalog dimensions and preserves the material standard");
+Assert(catalogBendRow.Designation=="ГОСТ 8734-75","The pipe standard populates the bend BOM designation");
+var taggedCatalogBend=catalogBend with{Properties=new Dictionary<string,string>(catalogBend.Properties)
+    { ["Tag"]="PB-01",["DesignStd"]="ГОСТ 8733-74" }};
+var taggedCatalogBendRow=SheetPlanner.Build(Snapshot(new[]{taggedCatalogBend},Array.Empty<Connection>())).BillOfMaterials.Single();
+Assert(taggedCatalogBendRow.Designation=="PB-01 / ГОСТ 8734-75",
+    "The pipe standard remains in the bend designation alongside its tag");
+Assert(taggedCatalogBendRow.Description==catalogBendRow.Description,
+    "The material standard remains in the bend description when present in DesignStd");
 Assert(continuity.HasInteriorGap(new[]{"run-left","run-right","parallel"}),"A connected bypass must not hide an omitted middle of a straight run");
 Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle"}),"A sheet boundary at the end of a straight run is allowed");
 Assert(!continuity.HasInteriorGap(new[]{"run-left","run-middle","run-right"}),"The complete run has no interior gap");
@@ -1026,6 +1199,15 @@ Assert(alignedPair.All(d=>d.ExtensionDirection==new SheetPoint(0,1)),"Joined row
 var alignmentWall=new Stroke("alignment-obstacle","pipe",new SheetPoint[]{new(25,35),new(25,45)});
 var guardedPair=DimensionRowAlignment.AlignAdjacent(new[]{alignA,alignB},new[]{alignmentWall},Array.Empty<SymbolGlyph>());
 Assert(guardedPair[0]==alignA&&guardedPair[1]==alignB,"Alignment yields to a clear placement when a common lane would cross a pipe");
+var nearbyB=alignB with{DimensionLinePoint=new(50,44)};
+var distantC=new PipeDimension("align-c",new(100,0),new(150,30),100,ChainId:"align-c",
+    DimensionLinePoint:new(100,39),ExtensionDirection:new(0,1),ModelStart:new(100,100,0),ModelEnd:new(200,100,0));
+var farLaneBlockers=new[]{new Stroke("far-a","pipe",new SheetPoint[]{new(25,50),new(25,58)}),
+    new Stroke("far-b","pipe",new SheetPoint[]{new(75,50),new(75,58)})};
+var partialAlignment=DimensionRowAlignment.AlignAdjacent(new[]{alignA,nearbyB,distantC},farLaneBlockers);
+Near(partialAlignment[0].DimensionLinePoint!.Value.Y-partialAlignment[0].Start.Y,14);
+Assert(partialAlignment[1]==nearbyB&&partialAlignment[2]==distantC,
+    "An obstructed family still aligns the adjacent pair that can safely share an arrow tip");
 var oppositeA=alignA with{DimensionLinePoint=new(0,-18)};
 var oppositePair=DimensionRowAlignment.AlignAdjacent(new[]{oppositeA,alignB});
 Assert(oppositePair[0]==oppositeA&&oppositePair[1]==alignB,"Adjacent runs retain opposite routing sides instead of pulling a clear lower row through the pipe");
@@ -1191,11 +1373,95 @@ var pipeBendPart=new Part("test.dwg","bend1","AcPpDb3dPipeInlineAsset","L1",
     new[]{new Port("S1",new(0,0,0),new(-1,0,0)),new Port("S2",new(100,100,0),new(0,1,0))},
     new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=PBBW"}});
 Assert(pipeBendPart.Component==ComponentKind.Elbow,"PipeBend is treated as Elbow for corner layout and symbol placement");
+var pipeBendScene=SheetPlanner.Build(Snapshot(new[]{pipeBendPart},Array.Empty<Connection>()));
+Assert(!pipeBendScene.Annotations.Any(a=>a.SourceId==pipeBendPart.Handle&&a.Role=="bend-angle")&&
+    !pipeBendScene.Strokes.Any(stroke=>stroke.SourceId==pipeBendPart.Handle&&stroke.Role=="bend-dimension"),
+    "A 90-degree pipe bend gets no degree label or dimension arc");
+Assert(pipeBendScene.Dimensions.Count==2&&pipeBendScene.Dimensions.All(d=>d.Millimeters==100&&
+    (d.ModelStart==new ModelPoint(100,0,0)||d.ModelEnd==new ModelPoint(100,0,0))),
+    "A standalone pipe bend gets both axis lengths to the model intersection of its tangents");
+var catalogElbow=pipeBendPart with{Properties=new Dictionary<string,string>{{"PnPClassName","Elbow"}}};
+Assert(SheetPlanner.Build(Snapshot(new[]{catalogElbow},Array.Empty<Connection>())).Dimensions.Count==0,
+    "A standalone catalogue elbow acquires no separate bend lengths");
+var bendOnRise=pipeBendPart with
+{
+    Ports=new[]{new Port("S1",new(0,0,0),new(-1,0,-1)),new Port("S2",new(150,0,50),new(1,0,0))}
+};
+var pipeBeforeBend=Pipe("rise-to-bend",new(-500,0,-500),new(0,0,0)) with
+{
+    Ports=new[]{new Port("S1",new(-500,0,-500),new(-1,0,-1)),new Port("S2",new(0,0,0),new(1,0,1))}
+};
+var bendOnRiseScene=SheetPlanner.Build(Snapshot(new[]{bendOnRise,pipeBeforeBend},
+    new[]{new Connection(pipeBeforeBend.Handle,"S2",bendOnRise.Handle,"S1")}));
+Assert(bendOnRiseScene.Annotations.Any(a=>a.SourceId==pipeBeforeBend.Handle&&a.Role=="slope-angle"&&a.Text=="45°")&&
+    bendOnRiseScene.Annotations.Any(a=>a.SourceId==bendOnRise.Handle&&a.Role=="bend-angle"&&a.Text=="45°")&&
+    !bendOnRiseScene.Strokes.Any(stroke=>stroke.SourceId==bendOnRise.Handle&&stroke.Role=="bend-dimension"),
+    "A pipe bend keeps its own angle when the attached pipe also has an incline dimension");
+double tracingRise=50*Math.Sqrt(3);
+var tracingBend1=pipeBendPart with
+{
+    Handle="tracing-bend-1",
+    Ports=new[]{new Port("S1",new(0,0,-100),new(0,0,-1)),new Port("S2",new(25,0,tracingRise/2),new(1,0,Math.Sqrt(3)))}
+};
+var tracingBend2=pipeBendPart with
+{
+    Handle="tracing-bend-2",
+    Ports=new[]{new Port("S1",tracingBend1.Ports[1].Position,new(-1,0,-Math.Sqrt(3))),
+        new Port("S2",new(50,0,tracingRise+100),new(0,0,1))}
+};
+var inclinedBends=Snapshot(new[]{tracingBend1,tracingBend2},
+    new[]{new Connection(tracingBend1.Handle,"S2",tracingBend2.Handle,"S1")});
+SheetPoint ProjectTracingBends(ModelPoint point)=>IsometricProjection.Project(point);
+var tracingDeviationStrokes=new List<Stroke>();
+var tracingDeviationLabels=new List<Annotation>();
+SlopeNotation.Add(inclinedBends,ProjectTracingBends,0,tracingDeviationStrokes,tracingDeviationLabels,
+    DimensionChainPlanner.Build(inclinedBends,ProjectTracingBends));
+Assert(tracingDeviationStrokes.Count(stroke=>stroke.Role=="slope-triangle")==1&&
+    tracingDeviationStrokes.Any(stroke=>stroke.Role=="slope-hatch")&&
+    tracingDeviationLabels.Any(label=>label.Role=="slope-angle"&&label.Text=="60°"),
+    "Two connected pipe bends produce one hatched deviation plane for their inclined common tangent");
 var returnBend=new Part("test.dwg","bend180","AcPpDb3dPipeInlineAsset","L1",
     new[]{new Port("S1",new(0,0,0),new(1,0,0)),new Port("S2",new(0,80,0),new(1,0,0))},
     new Dictionary<string,string>{{"PnPClassName","PipeBend"},{"ContentIsoSymbolDefinition","TYPE=BEND,SKEY=BUBW"}});
 var returnTop=PipelineTopology.Build(Snapshot(new[]{returnBend},Array.Empty<Connection>()));
 Assert(returnTop.Edges.Count==3&&returnTop.Nodes.Count(n=>n.Kind==RouteNodeKind.Axis)==2,"180-degree return bend creates two corner axis nodes and 3 edges");
+var returnDimensions=DimensionChainPlanner.Build(Snapshot(new[]{returnBend},Array.Empty<Connection>()),
+    point=>IsometricProjection.Project(point));
+Assert(returnDimensions.Count==1&&returnDimensions[0].Millimeters==80,
+    "A return bend receives its transverse spacing without standalone sizes on artificial tangent legs");
+var dipBend=returnBend with{Ports=new[]{new Port("S1",new(0,0,40),new(0,0,1)),new Port("S2",new(0,80,40),new(0,0,1))}};
+var dipLeft=Pipe("dip-left",new(0,0,40),new(0,0,90));
+var dipRight=Pipe("dip-right",new(0,80,40),new(0,80,90));
+var dipEntry=returnBend with{Handle="dip-entry",Ports=new[]{new Port("S1",new(0,0,90),new(0,0,-1)),new Port("S2",new(0,-40,130),new(0,-1,0))}};
+var dipExit=returnBend with{Handle="dip-exit",Ports=new[]{new Port("S1",new(0,80,90),new(0,0,-1)),new Port("S2",new(0,120,130),new(0,1,0))}};
+var dip=Snapshot(new[]{dipBend,dipLeft,dipRight,dipEntry,dipExit},new[]{new Connection(dipBend.Handle,"S1",dipLeft.Handle,"S1"),
+    new Connection(dipBend.Handle,"S2",dipRight.Handle,"S1"),new Connection(dipLeft.Handle,"S2",dipEntry.Handle,"S1"),
+    new Connection(dipRight.Handle,"S2",dipExit.Handle,"S1")});
+var dipLayout=new SchematicLayout(dip,fixedScale:.2,pipeExtensions:new Dictionary<string,double>{{dipLeft.Handle,60}});
+double DipLegLength(Part leg)=>Math.Abs(dipLayout.Project(leg.Ports[0].Position,leg.Handle).Y-
+    dipLayout.Project(leg.Ports[1].Position,leg.Handle).Y);
+Assert(DipLegLength(dipLeft)<=20&&Math.Abs(DipLegLength(dipLeft)-DipLegLength(dipRight))<.01,
+    "Symmetric return legs stay compact and level even when clearance requests a unilateral extension");
+IsoBlockDefinition OutletBend(string name,double rise)=>new(name,
+    new Dictionary<string,SheetPoint>{{"Port1",new(0,-rise)},{"Port2",new(5,0)},{"CenterPoint",new(0,0)}},
+    new(0,-rise),new(5,0));
+var sizedDip=dip with{Parts=new[]{dipBend,dipLeft,dipRight,
+    dipEntry with{Properties=new Dictionary<string,string>(dipEntry.Properties){["ContentIsoSymbolDefinition"]="TYPE=BEND,SKEY=ENTRY"}},
+    dipExit with{Properties=new Dictionary<string,string>(dipExit.Properties){["ContentIsoSymbolDefinition"]="TYPE=BEND,SKEY=EXIT"}}}};
+var dipSymbols=new IsoSymbolMap("<Map/>",new IsoBlockCatalog(new[]{OutletBend("ENTRY",5),OutletBend("EXIT",32)}));
+foreach(int turns in Enumerable.Range(0,4))
+{
+    var sizedLayout=new SchematicLayout(sizedDip,quarterTurns:turns,symbolMap:dipSymbols,fixedScale:.2);
+    var start=sizedLayout.Project(dipEntry.Ports[1].Position,dipEntry.Handle);
+    var end=sizedLayout.Project(dipExit.Ports[1].Position,dipExit.Handle);
+    var planDirection=IsometricProjection.Project(new(0,1,0),quarterTurns:turns);
+    Assert(Math.Abs(end.Y-start.Y-(end.X-start.X)*planDirection.Y/planDirection.X)<.01,
+        $"Equal-elevation return outlets stay on the same projected axis with unequal elbow symbols (turns {turns})");
+    double VerticalPipeSpan(Part leg)=>Math.Abs(sizedLayout.Project(leg.Ports[0].Position,leg.Handle).Y-
+        sizedLayout.Project(leg.Ports[1].Position,leg.Handle).Y);
+    Near(VerticalPipeSpan(dipRight),10);
+    Near(VerticalPipeSpan(dipLeft),37);
+}
 var bendDef=new IsoBlockDefinition("Bend-180return",
     new Dictionary<string,SheetPoint>{{"Port1",new(-0.75,0)},{"Port3",new(-0.75,0.9375)},{"CenterPoint",new(0,0)}},
     new SheetPoint(-0.75,0),new SheetPoint(0,0.9375));

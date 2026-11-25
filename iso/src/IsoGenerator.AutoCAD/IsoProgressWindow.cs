@@ -29,7 +29,8 @@ internal sealed class IsoProgressWindow
         var done=new TaskCompletionSource<T>(TaskCreationOptions.RunContinuationsAsynchronously);
         try{form.BeginInvoke(new Action(()=>{try{done.SetResult(action());}catch(Exception ex){done.SetException(ex);}}));}catch(Exception ex){done.SetException(ex);}return done.Task;
     }
-    public Task<DialogResult> ChooseOutput(string folder,bool allowAppend=false)=>Invoke(()=>OutputConflictDialog.Choose(folder,form,allowAppend));
+    public Task<DialogResult> ChooseOutput(string folder,bool allowAppend=false,bool rebuildArchived=false)=>
+        Invoke(()=>OutputConflictDialog.Choose(folder,form,allowAppend,rebuildArchived));
     public Task<bool> BeginPublication()=>Invoke(()=>{Token.ThrowIfCancellationRequested();form.Publishing();return true;});
     sealed class Owner(IntPtr handle):IWin32Window {public IntPtr Handle=>handle;}
     sealed class ProgressForm:Form

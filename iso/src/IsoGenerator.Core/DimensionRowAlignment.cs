@@ -46,10 +46,13 @@ public static class DimensionRowAlignment
             }
         }
         return result;
-    }    public static IReadOnlyList<PipeDimension> AlignAdjacent(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke>? strokes=null,IReadOnlyList<SymbolGlyph>? symbols=null)
+    }
+
+    public static IReadOnlyList<PipeDimension> AlignAdjacent(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke>? strokes=null,IReadOnlyList<SymbolGlyph>? symbols=null)
     {
         var groups=input.GroupBy(d=>d.ChainId).ToArray();var parent=Enumerable.Range(0,groups.Length).ToArray();
         int Find(int i){while(parent[i]!=i)i=parent[i];return i;}
+        var links=new List<(int A,int B,double Gap)>();
         bool Same(ModelPoint? a,ModelPoint? b,SheetPoint p,SheetPoint q)=>a is {} x&&b is {} y&&x.DistanceTo(y)<.001&&Math.Sqrt(Math.Pow(p.X-q.X,2)+Math.Pow(p.Y-q.Y,2))<.01;
         for(int i=0;i<groups.Length;i++)for(int j=i+1;j<groups.Length;j++)
         {
@@ -60,38 +63,64 @@ public static class DimensionRowAlignment
             var aChain=groups[i].FirstOrDefault(d=>d.Role=="chain")??a;
             var bChain=groups[j].FirstOrDefault(d=>d.Role=="chain")??b;
             if(Distance(aChain)*Distance(bChain)<=0)continue;
-            if(Same(a.ModelStart,b.ModelStart,a.Start,b.Start)||Same(a.ModelStart,b.ModelEnd,a.Start,b.End)||Same(a.ModelEnd,b.ModelStart,a.End,b.Start)||Same(a.ModelEnd,b.ModelEnd,a.End,b.End))parent[Find(j)]=Find(i);
+            if(Same(a.ModelStart,b.ModelStart,a.Start,b.Start)||Same(a.ModelStart,b.ModelEnd,a.Start,b.End)||Same(a.ModelEnd,b.ModelStart,a.End,b.Start)||Same(a.ModelEnd,b.ModelEnd,a.End,b.End))
+            {
+                links.Add((i,j,Math.Abs(Distance(aChain)-Distance(bChain))));
+                parent[Find(j)]=Find(i);
+            }
         }
         var result=input.ToArray();var index=groups.Select((g,i)=>(g.Key,i)).ToDictionary(p=>p.Key,p=>p.i);
+        var fittings=symbols??Array.Empty<SymbolGlyph>();
         double Distance(PipeDimension d)
         {
             var ex=d.ExtensionDirection!.Value;double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y;
             return ((d.DimensionLinePoint!.Value.X-d.Start.X)*(-dy)+(d.DimensionLinePoint.Value.Y-d.Start.Y)*dx)/(-dy*ex.X+dx*ex.Y);
         }
-        foreach(var family in groups.Select((g,i)=>(Group:g,Family:Find(i))).GroupBy(g=>g.Family).Where(g=>g.Count()>1))
+        bool TryAlign(IReadOnlyCollection<int> members)
         {
-        var before=result.ToArray();
-        foreach(var role in family.SelectMany(g=>g.Group).GroupBy(d=>d.Role))
-        {
-            double target=role.Select(Distance).MaxBy(Math.Abs);
-            for(int i=0;i<result.Length;i++)
+            var trial=result.ToArray();
+            foreach(var role in Enumerable.Range(0,result.Length)
+                .Where(i=>members.Contains(index[result[i].ChainId])).GroupBy(i=>result[i].Role))
             {
-                var d=result[i];if(d.Role!=role.Key||Find(index[d.ChainId])!=family.Key)continue;
-                double delta=target-Distance(d);var ex=d.ExtensionDirection!.Value;var line=d.DimensionLinePoint!.Value;
-                result[i]=d with{DimensionLinePoint=new(line.X+ex.X*delta,line.Y+ex.Y*delta),TextPosition=d.TextPosition is {} text?new(text.X+ex.X*delta,text.Y+ex.Y*delta):null};
+                double target=role.Select(i=>Distance(result[i])).MaxBy(Math.Abs);
+                foreach(int i in role)
+                {
+                    var d=result[i];double delta=target-Distance(d);var ex=d.ExtensionDirection!.Value;var line=d.DimensionLinePoint!.Value;
+                    trial[i]=d with{DimensionLinePoint=new(line.X+ex.X*delta,line.Y+ex.Y*delta),TextPosition=d.TextPosition is {} text?new(text.X+ex.X*delta,text.Y+ex.Y*delta):null};
+                }
+            }
+            if(strokes is not null)
+            {
+                var oldConflicts=DimensionRouting.AlignmentConflicts(result,strokes,fittings);
+                var newConflicts=DimensionRouting.AlignmentConflicts(trial,strokes,fittings);
+                if(newConflicts.Text>oldConflicts.Text||newConflicts.Crossings>oldConflicts.Crossings||
+                   !DimensionRouting.FitsFittingClearance(trial,fittings)||
+                   DimensionRouting.PipeClearanceViolations(trial,strokes)>DimensionRouting.PipeClearanceViolations(result,strokes)||
+                   (DimensionRouting.LongWitnessThroughParallelRun(trial,strokes) is not null&&
+                    DimensionRouting.LongWitnessThroughParallelRun(result,strokes) is null))return false;
+            }
+            result=trial;
+            return true;
+        }
+        foreach(var family in Enumerable.Range(0,groups.Length).GroupBy(Find).Where(g=>g.Count()>1))
+        {
+            var members=family.ToArray();
+            if(TryAlign(members)||members.Length==2)continue;
+
+            // If one long witness blocks the family, keep the nearest safe joins.
+            var connected=members.ToDictionary(i=>i,i=>new HashSet<int>{i});
+            foreach(var link in links.Where(link=>Find(link.A)==family.Key).OrderBy(link=>link.Gap))
+            {
+                var first=connected[link.A];var second=connected[link.B];
+                if(ReferenceEquals(first,second))continue;
+                var joined=first.Concat(second).ToHashSet();
+                if(TryAlign(joined))foreach(int member in joined)connected[member]=joined;
             }
         }
-        if(strokes is not null)
-        {
-            var oldConflicts=DimensionRouting.AlignmentConflicts(before,strokes,symbols??Array.Empty<SymbolGlyph>());
-            var newConflicts=DimensionRouting.AlignmentConflicts(result,strokes,symbols??Array.Empty<SymbolGlyph>());
-            if(newConflicts.Text>oldConflicts.Text||newConflicts.Crossings>oldConflicts.Crossings||
-               !DimensionRouting.FitsFittingClearance(result,symbols??Array.Empty<SymbolGlyph>())||
-               DimensionRouting.PipeClearanceViolations(result,strokes)>DimensionRouting.PipeClearanceViolations(before,strokes))result=before;
-        }
-        }
         return result;
-    }    public static IReadOnlyList<PipeDimension> Align(IReadOnlyList<PipeDimension> input)
+    }
+
+    public static IReadOnlyList<PipeDimension> Align(IReadOnlyList<PipeDimension> input)
     {
         var families=Families(input);var result=input.ToArray();
         foreach(var group in Enumerable.Range(0,input.Count).GroupBy(i=>families[input[i].ChainId]))

@@ -73,7 +73,14 @@ internal static class AirVentClearance
                 // A remote row must be resolved by dimension routing. Only move a short
                 // neck when the required clearance is local to its current paper length.
                 if(b.Y-a.Y>.1&&extra<=b.Y-a.Y)
-                    throw new AirVentSpacingException(neck.Handle,extra*length/(b.Y-a.Y)+1);
+                {
+                    double growth=extra*length/(b.Y-a.Y)+1;
+                    if(layout.Topology.CappedVentDrainPipes.Contains(neck.Handle)&&
+                       length+growth>VentDrainPipePolicy.MaxPaperLength)
+                        throw new SheetCapacityException("Недостаточно места для воздушника при ограничении трубы 20 мм.",
+                            host.Handle,conflict:LayoutConflict.AirVentClearance);
+                    throw new AirVentSpacingException(neck.Handle,growth);
+                }
             }
         }
     }

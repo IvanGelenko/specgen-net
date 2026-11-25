@@ -1,5 +1,16 @@
 using IsoGenerator.Publishing;
+using PdfSharp.Drawing;
 using PdfSharp.Pdf.IO;
+if(args is ["--retention"])
+{
+    IsoJobRetentionChecks.Run();
+    return;
+}
+if(args is ["--retention-probe",var jobs])
+{
+    using var lease=IsoJobRetention.Begin(Path.Combine(jobs,Guid.NewGuid().ToString("N")),prune:true);
+    return;
+}
 var pages=System.Text.Json.JsonSerializer.Deserialize<string[]>(File.ReadAllText(args[0]))!;
 try
 {
@@ -8,21 +19,92 @@ try
     bool prevented=false;try{PdfSetPublisher.Merge(pages,args[1],"Do not overwrite");}catch(IOException){prevented=true;}
     if(!prevented)throw new Exception("Existing PDF was overwritten");
     string publication=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,"publication-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(publication);
-    string marked=Path.Combine(publication,"marked.pdf"), pageFile=Path.Combine(publication,"page.pdf");
-    using(var pdf=new PdfSharp.Pdf.PdfDocument())
+    string marked=Path.Combine(publication,"marked.pdf");
+    var drawingPages=Enumerable.Range(0,3).Select(i=>Path.Combine(publication,$"page-{i}.pdf")).ToArray();
+    for(int i=0;i<drawingPages.Length;i++)
     {
-        for(int i=0;i<3;i++)
-            pdf.AddPage().Annotations.Add(new PdfSharp.Pdf.Annotations.PdfTextAnnotation { Contents=$"marker-{i}" });
+        using var pdf=new PdfSharp.Pdf.PdfDocument();
+        pdf.Info.Title=$"Drawing {i}";
+        using(var graphics=XGraphics.FromPdfPage(pdf.AddPage()))
+            graphics.DrawLine(new XPen(XColor.FromArgb(128,255,0,0)),0,0,100,i+10);
+        pdf.Save(drawingPages[i]);
+    }
+    PdfSetPublisher.Merge(drawingPages[..2].Reverse().ToArray(),marked,"Previous drawings");
+    using(var pdf=PdfReader.Open(marked,PdfDocumentOpenMode.Modify))
+    {
+        pdf.Pages[0].Annotations.Add(new PdfSharp.Pdf.Annotations.PdfTextAnnotation { Contents="marker-1" });
+        pdf.Pages[1].Annotations.Add(new PdfSharp.Pdf.Annotations.PdfTextAnnotation { Contents="marker-0" });
         pdf.Save(marked);
     }
-    using(var pdf=new PdfSharp.Pdf.PdfDocument()){pdf.AddPage();pdf.Save(pageFile);}
     string partial=Path.Combine(publication,"partial.pdf");
-    PdfSetPublisher.MergeWithRetainedPages(new[]{pageFile,pageFile,pageFile},partial,"Partial",null,null,marked,new HashSet<int>{0,2});
+    PdfSetPublisher.MergeWithRetainedPages(drawingPages,partial,"Partial",null,null,marked,new HashSet<int>{0,1});
     using(var pdf=PdfReader.Open(partial,PdfDocumentOpenMode.Import))
     {
-        if(pdf.PageCount!=3||pdf.Pages[0].Annotations.Count!=1||pdf.Pages[1].Annotations.Count!=0||pdf.Pages[2].Annotations.Count!=1||
-           pdf.Pages[0].Annotations[0].Contents!="marker-0"||pdf.Pages[2].Annotations[0].Contents!="marker-2")
-            throw new Exception("Partial publication lost annotations or retained the replaced page.");
+        if(pdf.PageCount!=3||pdf.Pages[0].Annotations.Count!=1||pdf.Pages[1].Annotations.Count!=1||pdf.Pages[2].Annotations.Count!=0||
+           pdf.Pages[0].Annotations[0].Contents!="marker-0"||pdf.Pages[1].Annotations[0].Contents!="marker-1")
+            throw new Exception("Partial publication did not match the reordered drawings when the page count increased.");
+    }
+    string legacy=Path.Combine(publication,"legacy.pdf"), rebuilt=Path.Combine(publication,"rebuilt.pdf");
+    using(var pdf=new PdfSharp.Pdf.PdfDocument())
+    {
+        pdf.AddPage().Annotations.Add(new PdfSharp.Pdf.Annotations.PdfTextAnnotation { Contents="unverified" });
+        pdf.Save(legacy);
+    }
+    PdfSetPublisher.MergeWithRetainedPages(drawingPages[..1],rebuilt,"Rebuilt",null,null,legacy,new HashSet<int>{0});
+    using(var pdf=PdfReader.Open(rebuilt,PdfDocumentOpenMode.Import))
+    {
+        if(pdf.Pages[0].Annotations.Count!=0)throw new Exception("Partial publication imported an unidentified page by position.");
+    }
+    string edited=Path.Combine(publication,"edited.pdf"), repaired=Path.Combine(publication,"repaired.pdf");
+    File.Copy(partial,edited);
+    using(var pdf=PdfReader.Open(edited,PdfDocumentOpenMode.Modify))
+    {
+        pdf.Pages[0].Elements.Remove("/Contents");
+        using(var graphics=XGraphics.FromPdfPage(pdf.Pages[0]))
+            graphics.DrawLine(XPens.Black,0,0,10,100);
+        pdf.Save(edited);
+    }
+    int retainedAfterEdit=PdfSetPublisher.MergeWithRetainedPages(drawingPages,repaired,"Repaired",null,null,edited,new HashSet<int>{0,1});
+    using(var pdf=PdfReader.Open(repaired,PdfDocumentOpenMode.Import))
+    {
+        if(retainedAfterEdit!=1||pdf.Pages[0].Annotations.Count!=0||pdf.Pages[1].Annotations.Count!=1||
+           pdf.Pages[1].Annotations[0].Contents!="marker-1")
+            throw new Exception("Partial publication trusted a stale source identifier after editing drawing content.");
+    }
+    var renderingEdits=new (string Name,Action<PdfSharp.Pdf.PdfPage> Change)[]
+    {
+        ("stroke-opacity",page=>
+        {
+            var resources=page.Elements.GetDictionary("/Resources")!;
+            var graphicStates=resources.Elements.GetDictionary("/ExtGState")!;
+            var graphicState=graphicStates.Elements.GetDictionary(graphicStates.Elements.Keys.Single())!;
+            graphicState.Elements.SetReal("/CA",0);
+        }),
+        ("transparency-group",page=>
+        {
+            var group=new PdfSharp.Pdf.PdfDictionary(page.Owner);
+            group.Elements.SetName("/S","/Transparency");
+            group.Elements.SetBoolean("/I",true);
+            page.Elements["/Group"]=group;
+        }),
+        ("user-unit",page=>page.Elements.SetReal("/UserUnit",2))
+    };
+    foreach(var (name,change) in renderingEdits)
+    {
+        string renderingEdited=Path.Combine(publication,$"{name}-edited.pdf");
+        string renderingRepaired=Path.Combine(publication,$"{name}-repaired.pdf");
+        File.Copy(partial,renderingEdited);
+        using(var pdf=PdfReader.Open(renderingEdited,PdfDocumentOpenMode.Modify))
+        {
+            change(pdf.Pages[0]);
+            pdf.Save(renderingEdited);
+        }
+        int retainedAfterRenderingEdit=PdfSetPublisher.MergeWithRetainedPages(
+            drawingPages,renderingRepaired,"Repaired drawing",null,null,renderingEdited,new HashSet<int>{0,1});
+        using var repairedPdf=PdfReader.Open(renderingRepaired,PdfDocumentOpenMode.Import);
+        if(retainedAfterRenderingEdit!=1||repairedPdf.Pages[0].Annotations.Count!=0||
+           repairedPdf.Pages[1].Annotations.Count!=1||repairedPdf.Pages[1].Annotations[0].Contents!="marker-1")
+            throw new Exception($"Partial publication retained a drawing after a {name} edit.");
     }
     string stagedOne=Path.Combine(publication,"staged-one"),stagedTwo=Path.Combine(publication,"staged-two"),targetOne=Path.Combine(publication,"one.dwg"),targetTwo=Path.Combine(publication,"two.pdf");
     File.WriteAllText(stagedOne,"new-one");File.WriteAllText(stagedTwo,"new-two");File.WriteAllText(targetOne,"old-one");File.WriteAllText(targetTwo,"old-two");

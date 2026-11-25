@@ -76,7 +76,7 @@ public static class DocumentSheetReferences
             Strokes=strokes,Annotations=Array.Empty<Annotation>()
         }):null;
         var placed=AnnotationPlacement.Place(labels,strokes,sheet.Scene.Symbols??Array.Empty<SymbolGlyph>(),sheet.Scene.Dimensions,
-            fixedGeometry:fixedGeometry);
+            fixedGeometry:fixedGeometry,reuseBendPositions:true);
         return sheet.Scene with{Annotations=placed,Strokes=strokes};
     }
 

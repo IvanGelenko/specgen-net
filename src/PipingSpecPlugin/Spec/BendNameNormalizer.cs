@@ -4,8 +4,7 @@ using System.Text.RegularExpressions;
 namespace PipingSpecPlugin.Spec
 {
     /// <summary>
-    /// Canonical form of a PipeBend ("Изгиб трубы …") description, used both
-    /// as the bucket-key name and as the displayed name in the spec.
+    /// Normalizes bend identity for grouping and formats the displayed name separately.
     ///
     /// The catalogue builds the bend description from the bend's own
     /// geometry, e.g.
@@ -51,6 +50,30 @@ namespace PipingSpecPlugin.Spec
         // ("трубы", "гиба", …) before "=" — any case, any whitespace.
         static readonly Regex LengthField = new Regex(@"(?<![\p{L}\d])(длина(?:\s+\p{L}+)?\s*=\s*)(" + Num + ")",
             RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+        const RegexOptions SpecFieldOptions = RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase;
+        static readonly Regex Heading = new(@"^(изгиб\s+трубы)\s*:\s*", SpecFieldOptions);
+        static readonly Regex Radius = new(@"(?<![\p{L}\d])(?:[РPR]|радиус(?:\s+(?:гиба|изгиба))?)\s*=\s*(" + Num + ")", SpecFieldOptions);
+        static readonly Regex Angle = new(@"(?<![\p{L}\d])(?:[УUα]|угол(?:\s+(?:гиба|изгиба))?)\s*=\s*(" + Num + @")(?:\s*(?:°|град(?:ус(?:а|ов)?)?\.?))?", SpecFieldOptions);
+        static readonly Regex Tails = new(@",?\s*(?<![\p{L}\d])[ДD][12]\s*=\s*" + Num + @"(?:\s*мм\b)?(?=\s*[,;]|\s*$)", SpecFieldOptions);
+        static readonly Regex PipeStandard = new(@"(\bтруба\s+" + Num + @"\s*[xх×]\s*" + Num
+            + @"(?:\s*мм)?)[ \t]+(ГОСТ\s+(?:Р\s+)?\d+(?:\.\d+)*(?:\s*[-–—]\s*\d+)?)(?:\s*/\s*|(?=\s*[,;]|\s*$))", SpecFieldOptions);
+
+        internal static (string Name, string Standard) FormatForSpecification(string name)
+        {
+            var text = Heading.Replace(name, "$1, ");
+            text = Radius.Replace(text, "R$1");
+            text = Angle.Replace(text, "α=$1°");
+            text = Tails.Replace(text, "");
+            text = LengthField.Replace(text, "L=$2");
+
+            var match = PipeStandard.Match(text);
+            if (!match.Success) return (text, null);
+
+            var after = text[(match.Index + match.Length)..];
+            var separator = after.Length > 0 && !char.IsWhiteSpace(after[0]) && after[0] != ',' && after[0] != ';' ? " " : "";
+            return (text[..match.Index] + match.Groups[1].Value + separator + after, match.Groups[2].Value);
+        }
 
         public static string Normalize(string name)
         {

@@ -24,7 +24,7 @@ internal static class SheetSpaceOptimizer
             try
             {
                 fixedScale=new SchematicLayout(snapshot,topology,quarterTurns,baseline.LayoutLevel,
-                    baseline.PipeExtensions,symbolMap,baseline.PaperMargin,execution:execution).BaseScale;
+                    baseline.PipeExtensions,symbolMap is null?null:symbolMap.ResolveGeometry,baseline.PaperMargin,execution:execution).BaseScale;
             }
             catch(PlanningLimitException){return best;}
             catch(SheetCapacityException){}
@@ -154,7 +154,7 @@ internal static class SheetSpaceOptimizer
                         try
                         {
                             repairScale=scaleOverride??new SchematicLayout(snapshot,topology,quarterTurns,level,
-                                extensions,symbolMap,margin,execution:execution).BaseScale;
+                                extensions,symbolMap is null?null:symbolMap.ResolveGeometry,margin,execution:execution).BaseScale;
                         }
                         catch(PlanningLimitException){return;}
                         catch(SheetCapacityException){return;}

@@ -75,37 +75,32 @@ public class AuditRound2Tests
         finally { CultureInfo.CurrentCulture = saved; }
     }
 
-    // ---- 11: proximity radius in drawing units ---------------------------
+    // ---- 11: joint ownership is independent of drawing coordinates -------
 
     static (PartRecord[] parts, Dictionary<int, List<int>> graph) CompanionJoint(
-        string gasketX, string catalogueUnit, double? mmPerUnit)
+        string gasketX, bool belongsToJoint)
     {
         var valve = new PartRecord { PnPID = 1, PartCategory = "Valves" };
         var connector = new PartRecord { PnPID = 2, PnPClassName = "P3dConnector" };
         var flange = new PartRecord { PnPID = 3, PartCategory = "Flanges", NominalDiameter = "100",
-            PositionX = "0", PositionY = "0", PositionZ = "0", LengthUnit = catalogueUnit, DrawingMmPerUnit = mmPerUnit };
+            PositionX = "0", PositionY = "0", PositionZ = "0" };
         var gasket = new PartRecord { PnPID = 4, PartCategory = "Fasteners", ShortDescription = "gasket",
-            NominalDiameter = "100", PositionX = gasketX, PositionY = "0", PositionZ = "0",
-            LengthUnit = catalogueUnit, DrawingMmPerUnit = mmPerUnit };
+            NominalDiameter = "100", PositionX = gasketX, PositionY = "0", PositionZ = "0" };
         return (new[] { valve, connector, flange, gasket },
-                new Dictionary<int, List<int>> { [1] = new() { 2 }, [2] = new() { 1, 3 } });
+                new Dictionary<int, List<int>> { [1] = new() { 2 },
+                    [2] = belongsToJoint ? new() { 1, 3, 4 } : new() { 1, 3 } });
     }
 
-    [Fact] public void FeetCatalogueInMillimetreDrawingStillFindsNearbyGasket()
+    [Fact] public void JointLinkIdentifiesGasketWithoutCoordinates()
     {
-        // 50 drawing units = 50 mm. The old code multiplied by the catalogue
-        // unit (ft → 304.8) and saw 15 m.
-        var (parts, graph) = CompanionJoint("50", "ft", 1.0);
+        var (parts, graph) = CompanionJoint(null, belongsToJoint: true);
         Assert.Contains(4, ValveCompanionFinder.Discover(parts, graph));
     }
 
-    [Fact] public void InchDrawingConvertsTheRadius()
+    [Fact] public void JointLinkIsRequiredEvenAtTheSamePosition()
     {
-        // 3 in = 76.2 mm → inside 100 mm; 5 in = 127 mm → outside.
-        var near = CompanionJoint("3", "mm", 25.4);
-        Assert.Contains(4, ValveCompanionFinder.Discover(near.parts, near.graph));
-        var far = CompanionJoint("5", "mm", 25.4);
-        Assert.DoesNotContain(4, ValveCompanionFinder.Discover(far.parts, far.graph));
+        var (parts, graph) = CompanionJoint("0", belongsToJoint: false);
+        Assert.DoesNotContain(4, ValveCompanionFinder.Discover(parts, graph));
     }
 
     // ---- 12: template copy / read-only / locks ---------------------------
@@ -246,13 +241,13 @@ public class AuditRound2Tests
     [InlineData("GostGroup", "1,0", "1", false)]      // text field stays textual
     [InlineData("Additional", "abc", " abc ", true)]
     public void SyncComparesNumbersByValue(string property, string vt, string current, bool same)
-        => Assert.Equal(same, LineSyncService.SameFieldValue(property, vt, current));
+        => Assert.Equal(same, LineSyncPlanner.SameFieldValue(property, vt, current));
 
     [Fact] public void PlanDoesNotReportSeparatorOnlyDifference()
     {
         var line = new LineGroupInfo { RowId = 1, Id = "1", Tag = "T" };
         line.AllProperties["Pwork"] = "1.6";
-        var plan = LineSyncService.BuildPlan(
+        var plan = LineSyncPlanner.BuildPlan(
             new List<VtRowData> { new VtRowData { NN = "1", WorkPressure = "1,6" } },
             new List<LineGroupInfo> { line });
         Assert.DoesNotContain(plan.Actions.SelectMany(a => a.Changes), c => c.PropertyName == "Pwork");

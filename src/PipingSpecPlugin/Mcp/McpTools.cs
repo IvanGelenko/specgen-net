@@ -19,8 +19,30 @@ namespace Plant3dMcp
 
         public static int Limit(JsonElement args, int def, int max = 1000)
         {
-            int v = args.ValueKind == JsonValueKind.Object && args.TryGetProperty("limit", out var l) ? l.GetInt32() : def;
-            return Math.Clamp(v, 0, max);
+            return Math.Clamp(OptionalInt(args, "limit") ?? def, 0, max);
+        }
+
+        internal static JsonElement Required(JsonElement args, string name, JsonValueKind kind)
+        {
+            if (!args.TryGetProperty(name, out var value))
+                throw new ArgumentException("Missing required argument '" + name + "'.");
+            if (value.ValueKind != kind)
+                throw new ArgumentException("Argument '" + name + "' must be of type " + kind + ".");
+            return value;
+        }
+
+        internal static int? OptionalInt(JsonElement args, string name)
+        {
+            if (!args.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int number)) return number;
+            throw new ArgumentException("Argument '" + name + "' must be an integer.");
+        }
+
+        internal static double? OptionalNumber(JsonElement args, string name)
+        {
+            if (!args.TryGetProperty(name, out var value) || value.ValueKind == JsonValueKind.Null) return null;
+            if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double number) && double.IsFinite(number)) return number;
+            throw new ArgumentException("Argument '" + name + "' must be a finite number.");
         }
 
         public static object Run(string tool, JsonElement args)
@@ -57,11 +79,14 @@ namespace Plant3dMcp
                 case "create_tracing":
                     return PipingSpecPlugin.Tracing.TracingEngine.CreateTracing(args);
                 case "probe_connector_wrapper":
+                    if (Environment.GetEnvironmentVariable("PLANT3D_MCP_ENABLE_DEV_TOOLS") != "1")
+                        throw new InvalidOperationException("probe_connector_wrapper is a disabled development tool.");
                     return PlantTools.ProbeConnectorWrapper(args);
                 case "restore_branch_link":
                     return PlantTools.RestoreBranchLink(args);
                 case "set_layer":
-                    return PipingSpecPlugin.Tracing.TracingEngine.SetLayer(args);
+                    bool dry = !args.TryGetProperty("dry_run", out var dryRun) || dryRun.GetBoolean();
+                    return PipingSpecPlugin.Tracing.TracingEngine.SetLayer(args, dry);
                 case "port_conditions":
                     return PlantTools.PortConditions(args);
                 case "probe_bend":
@@ -101,8 +126,8 @@ namespace Plant3dMcp
 
         static object CaptureIsoSnapshot(JsonElement args)
         {
-            string line = args.GetProperty("line").GetString()?.Trim();
-            string drawing = args.GetProperty("drawing").GetString();
+            string line = Tools.Required(args, "line", JsonValueKind.String).GetString()?.Trim();
+            string drawing = Tools.Required(args, "drawing", JsonValueKind.String).GetString();
             if (string.IsNullOrWhiteSpace(line) || string.IsNullOrWhiteSpace(drawing))
                 throw new ArgumentException("Specify the line tag and the drawing path returned by document_info.");
 
@@ -121,18 +146,17 @@ namespace Plant3dMcp
             return snapshot;
         }
 
-        // Arbitrary command/LISP execution is off unless the user opts in via environment variable;
-        // even then LISP expressions, comments and multi-line input are refused.
+        // Permit only the non-interactive commands listed here, without arguments.
         static object SendCommand(JsonElement args)
         {
             if (Environment.GetEnvironmentVariable("PLANT3D_MCP_ALLOW_COMMANDS") != "1")
                 throw new InvalidOperationException("send_command is disabled. Set PLANT3D_MCP_ALLOW_COMMANDS=1 before starting Plant 3D to enable it.");
             var d = ActiveDoc();
-            string cmd = args.GetProperty("command").GetString()?.Trim() ?? "";
-            if (cmd.Length == 0 || cmd.Length > 200 || cmd.IndexOfAny(new[] { '(', ';', '\n', '\r' }) >= 0)
-                throw new ArgumentException("command must be a single plain command (no LISP, no newlines)");
+            string cmd = Tools.Required(args, "command", JsonValueKind.String).GetString().ToUpperInvariant();
+            if (cmd is not ("REGEN" or "REGENALL" or "REDRAW" or "REDRAWALL"))
+                throw new ArgumentException("command must be REGEN, REGENALL, REDRAW or REDRAWALL, without arguments.");
             d.Editor.WriteMessage("\nPlant3dMcp: command " + cmd + "\n");
-            d.SendStringToExecute(cmd + "\n", true, false, false);
+            d.SendStringToExecute("_." + cmd + "\n", true, false, false);
             return new { queued = cmd };
         }
 

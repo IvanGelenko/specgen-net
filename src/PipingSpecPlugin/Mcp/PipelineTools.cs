@@ -43,7 +43,7 @@ namespace Plant3dMcp
         public static object GetPorts(JsonElement args)
         {
             var doc = ActiveDocument();
-            var id = IdFromHandle(doc.Database, args.GetProperty("handle").GetString());
+            var id = IdFromHandle(doc.Database, Tools.Required(args, "handle", JsonValueKind.String).GetString());
             return ReadPorts(doc, id);
         }
 
@@ -68,15 +68,20 @@ namespace Plant3dMcp
         // Port positions as plain tuples (for geometry checks).
         static List<(string name, Point3d pos, Vector3d dir)> PortsOf(Document doc, ObjectId id)
         {
-            var res = new List<(string, Point3d, Vector3d)>();
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                var part = (Part)tr.GetObject(id, OpenMode.ForRead);
-                var ports = part.GetPorts(PortType.All);
-                for (int i = 0; i < ports.Count; i++) res.Add((ports[i].Name, ports[i].Position, ports[i].Direction));
+                var res = PortsOf(tr, id);
                 tr.Commit();
+                return res;
             }
+        }
+
+        static List<(string name, Point3d pos, Vector3d dir)> PortsOf(Transaction tr, ObjectId id)
+        {
+            var ports = ((Part)tr.GetObject(id, OpenMode.ForRead)).GetPorts(PortType.All);
+            var res = new List<(string, Point3d, Vector3d)>(ports.Count);
+            for (int i = 0; i < ports.Count; i++) res.Add((ports[i].Name, ports[i].Position, ports[i].Direction));
             return res;
         }
 
@@ -116,7 +121,7 @@ namespace Plant3dMcp
         public static object GetConnections(JsonElement args)
         {
             var doc = ActiveDocument();
-            var id = IdFromHandle(doc.Database, args.GetProperty("handle").GetString());
+            var id = IdFromHandle(doc.Database, Tools.Required(args, "handle", JsonValueKind.String).GetString());
             return ReadConnections(doc, id);
         }
 
@@ -148,14 +153,13 @@ namespace Plant3dMcp
         public static object InspectConnector(JsonElement args)
         {
             var doc = ActiveDocument();
-            var id = IdFromHandle(doc.Database, args.GetProperty("handle").GetString());
+            var id = IdFromHandle(doc.Database, Tools.Required(args, "handle", JsonValueKind.String).GetString());
             var dlm = Dlm();
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var c = tr.GetObject(id, OpenMode.ForRead) as Connector ?? throw new InvalidOperationException("Object is not a connector");
                 var subs = new List<object>();
-                var all = c.AllSubParts;
                 for (int i = 0; i < c.NumSubParts; i++)
                 {
                     var sp = c.GetSubPart(i);
@@ -203,8 +207,8 @@ namespace Plant3dMcp
         public static object ConnectParts(JsonElement args)
         {
             var doc = ActiveDocument();
-            var a = IdFromHandle(doc.Database, args.GetProperty("handleA").GetString());
-            var b = IdFromHandle(doc.Database, args.GetProperty("handleB").GetString());
+            var a = IdFromHandle(doc.Database, Tools.Required(args, "handleA", JsonValueKind.String).GetString());
+            var b = IdFromHandle(doc.Database, Tools.Required(args, "handleB", JsonValueKind.String).GetString());
             if (a == b) throw new ArgumentException("handleA and handleB are the same object");
             bool dry = IsDry(args);
             string portA = args.TryGetProperty("portA", out var pa) && pa.ValueKind == JsonValueKind.String ? pa.GetString() : null;   // fixes the port of the first object (a connector has two at one point)
@@ -277,7 +281,7 @@ namespace Plant3dMcp
             // A dry run names the drawing; the real call may echo it so that switching drawings in between cannot redirect the delete.
             if (args.TryGetProperty("document", out var dn) && dn.ValueKind == JsonValueKind.String && !string.Equals(dn.GetString(), doc.Name, StringComparison.OrdinalIgnoreCase))
                 throw new InvalidOperationException("The active drawing is '" + doc.Name + "', not '" + dn.GetString() + "'; nothing was deleted");
-            var hs = args.GetProperty("handles").EnumerateArray().Select(e => e.GetString()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var hs = Tools.Required(args, "handles", JsonValueKind.Array).EnumerateArray().Select(e => e.GetString()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (hs.Count == 0 || hs.Count > 50) throw new ArgumentException("handles must contain 1..50 distinct handles");
             var dlm = Dlm();
             var plan = new List<object>();
@@ -381,7 +385,26 @@ namespace Plant3dMcp
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
-                var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(doc.Database), OpenMode.ForRead);
+                var modelSpace = SymbolUtilityServices.GetBlockModelSpaceId(doc.Database);
+                try
+                {
+                    using var links = dlm.FindAcPpObjectIds(rowId);
+                    int drawingId = dlm.GetDrawingId(doc.Database);
+                    foreach (var link in links)
+                    {
+                        if (link.DwgId != drawingId || link.SubIndex != 0) continue;
+                        var id = dlm.MakeAcDbObjectId(link, doc.Database);
+                        if (id.IsNull || !id.IsValid || id.IsErased || id.IsEffectivelyErased) continue;
+                        if (tr.GetObject(id, OpenMode.ForRead).OwnerId != modelSpace) continue;
+                        tr.Commit();
+                        return id;
+                    }
+                }
+                catch (DLException e) when (e.ErrorCode is DLStatus.NotFound or DLStatus.ObjectDoesNotHaveLink)
+                {
+                    // A freshly appended object may only be visible through the forward link.
+                }
+                var ms = (BlockTableRecord)tr.GetObject(modelSpace, OpenMode.ForRead);
                 foreach (ObjectId id in ms)
                     if (RowId(dlm, id) == rowId) { tr.Commit(); return id; }
                 tr.Commit();
@@ -528,9 +551,9 @@ namespace Plant3dMcp
         {
             var doc = ActiveDocument();
             string specName = (args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null) ?? DefaultSpec;
-            double nd = args.GetProperty("nd").GetDouble();
+            double nd = Tools.Required(args, "nd", JsonValueKind.Number).GetDouble();
             double? wall = args.TryGetProperty("wall", out var w) && w.ValueKind == JsonValueKind.Number ? w.GetDouble() : (double?)null;
-            var pts = args.GetProperty("points").EnumerateArray().Select(a =>
+            var pts = Tools.Required(args, "points", JsonValueKind.Array).EnumerateArray().Select(a =>
             {
                 var v = a.EnumerateArray().Select(x => x.GetDouble()).ToArray();
                 if (v.Length != 3) throw new ArgumentException("each point must be [x,y,z]");

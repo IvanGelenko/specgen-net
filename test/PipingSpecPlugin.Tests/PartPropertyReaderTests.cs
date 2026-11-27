@@ -6,6 +6,39 @@ namespace PipingSpecPlugin.Tests;
 
 public class PartPropertyReaderTests
 {
+    [Theory]
+    [InlineData("AcPpDb3dIsoSphereSymbol")]
+    [InlineData("AcPpDb3dIsoArrowSymbol")]
+    [InlineData("AcPpDb3dIsoStartPointSymbol")]
+    [InlineData("AcPpDb3dIsoRefDim")]
+    [InlineData("IsoSphereSymbol")]
+    [InlineData("IsoArrowSymbol")]
+    [InlineData("IsoStartPointSymbol")]
+    [InlineData("IsoRefDim")]
+    public void IsometricAnnotationDoesNotProduceAPartRecord(string className)
+    {
+        var record = PartPropertyReader.Build(1, new Dictionary<string, string>
+        {
+            ["PnPClassName"] = className,
+            ["PartCategory"] = "Fittings",
+        });
+        Assert.Null(record);
+    }
+
+    [Fact]
+    public void SupportWithIsoRepresentationStillProducesASpecRow()
+    {
+        var record = PartPropertyReader.Build(1, new Dictionary<string, string>
+        {
+            ["PnPClassName"] = "Support",
+            ["ContentIsoSymbolDefinition"] = "TYPE=SUPPORT",
+            ["PartSizeLongDesc"] = "Опора",
+            ["Weight"] = "1",
+        });
+        var row = Assert.Single(new SpecRowBuilder().Build(new[] { record }));
+        Assert.Equal("Supports", row.Category);
+    }
+
     [Fact] public void MissingBoltSetCountCannotBecomeOneBolt()
     {
         var record=PartPropertyReader.Build(1,new Dictionary<string,string>{{"PnPClassName","BoltSet"}});

@@ -93,7 +93,12 @@ public static class BreakPointPreparation
             if(host is null)throw new InvalidDataException("Не найден фрагмент трубы для ISO-метки: "+marker.Handle);
             return marker with{HostHandle=host.Handle};
         }
-        var prepared=original with{Parts=result,Warnings=warnings,Connections=connections.Select(Map).ToArray(),RequiredCuts=cuts.Select(Map).Distinct().ToArray(),IsoMarkers=markers.Where(m=>m.InformationType is 1 or 5).Select(MapMarker).ToArray(),ExternalLineContexts=original.ExternalLineContexts?.Select(context=>{var owner=End(context.OwnerHandle,context.OwnerPort);return context with{OwnerHandle=owner.Handle,OwnerPort=owner.Port};}).ToArray()};
+        var prepared=original with{Parts=result,Warnings=warnings,Connections=connections.Select(Map).ToArray(),RequiredCuts=cuts.Select(Map).Distinct().ToArray(),IsoMarkers=markers.Where(m=>m.InformationType is 1 or 5).Select(MapMarker).ToArray(),ExternalLineContexts=original.ExternalLineContexts?.Select(context=>{var owner=End(context.OwnerHandle,context.OwnerPort);return context with{OwnerHandle=owner.Handle,OwnerPort=owner.Port};}).ToArray(),
+            EquipmentConnections=original.EquipmentConnections?.Select(connection=>
+            {
+                var owner=End(connection.OwnerHandle,connection.OwnerPort);
+                return connection with{OwnerHandle=owner.Handle,OwnerPort=owner.Port};
+            }).ToArray()};
         foreach(var host in parts.Where(p=>p.Component==ComponentKind.Pipe))
         {
             var fragments=prepared.Parts.Where(p=>p.Handle==host.Handle||p.Properties.GetValueOrDefault("IsoOriginalHandle")==host.Handle).ToArray();

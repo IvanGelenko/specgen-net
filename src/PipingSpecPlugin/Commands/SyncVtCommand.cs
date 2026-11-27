@@ -1,9 +1,9 @@
-using System.Linq;
 using System.Windows.Interop;
 using Autodesk.AutoCAD.Runtime;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.PlantInstance;
 using PipingSpecPlugin.Settings;
+using PipingSpecPlugin.Spec;
 using PipingSpecPlugin.UI;
 using AcadApp = Autodesk.AutoCAD.ApplicationServices.Application;
 using WinForms = System.Windows.Forms;
@@ -14,9 +14,8 @@ namespace PipingSpecPlugin.Commands
     /// Ribbon entry point for СИНХРОНИЗАЦИЯ ВТ: opens SyncVtWindow, which
     /// lets the user pick a Ведомость трубопроводов workbook, review the
     /// computed diff against the project's P3dLineGroup rows, and confirm
-    /// before anything is written. All the matching/read/write logic
-    /// lives in Spec/LineSyncService — this command only wires up the
-    /// project, the log, and the window.
+    /// before anything is written. This command wires the project adapter,
+    /// synchronization workflow, log and window together.
     /// </summary>
     public class SyncVtCommand
     {
@@ -62,7 +61,21 @@ namespace PipingSpecPlugin.Commands
                 Trace($"ВНИМАНИЕ: settings.json не прочитан ({settings.LoadError}); используются значения по умолчанию, "
                     + "файл настроек этой командой не перезаписывается.");
 
-            var win = new SyncVtWindow(projectDlm, settings, Trace);
+            var drawing = AcadApp.DocumentManager.MdiActiveDocument;
+            bool isProjectDrawing = false;
+            try
+            {
+                if (drawing != null)
+                    isProjectDrawing = projectDlm.GetDrawingId(drawing.Database) > 0;
+            }
+            catch (System.Exception ex)
+            {
+                Trace($"Не удалось определить ID текущего чертежа: {ex.Message}");
+            }
+
+            var projectAdapter = new PlantVtProject(projectDlm, isProjectDrawing ? drawing : null, Trace);
+            var workflow = new VtSyncWorkflow(projectAdapter, projectAdapter, projectAdapter, VtReader.Read);
+            var win = new SyncVtWindow(workflow, projectAdapter, settings, Trace);
             new WindowInteropHelper(win).Owner = AcadApp.MainWindow.Handle;
             win.ShowDialog();
 

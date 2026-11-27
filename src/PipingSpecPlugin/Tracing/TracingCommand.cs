@@ -130,16 +130,37 @@ namespace PipingSpecPlugin.Tracing
                     // the parts exist from here on: a failure of the layer must not be reported as "not created"
                     var all = created.GetProperty("handles").EnumerateArray().Select(h => h.GetString()).ToList();
                     var hits = new HashSet<string>(created.GetProperty("collision_handles").EnumerateArray().Select(h => h.GetString()));
-                    made++; hitParts += hits.Count; _creationsInSession++;
-                    string layerNote = "";
-                    try
+                    var skipped = created.GetProperty("skipped_pipes");
+                    var skippedBends = created.GetProperty("skipped_bends");
+                    var skippedJoints = created.GetProperty("skipped_joints");
+                    if (all.Count == 0)
                     {
-                        MoveToLayer(all.Where(h => !hits.Contains(h)).ToList(), LayerName, LayerColorIndex);
-                        MoveToLayer(all.Where(h => hits.Contains(h)).ToList(), CollisionLayerName, CollisionColorIndex);
+                        failed++;
+                        result.AppendLine($"{r.Line.Tag}: спутник не создан, Plant 3D отклонил все трубы.");
                     }
-                    catch (Exception ex) { layerNote = $" ВНИМАНИЕ: детали созданы, но слой не назначен ({ex.Message}); не запускайте создание повторно, перенесите детали на слой вручную."; }
-                    result.AppendLine($"{r.Line.Tag}: создано — труб {Get(created, "pipes")}, изгибов {Get(created, "bends")}, замыкающих изгибов {Get(created, "closing_bends")}, стыков {Get(created, "welds")}"
-                                    + (hits.Count > 0 ? $"; фиолетовых деталей (коллизия): {hits.Count}" : "") + "." + layerNote);
+                    else
+                    {
+                        made++; hitParts += hits.Count; _creationsInSession++;
+                        string layerNote = "";
+                        try
+                        {
+                            MoveToLayer(all.Where(h => !hits.Contains(h)).ToList(), LayerName, LayerColorIndex);
+                            MoveToLayer(all.Where(h => hits.Contains(h)).ToList(), CollisionLayerName, CollisionColorIndex);
+                        }
+                        catch (Exception ex) { layerNote = $" ВНИМАНИЕ: детали созданы, но слой не назначен ({ex.Message}); не запускайте создание повторно, перенесите детали на слой вручную."; }
+                        string status = created.GetProperty("closed").GetBoolean() ? "создано" : "создано с разрывами";
+                        result.AppendLine($"{r.Line.Tag}: {status} — труб {Get(created, "pipes")}, изгибов {Get(created, "bends")}, замыкающих изгибов {Get(created, "closing_bends")}, стыков {Get(created, "welds")}"
+                                        + (hits.Count > 0 ? $"; фиолетовых деталей (коллизия): {hits.Count}" : "") + "." + layerNote);
+                    }
+                    foreach (var pipe in skipped.EnumerateArray())
+                        result.AppendLine($"  Пропуск трубы {Get(pipe, "tracer")} {pipe.GetProperty("from")} → {pipe.GetProperty("to")}: {Get(pipe, "reason")}");
+                    foreach (var bend in skippedBends.EnumerateArray())
+                        result.AppendLine($"  Пропуск гиба {Get(bend, "tracer")} {bend.GetProperty("at")}: {Get(bend, "reason")}");
+                    foreach (var joint in skippedJoints.EnumerateArray())
+                        result.AppendLine($"  Пропуск стыка {Get(joint, "from_handle")} → {Get(joint, "to_handle")}: {Get(joint, "reason")}");
+                    var inspection = created.GetProperty("inspect_handles");
+                    if (inspection.GetArrayLength() > 0)
+                        result.AppendLine("  Проверьте объекты после сбоя: " + string.Join(", ", inspection.EnumerateArray().Select(h => h.GetString())));
                 }
                 result.AppendLine();
                 result.AppendLine($"Слой «{LayerName}» — красный, цвет «по слою». Слой «{CollisionLayerName}» — фиолетовый: детали в местах, где столкновение с основной линией неизбежно.");

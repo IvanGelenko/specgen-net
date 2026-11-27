@@ -25,7 +25,7 @@ namespace Plant3dMcp
             var end = ports.Single(p => p.name == "S2").pos;
             var direction = (end - start).GetNormal();
             var length = start.DistanceTo(end);
-            double fraction = args.TryGetProperty("fraction", out var where) ? where.GetDouble() : .5;
+            double fraction = Tools.OptionalNumber(args, "fraction") ?? .5;
             if (!double.IsFinite(fraction) || fraction <= 0 || fraction >= 1)
                 throw new ArgumentException("fraction must be between 0 and 1.");
             double boltLength = CatalogPositiveNumber(args, "bolt_length");
@@ -45,21 +45,26 @@ namespace Plant3dMcp
                 pipePart.AssignFrom(pipe.PartSizeProperties);
                 outsideDiameter = pipe.OuterDiameter;
             }
-            if (!double.TryParse(Prop(pipePart, "NominalDiameter")?.ToString(), out double hostDn) || Math.Abs(hostDn - dn) > .001)
+            if (!double.TryParse(Convert.ToString(Prop(pipePart, "NominalDiameter"), System.Globalization.CultureInfo.InvariantCulture),
+                    System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double hostDn) || Math.Abs(hostDn - dn) > .001)
                 throw new InvalidOperationException("Valve DN must match the host pipe DN.");
             int hostRow = RowId(dlm, host);
             var groups = new List<int>();
             var related = dlm.GetRelatedRowIds("P3dLineGroupPartRelationship", "Part", hostRow, "LineGroup");
             if (related != null) foreach (int group in related) groups.Add(group);
-            int lineGroup = groups.Distinct().Single();
+            int[] distinctGroups = groups.Distinct().ToArray();
+            if (distinctGroups.Length != 1)
+                throw new InvalidOperationException("Host pipe must belong to exactly one line group; found " + distinctGroups.Length + ".");
+            int lineGroup = distinctGroups[0];
+            string hostHandle = host.Handle.ToString();
             var ends = ConnList(doc, host);
-            var downstream = ends.Where(link => (link.h1 == handle && link.p1 == "S2") ||
-                (link.h2 == handle && link.p2 == "S2")).ToArray();
+            var downstream = ends.Where(link => (link.h1 == hostHandle && link.p1 == "S2") ||
+                (link.h2 == hostHandle && link.p2 == "S2")).ToArray();
             if (downstream.Length > 1) throw new InvalidOperationException("The downstream end has multiple links.");
             var previous = downstream.SingleOrDefault();
             ObjectId oldJoint = downstream.Length == 0 ? ObjectId.Null :
-                IdFromHandle(doc.Database, previous.h1 == handle ? previous.h2 : previous.h1);
-            string oldJointPort = previous.h1 == handle ? previous.p2 : previous.p1;
+                IdFromHandle(doc.Database, previous.h1 == hostHandle ? previous.h2 : previous.h1);
+            string oldJointPort = previous.h1 == hostHandle ? previous.p2 : previous.p1;
             if (!oldJoint.IsNull && oldJoint.ObjectClass.Name != "AcPpDb3dConnector")
                 throw new InvalidOperationException("The downstream connection must be a Plant connector.");
 

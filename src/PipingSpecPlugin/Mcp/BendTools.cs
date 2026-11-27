@@ -141,7 +141,7 @@ namespace Plant3dMcp
         public static object PortConditions(JsonElement args)
         {
             var doc = ActiveDocument();
-            var id = IdFromHandle(doc.Database, args.GetProperty("handle").GetString());
+            var id = IdFromHandle(doc.Database, Tools.Required(args, "handle", JsonValueKind.String).GetString());
             var res = new List<object>();
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
@@ -174,9 +174,9 @@ namespace Plant3dMcp
         public static object ProbeConnectorWrapper(JsonElement args)
         {
             var doc = ActiveDocument(); var dlm = Dlm(); var piping = Piping();
-            var a = IdFromHandle(doc.Database, args.GetProperty("handleA").GetString());
-            var b = IdFromHandle(doc.Database, args.GetProperty("handleB").GetString());
-            string pa = args.GetProperty("portA").GetString(), pb = args.GetProperty("portB").GetString();
+            var a = IdFromHandle(doc.Database, Tools.Required(args, "handleA", JsonValueKind.String).GetString());
+            var b = IdFromHandle(doc.Database, Tools.Required(args, "handleB", JsonValueKind.String).GetString());
+            string pa = Tools.Required(args, "portA", JsonValueKind.String).GetString(), pb = Tools.Required(args, "portB", JsonValueKind.String).GetString();
             string joint = args.TryGetProperty("joint", out var jj) && jj.ValueKind == JsonValueKind.String ? jj.GetString() : "Buttweld (RUS)";
             string spec = args.TryGetProperty("spec", out var sj) && sj.ValueKind == JsonValueKind.String ? sj.GetString() : "!_Rus-PipeAndFittings_ст20_PN16";
             string steps = args.TryGetProperty("steps", out var st) && st.ValueKind == JsonValueKind.String ? st.GetString() : "connect,append";
@@ -217,9 +217,9 @@ namespace Plant3dMcp
         public static object RestoreBranchLink(JsonElement args)
         {
             var doc = ActiveDocument(); var dlm = Dlm();
-            var run = IdFromHandle(doc.Database, args.GetProperty("run_handle").GetString());
-            var conn = IdFromHandle(doc.Database, args.GetProperty("connector_handle").GetString());
-            var branch = IdFromHandle(doc.Database, args.GetProperty("branch_handle").GetString());
+            var run = IdFromHandle(doc.Database, Tools.Required(args, "run_handle", JsonValueKind.String).GetString());
+            var conn = IdFromHandle(doc.Database, Tools.Required(args, "connector_handle", JsonValueKind.String).GetString());
+            var branch = IdFromHandle(doc.Database, Tools.Required(args, "branch_handle", JsonValueKind.String).GetString());
             string ch = conn.Handle.ToString();
             var links = ConnList(doc, conn);
             var ports = PortsOf(doc, conn);
@@ -242,34 +242,6 @@ namespace Plant3dMcp
             try { ConnectCore(doc, conn, run, true, fp.name); }
             catch (Exception) { try { RemoveDynamicPort(doc, run, dyn); } catch (Exception) { } throw; }
             return new { plan, dynamic_port = dyn, links = ConnList(doc, conn).Select(c => c.h1 + "." + c.p1 + "-" + c.h2 + "." + c.p2).ToList() };
-        }
-
-
-        // set_layer: puts objects on a layer (created with the given AutoCAD colour index if missing). Used to colour the tracing without touching the colour
-        // of the Plant objects themselves.
-        public static object SetLayer(JsonElement args)
-        {
-            var doc = ActiveDocument();
-            string layer = args.GetProperty("layer").GetString();
-            int color = args.TryGetProperty("color", out var cj) && cj.ValueKind == JsonValueKind.Number ? cj.GetInt32() : 1;
-            var handles = args.GetProperty("handles").EnumerateArray().Select(e => e.GetString()).Distinct().ToList();
-            if (handles.Count == 0 || handles.Count > 200) throw new ArgumentException("handles: 1..200");
-            var ids = handles.Select(h => IdFromHandle(doc.Database, h)).ToList();
-            using (doc.LockDocument())
-            using (var tr = doc.Database.TransactionManager.StartTransaction())
-            {
-                var lt = (LayerTable)tr.GetObject(doc.Database.LayerTableId, OpenMode.ForRead);
-                if (!lt.Has(layer))
-                {
-                    lt.UpgradeOpen();
-                    var rec = new LayerTableRecord { Name = layer, Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, (short)color) };
-                    lt.Add(rec); tr.AddNewlyCreatedDBObject(rec, true);
-                }
-                bool byLayer = !(args.TryGetProperty("by_layer", out var blj) && blj.ValueKind == JsonValueKind.False);   // the colour of the objects follows the layer
-                foreach (var id in ids) { var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite); ent.Layer = layer; if (byLayer) ent.ColorIndex = 256; }
-                tr.Commit();
-            }
-            return new { layer, color, moved = ids.Count };
         }
 
         static string SafeType(SpecPart p) { try { return p.Type; } catch (Exception) { return null; } }

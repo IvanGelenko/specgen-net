@@ -1,7 +1,7 @@
 ﻿; Inno Setup installer for the PipingSpecPlugin (.NET) — Plant 3D 2025 and 2026.
 ; Builds a single Setup.exe that drops the plug-in into the per-user
 ; Autodesk\ApplicationPlugins folder. No admin rights required, and the
-; plug-in auto-loads on every AutoCAD start through the bundle's
+; plug-in auto-loads in Plant 3D 2025 and 2026 through the bundle's
 ; PackageContents.xml — no NETLOAD needed.
 
 #define MyAppName         "PipingSpecPlugin"
@@ -115,26 +115,27 @@ begin
   end;
 end;
 
-function HasPlantVersion(const Series: String): Boolean;
-var Keys: TArrayOfString; I: Integer; Root, Location, Product: String;
+function HasPlantVersion(const Series, ProductKey: String): Boolean;
+var Keys: TArrayOfString; I: Integer; Root, Location, Key: String;
 begin
   Result := False;
   Root := 'SOFTWARE\Autodesk\AutoCAD\' + Series;
   if RegGetSubkeyNames(HKLM64, Root, Keys) then
     for I := 0 to GetArrayLength(Keys)-1 do
     begin
-      if RegQueryStringValue(HKLM64, Root + '\' + Keys[I], 'AcadLocation', Location) and
-         RegQueryStringValue(HKLM64, Root + '\' + Keys[I], 'ProductName', Product) then
-        if (Pos('plant 3d', Lowercase(Product)) > 0) and
-           HostFilesPresent(Location) then
-        begin Result := True; Exit; end;
+      Key := Uppercase(Keys[I]);
+      // Localized product keys append a colon and a locale ID.
+      if (Key = ProductKey) or (Pos(ProductKey + ':', Key) = 1) then
+        if RegQueryStringValue(HKLM64, Root + '\' + Keys[I], 'AcadLocation', Location) then
+          if HostFilesPresent(Location) then
+          begin Result := True; Exit; end;
     end;
 end;
 
 function CheckPrerequisites(): String;
 begin
   Result := '';
-  if not (HasPlantVersion('R25.0') or HasPlantVersion('R25.1')) then
+  if not (HasPlantVersion('R25.0', 'ACAD-8117') or HasPlantVersion('R25.1', 'ACAD-9117')) then
     Result := Result + 'Не найдена полная установка AutoCAD Plant 3D 2025 или 2026 с Core Console. Восстановите установку Plant 3D. Отсутствующие файлы: ' + MissingHostFiles + #13#10;
   if not (HasRuntime8('Microsoft.NETCore.App', 'System.Private.CoreLib.dll') and
           HasRuntime8('Microsoft.WindowsDesktop.App', 'System.Windows.Forms.dll')) then
@@ -177,7 +178,42 @@ begin
   end;
 end;
 
+procedure RemoveAutoloadRegistrations();
+var
+  Series, Products: TArrayOfString;
+  I, J: Integer;
+  ProductRoot, AppKey, Loader, BundlePath, ModulePath: String;
+begin
+  BundlePath := ExpandConstant('{userappdata}\Autodesk\ApplicationPlugins\{#BundleFolder}');
+  ModulePath := '\Contents\Windows\PipingSpecPlugin.dll';
+  if RegGetSubkeyNames(HKCU64, 'Software\Autodesk\AutoCAD', Series) then
+    for I := 0 to GetArrayLength(Series)-1 do
+    begin
+      ProductRoot := 'Software\Autodesk\AutoCAD\' + Series[I];
+      if RegGetSubkeyNames(HKCU64, ProductRoot, Products) then
+        for J := 0 to GetArrayLength(Products)-1 do
+        begin
+          AppKey := ProductRoot + '\' + Products[J] + '\Applications\PipingSpecPlugin';
+          if RegQueryStringValue(HKCU64, AppKey, 'LOADER', Loader) then
+            // AutoCAD may append a dot to the bundle directory in the cached path.
+            if (CompareText(Loader, BundlePath + ModulePath) = 0) or
+               (CompareText(Loader, BundlePath + '.' + ModulePath) = 0) then
+              if not RegDeleteKeyIncludingSubkeys(HKCU64, AppKey) then
+                RaiseException('Не удалось очистить запись автозагрузки SpecGen: ' + AppKey);
+        end;
+    end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
-  if CurStep = ssPostInstall then VerifyPayload(ExpandConstant('{app}\Contents\Windows'));
+  if CurStep = ssPostInstall then
+  begin
+    VerifyPayload(ExpandConstant('{app}\Contents\Windows'));
+    RemoveAutoloadRegistrations();
+  end;
+end;
+
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then RemoveAutoloadRegistrations();
 end;

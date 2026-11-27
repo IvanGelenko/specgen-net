@@ -280,10 +280,9 @@ public class AuditRound4Tests
 
     // ---- stranded bend metres: 1 µm like the pipe rows -------------------------
 
-    [Fact] public void StrandedBendLengthIsNotTruncatedToMillimetres()
+    [Fact] public void BendWithInvalidNeighbourKeepsSubmillimetreLength()
     {
-        // Target pipe has an unknown length unit → it goes to review and the
-        // bend's metres folded into it are stranded (no sibling pipe).
+        // The pipe goes to review. The bend keeps its own valid length.
         var target = new PartRecord
         {
             PnPID = 1, SourcePnPID = 1, PartCategory = "Pipe", PnPClassName = "Pipe", PartSizeLongDesc = "Труба",
@@ -293,11 +292,9 @@ public class AuditRound4Tests
         var bend = BendRec(2, len: "300.04");
         var topo = new Dictionary<int, List<int>> { [1] = new() { 2 }, [2] = new() { 1 } };
         var b = new SpecRowBuilder(new SpecBuilderOptions { IncludePipeBendsAsPipe = true, Topology = topo });
-        b.Build(new[] { target, bend });
-        var stranded = Assert.Single(b.ReviewItems, i => i.Reason.StartsWith("Длину гиба не удалось отнести"));
-        Assert.Equal(0.30004, stranded.Qty.Value, 6);
-        var row = ReviewSection.BuildRows(new[] { stranded }).Single();
+        var row = Assert.Single(b.Build(new[] { target, bend }));
         Assert.Equal(0.4, row.Qty);
+        Assert.Contains(b.ReviewItems, i => i.PnPID == 2 && i.Reason.Contains("учтён отдельной строкой"));
     }
 
     // ---- audit: an unknown unit of the wall is named as such --------------------
@@ -338,16 +335,18 @@ public class AuditRound4Tests
         finally { File.Delete(path); }
     }
 
-    // ---- bundle: AutoCAD 2025+ loads the build compiled against 2025 ---------
+    // ---- bundle: Plant 3D 2025 and 2026 load the build compiled against 2025 --
 
-    [Fact] public void BundleSeriesMinMatchesTheReferencedAutoCadRelease()
+    [Fact] public void BundleTargetsOnlyPlant3d2025And2026()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir != null && !File.Exists(Path.Combine(dir.FullName, "bundle", "PackageContents.xml"))) dir = dir.Parent;
         Assert.NotNull(dir);
         var req = XDocument.Load(Path.Combine(dir.FullName, "bundle", "PackageContents.xml"))
             .Descendants("RuntimeRequirements").Single();
+        Assert.Equal("Plant3D", (string)req.Attribute("Platform"));
         Assert.Equal("R25.0", (string)req.Attribute("SeriesMin"));
+        Assert.Equal("R25.1", (string)req.Attribute("SeriesMax"));
         // R25.0 is only valid while the DLL is compiled against the 2025 wrappers:
         // .NET cannot bind a 2026 (25.1) reference to 2025's 25.0 assemblies.
         var csproj = File.ReadAllText(Path.Combine(dir.FullName, "src", "PipingSpecPlugin", "PipingSpecPlugin.csproj"));

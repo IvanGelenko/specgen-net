@@ -33,14 +33,23 @@ namespace PipingSpecPlugin.Tracing
             _lines = lines; _par = par;
             Text = "Спутник: выбор линий";
             StartPosition = WinForms.FormStartPosition.CenterScreen;
-            Size = new Size(680, 560); MinimumSize = new Size(560, 460);
+            const int warningSpace = 54;
+            Size = new Size(680, 560 + warningSpace); MinimumSize = new Size(560, 460 + warningSpace);
             Font = new Font("Segoe UI", 9f);
 
-            var top = new WinForms.Label { Text = "Отметьте линии, на которые нужно создать спутник:", Left = 12, Top = 12, Width = 620, AutoSize = false, Height = 20 };
-            var fl = new WinForms.Label { Text = "Фильтр:", Left = 12, Top = 40, Width = 52, Height = 20 };
-            _filter.SetBounds(70, 37, 300, 24); _filter.TextChanged += (s, e) => Fill();
+            var warning = new WinForms.Label
+            {
+                Text = "При создании спутника Plant 3D может аварийно завершиться.\r\nУбедитесь, что изменения во всех открытых чертежах сохранены.",
+                Left = 12, Top = 10, Width = 640, Height = 44,
+                Anchor = WinForms.AnchorStyles.Top | WinForms.AnchorStyles.Left | WinForms.AnchorStyles.Right,
+                BackColor = SystemColors.Info, ForeColor = SystemColors.InfoText,
+                Padding = new WinForms.Padding(8, 3, 8, 3), TextAlign = ContentAlignment.MiddleLeft
+            };
+            var top = new WinForms.Label { Text = "Отметьте линии, на которые нужно создать спутник:", Left = 12, Top = 12 + warningSpace, Width = 620, AutoSize = false, Height = 20 };
+            var fl = new WinForms.Label { Text = "Фильтр:", Left = 12, Top = 40 + warningSpace, Width = 52, Height = 20 };
+            _filter.SetBounds(70, 37 + warningSpace, 300, 24); _filter.TextChanged += (s, e) => Fill();
 
-            _list.SetBounds(12, 68, 640, 300);
+            _list.SetBounds(12, 68 + warningSpace, 640, 300);
             _list.Anchor = WinForms.AnchorStyles.Top | WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left | WinForms.AnchorStyles.Right;
             _list.View = WinForms.View.Details; _list.CheckBoxes = true; _list.FullRowSelect = true; _list.GridLines = true;
             _list.Columns.Add("Номер линии", 300); _list.Columns.Add("DN", 90); _list.Columns.Add("Труб", 60, WinForms.HorizontalAlignment.Right);
@@ -52,12 +61,12 @@ namespace PipingSpecPlugin.Tracing
                 UpdateButton();
             };
 
-            var all = new WinForms.Button { Text = "Отметить все", Left = 12, Top = 374, Width = 110, Height = 26, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left };
+            var all = new WinForms.Button { Text = "Отметить все", Left = 12, Top = 374 + warningSpace, Width = 110, Height = 26, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left };
             all.Click += (s, e) => SetAll(true);
-            var none = new WinForms.Button { Text = "Снять все", Left = 128, Top = 374, Width = 110, Height = 26, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left };
+            var none = new WinForms.Button { Text = "Снять все", Left = 128, Top = 374 + warningSpace, Width = 110, Height = 26, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left };
             none.Click += (s, e) => SetAll(false);
 
-            var box = new WinForms.GroupBox { Text = "Параметры", Left = 12, Top = 400, Width = 640, Height = 78, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left | WinForms.AnchorStyles.Right };
+            var box = new WinForms.GroupBox { Text = "Параметры", Left = 12, Top = 400 + warningSpace, Width = 640, Height = 78, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Left | WinForms.AnchorStyles.Right };
             box.Controls.Add(new WinForms.Label { Text = "Миникаталог (спецификация) трубы спутника:", Left = 10, Top = 22, Width = 190, Height = 34 });
             _spec.SetBounds(200, 19, 280, 24);
             _spec.DropDownStyle = specs.Count > 0 ? WinForms.ComboBoxStyle.DropDownList : WinForms.ComboBoxStyle.DropDown;   // the list of the project; typed by hand only when it cannot be read
@@ -74,13 +83,13 @@ namespace PipingSpecPlugin.Tracing
             box.Controls.Add(new WinForms.Label { Text = "Наименьший зазор, мм:", Left = 300, Top = 46, Width = 150 });
             _tol.SetBounds(452, 43, 60, 24); _tol.Text = Num(par.MinGap); box.Controls.Add(_tol);
 
-            _ok.Text = "Рассчитать"; _ok.Width = 110; _ok.Height = 30; _ok.Left = 430; _ok.Top = 488; _ok.Enabled = false;
+            _ok.Text = "Рассчитать"; _ok.Width = 110; _ok.Height = 30; _ok.Left = 430; _ok.Top = 488 + warningSpace; _ok.Enabled = false;
             _ok.Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Right;
             _ok.Click += (s, e) => { if (ReadParameters()) { DialogResult = WinForms.DialogResult.OK; Close(); } };
-            var cancel = new WinForms.Button { Text = "Отмена", Width = 100, Height = 30, Left = 552, Top = 488, DialogResult = WinForms.DialogResult.Cancel, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Right };
+            var cancel = new WinForms.Button { Text = "Отмена", Width = 100, Height = 30, Left = 552, Top = 488 + warningSpace, DialogResult = WinForms.DialogResult.Cancel, Anchor = WinForms.AnchorStyles.Bottom | WinForms.AnchorStyles.Right };
             AcceptButton = _ok; CancelButton = cancel;
 
-            Controls.AddRange(new WinForms.Control[] { top, fl, _filter, _list, all, none, box, _ok, cancel });
+            Controls.AddRange(new WinForms.Control[] { warning, top, fl, _filter, _list, all, none, box, _ok, cancel });
             Fill();
         }
 

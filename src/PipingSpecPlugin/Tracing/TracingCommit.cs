@@ -15,7 +15,7 @@ using Part = Autodesk.ProcessPower.PnP3dObjects.Part;
 namespace PipingSpecPlugin.Tracing
 {
     // create_tracing: heat tracing of a straight main line, as in the user's sample (view 3): two DN20 tracers (25x4, steel 20) on both
-    // sides, 45 degrees below the axis, 2 mm between the walls; they go sideways around flanges and valves with two pipe bends (S-shape,
+    // sides, 45 degrees below the axis, 2 mm between the walls; they pass flanges and valves on their respective sides (S-shape,
     // radius 90); the ends are closed with 180 degree bends, so the tracing is one closed loop with no inlet or outlet.
     internal static partial class TracingEngine
     {
@@ -27,12 +27,12 @@ namespace PipingSpecPlugin.Tracing
         }
         sealed class TBypass
         {
-            public string Tee1, Tee2; public double Leg1A, Leg2A, TopAxisV, LegBottomZ, RB, TeeLat;
+            public string Tee1, Tee2; public double Leg1A, Leg2A, TopAxisV, LegBottomZ, RB, TeeLat, PipeLength;
             public List<TObst> TopObst = new List<TObst>();
             public List<(Point3d p1, Point3d p2, double rad, string what)> Cyls = new List<(Point3d, Point3d, double, string)>();
             public List<string> Handles = new List<string>();
         }
-        sealed class TObst { public string H, Desc; public double A1, A2, LatR, LObs; public TBranch Branch; }
+        sealed class TObst { public string H, Desc; public bool PassAside; public double A1, A2, LatR, LObs; public TBranch Branch; }
         sealed class TCluster { public double A1, A2, LObs; public List<string> Hs = new List<string>(); public List<TBranch> Branches = new List<TBranch>(); }
         sealed class TItem
         {
@@ -41,11 +41,15 @@ namespace PipingSpecPlugin.Tracing
             public Point3d Corner; public Vector3d TIn, TOut; public double R, Theta, L1, L2;   // bends
             public Vector3d X, Y;                     // U orientation
             public string Tracer;
+            public string SkipReason;
             public bool Hit;                          // the part touches / enters the main line where that cannot be avoided: it is painted violet
+            public bool Reused;
             public ObjectId Id; public int Row;
         }
 
-        public static object CreateTracing(JsonElement args)
+        public static object CreateTracing(JsonElement args) => PrepareStraightTracing(args)();
+
+        static Func<object> PrepareStraightTracing(JsonElement args, List<RPart> route = null)
         {
             var doc = ActiveDocument();
             var dlm = Dlm();
@@ -69,7 +73,7 @@ namespace PipingSpecPlugin.Tracing
             bool heatBranches = !(args.TryGetProperty("heat_branches", out var hbj) && hbj.ValueKind == JsonValueKind.False);
             int stage = args.TryGetProperty("stage", out var stj) && stj.ValueKind == JsonValueKind.Number ? stj.GetInt32() : 3;          // 1 parts only, 2 + connectors (both rolled back), 3 full
             if (R <= 0 || gap < 0 || pad < 0 || endMargin < 0 || tailU < 0) throw new ArgumentException("radius must be > 0 and gap, pad, end_margin, tail_u must not be negative");
-            var handles = args.GetProperty("pipes").EnumerateArray().Select(e => e.GetString()).Where(h => !string.IsNullOrWhiteSpace(h)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var handles = Plant3dMcp.Tools.Required(args, "pipes", JsonValueKind.Array).EnumerateArray().Select(e => e.GetString()).Where(h => !string.IsNullOrWhiteSpace(h)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (handles.Count == 0 || handles.Count > 40) throw new ArgumentException("pipes: 1..40 handles of the main line");
 
             // ---- the tracer pipe part -------------------------------------------------------------------------
@@ -202,16 +206,22 @@ namespace PipingSpecPlugin.Tracing
                 bool known = ValveRx.IsMatch(desc) || FlangeRx.IsMatch(desc) || System.Text.RegularExpressions.Regex.IsMatch(desc, "Заглушка|Blind|Диск|Тройник|Tee");
                 if (!known)
                     throw new InvalidOperationException("Part " + o.id.Handle + " on the main line (" + desc.Trim() + ") is not a flange or a valve. Tracing of lines with tees, reducers or elbows is not implemented yet; pass a straight section of pipes, flanges and valves.");
-                double latR = 0;
+                double latR = 0, below = 0;
                 using (doc.LockDocument())
                 using (var tr = doc.Database.TransactionManager.StartTransaction())
                 {
                     var ext = ((Entity)tr.GetObject(o.id, OpenMode.ForRead)).GeometricExtents;
                     foreach (var x in new[] { ext.MinPoint.X, ext.MaxPoint.X }) foreach (var y in new[] { ext.MinPoint.Y, ext.MaxPoint.Y }) foreach (var z in new[] { ext.MinPoint.Z, ext.MaxPoint.Z })
-                        latR = Math.Max(latR, Math.Abs((new Point3d(x, y, z) - A0).DotProduct(sdir)));
+                    {
+                        var off = new Point3d(x, y, z) - A0;
+                        latR = Math.Max(latR, Math.Abs(off.DotProduct(sdir)));
+                        below = Math.Max(below, -off.DotProduct(up));
+                    }
                     tr.Commit();
                 }
-                obst.Add(new TObst { H = o.id.Handle.ToString(), Desc = desc.Trim(), A1 = along.Min(), A2 = along.Max(), LatR = latR, LObs = latR + gap + rT });
+                bool passAside = ValveRx.IsMatch(desc) || FlangeRx.IsMatch(desc) || System.Text.RegularExpressions.Regex.IsMatch(desc, "Заглушка|Blind|Диск");
+                double requiredOffset = passAside ? Math.Max(l0, latR + gap + rT) : l0 + Math.Max(0, below + gap + rT - v0);
+                obst.Add(new TObst { H = o.id.Handle.ToString(), Desc = desc.Trim(), PassAside = passAside, A1 = along.Min(), A2 = along.Max(), LatR = latR, LObs = requiredOffset });
             }
             foreach (var o in objs.Where(o => o.cls.Contains("Support") && !o.cls.Contains("Structure")))
                 try
@@ -389,6 +399,7 @@ namespace PipingSpecPlugin.Tracing
                             {
                                 double od2; using (doc.LockDocument()) using (var tr = doc.Database.TransactionManager.StartTransaction()) { od2 = ((Pipe)tr.GetObject(cid, OpenMode.ForRead)).OuterDiameter; tr.Commit(); }
                                 var s1 = cp.First(q => q.name == "S1").pos; var s2 = cp.First(q => q.name == "S2").pos;
+                                 b.PipeLength += s1.DistanceTo(s2);
                                 var dir = (s2 - s1).GetNormal();
                                 if (Math.Abs(dir.DotProduct(up)) > 0.9) legs.Add((s1, s2, od2)); else tops.Add((s1, s2, od2));
                                 b.Cyls.Add((s1, s2, od2 / 2, "bypass pipe " + cid.Handle)); rbMax = Math.Max(rbMax, od2 / 2);
@@ -417,7 +428,11 @@ namespace PipingSpecPlugin.Tracing
                                 var ext = ((Entity)tr.GetObject(cid, OpenMode.ForRead)).GeometricExtents;
                                 foreach (var x in new[] { ext.MinPoint.X, ext.MaxPoint.X }) foreach (var y in new[] { ext.MinPoint.Y, ext.MaxPoint.Y })
                                     lat = Math.Max(lat, Math.Abs((new Point3d(x, y, 0) - new Point3d(A0.X, A0.Y, 0)).DotProduct(sdir)));
-                                below = zTop - ext.MinPoint.Z;
+                                var topAxisOrigin = P(aMid, 0, b.TopAxisV);
+                                foreach (var x in new[] { ext.MinPoint.X, ext.MaxPoint.X })
+                                    foreach (var y in new[] { ext.MinPoint.Y, ext.MaxPoint.Y })
+                                        foreach (var z in new[] { ext.MinPoint.Z, ext.MaxPoint.Z })
+                                            below = Math.Max(below, (topAxisOrigin - new Point3d(x, y, z)).DotProduct(up));
                                 tr.Commit();
                             }
                             wide.Add((cid.Handle.ToString(), al.Min(), al.Max(), Math.Max(lat, below), ValveRx.IsMatch(dd)));
@@ -426,9 +441,7 @@ namespace PipingSpecPlugin.Tracing
                         foreach (var w in wide)
                         {
                             double rho = w.valve && flangeRho > 0 ? flangeRho : w.rho;
-                            double vbx = (b.RB + gap + rT) * Math.Cos(Math.PI / 4), lbx = (b.RB + gap + rT) * Math.Sin(Math.PI / 4);
-                            double need = Math.Sqrt(Math.Max(0, (rho + gap + rT) * (rho + gap + rT) - vbx * vbx));
-                            b.TopObst.Add(new TObst { H = w.h, Desc = w.valve ? "bypass valve" : "bypass flange", A1 = w.a1, A2 = w.a2, LatR = rho, LObs = need });
+                            b.TopObst.Add(new TObst { H = w.h, Desc = w.valve ? "bypass valve" : "bypass flange", A1 = w.a1, A2 = w.a2, LatR = rho, LObs = rho + gap + rT });
                             var cp2 = SafePorts(doc, IdFromHandle(doc.Database, w.h));
                             b.Cyls.Add((P(w.a1, 0, -b.TopAxisV), P(w.a2, 0, -b.TopAxisV), rho, "bypass part " + w.h));
                         }
@@ -488,7 +501,7 @@ namespace PipingSpecPlugin.Tracing
 
             // clusters of obstacles that need a detour
             // A part needs a detour only if it is wider than the pipe itself (a tee body is as wide as the pipe: its branch points up, the tracers are below).
-            bool Needs(TObst o) => o.Branch != null || (o.LObs > l0 + 1 && o.LatR > rMain + 1.0);
+            bool Needs(TObst o) => o.Branch != null || o.LObs > l0 + 1;
             // a vent / drain is a pseudo obstacle for the tracer that dips along it: the window covers its two 90 degree bends
             var branchObst = branches.Select(b => new TObst { H = "branch " + b.Name, Desc = "vent/drain", A1 = b.A + b.Shift - 2 * Rdip - minStraight, A2 = b.A + b.Shift + 2 * Rdip + minStraight, LatR = b.LDip, LObs = b.LDip, Branch = b }).ToList();
             double CompactTrans(double delta)   // the shortest stretch along the line one transition of the shift 'delta' takes (two bends and the straight piece between them, tangents included)
@@ -531,15 +544,12 @@ namespace PipingSpecPlugin.Tracing
             foreach (var br in branches)
             {
                 double other = -br.Side;
-                var cands2 = new List<double> { l0 };
-                foreach (int dg in new[] { 15, 30, 45, 60 }) cands2.Add(l0 + 2 * R * (1 - Math.Cos(dg * Math.PI / 180)));
-                for (int k = 1; k <= 20; k++) cands2.Add(l0 + 90 + 20 * k);
-                foreach (double lat in cands2)
+                for (double drop = 0; drop <= 500; drop += 5)
                 {
                     bool ok = true;
-                    for (double aa = br.A - 150; aa <= br.A + 150 && ok; aa += 10) ok = RectsClear(br, P(aa, other * lat, v0));
+                    for (double aa = br.A - 150; aa <= br.A + 150 && ok; aa += 10) ok = RectsClear(br, P(aa, other * l0, v0 + drop));
                     if (!ok) continue;
-                    if (lat > l0 + 0.01) passObst[other].Add(new TObst { H = "pass " + br.Name, Desc = "branch stub", A1 = br.A - 90, A2 = br.A + 90, LatR = Math.Max(lat, rMain + 2), LObs = lat });
+                    if (drop > 0) passObst[other].Add(new TObst { H = "pass " + br.Name, Desc = "branch stub", A1 = br.A - 90, A2 = br.A + 90, LObs = l0 + drop });
                     break;
                 }
             }
@@ -563,6 +573,7 @@ namespace PipingSpecPlugin.Tracing
             // keeps running under the main valve.
             double bLb = 0, bVb = 0, bLpass = 0, bVtop = 0, bAR1 = 0, bAR2 = 0, bVS1 = 0, bX1 = 0, bX2 = 0, bRt1 = 0, bWin1 = 0, bWin2 = 0;
             var bTop = new List<TCluster>();
+             if (route != null && (byp == null || byp.PipeLength > 3000 || !route.Any(p => p.H == byp.Tee1) || !route.Any(p => p.H == byp.Tee2))) return null;
             if (byp != null)
                 try
                 {
@@ -585,6 +596,7 @@ namespace PipingSpecPlugin.Tracing
                     bTop = BuildClusters(byp.TopObst, bLb);
                 }
                 catch (Exception bex) { warnings.Add("The tracer route round the bypass is not possible: " + bex.Message); byp = null; }
+             if (route != null && byp == null) return null;
 
             // The tracer at lateral sign sigma as polylines in order of growing 'a'; a vent/drain splits it: ... corner, leg end | U | leg start, corner ...
             (List<List<Point3d>> paths, List<TItem> dips) Vertices(double sigma)
@@ -615,27 +627,32 @@ namespace PipingSpecPlugin.Tracing
                     var c = cls[ci];
                     if (bypHere && !bypDone && c.A1 >= bWin1) { EmitBypass(); bypDone = true; }
                     if (bypHere && c.A2 > bWin1 && c.A1 < bWin2) { prevEnd = bWin2; continue; }      // inside the bypass window this tracer is replaced by the route round the bypass
-                    double delta = c.LObs - l0;
+                    double lat = c.Branches.Select(branch => branch.LDip)
+                        .Concat(obst.Where(o => o.PassAside && c.Hs.Contains(o.H)).Select(o => o.LObs)).Append(l0).Max();
+                    double drop = obst.Where(o => !o.PassAside).Concat(passObst[sigma]).Where(o => c.Hs.Contains(o.H))
+                        .Select(o => o.LObs - l0).DefaultIfEmpty().Max();
+                    double low = v0 + drop;
+                    double delta = Math.Sqrt((lat - l0) * (lat - l0) + drop * drop);
                     double nextB = ci + 1 < cls.Count ? (c.A2 + cls[ci + 1].A1) / 2 : aEnd;          // how far this detour may reach after the obstacle
                     if (bypHere && !bypDone && c.A2 < bWin1) nextB = Math.Min(nextB, bWin1);
                     Detour(delta, out double th, out double dg, c.Branches.Count > 0, Math.Min((c.A1 - pad) - prevEnd, nextB - (c.A2 + pad)));
                     double rt = R * Math.Tan(th / 2), x = delta / Math.Tan(th);
                     double c2 = c.A1 - pad - rt, c1 = c2 - x, c3 = c.A2 + pad + rt, c4 = c3 + x;
-                    v.Add(P(c1, sigma * l0, v0)); v.Add(P(c2, sigma * c.LObs, v0));
+                    v.Add(P(c1, sigma * l0, v0)); v.Add(P(c2, sigma * lat, low));
                     foreach (var br in c.Branches.OrderBy(b => b.A))
                     {
                         double vApex = br.Down ? VOfZ(br.A, br.ZMin - overshoot) : VOfZ(br.A, br.ZMax + overshoot);
                         double vPort = br.Down ? vApex - (dipTail + Rdip) : vApex + (dipTail + Rdip);
-                        if (br.Down ? vPort < v0 + Rdip + 0.5 : vPort > v0 - Rdip - 0.5)
+                        if (br.Down ? vPort < low + Rdip + 0.5 : vPort > low - Rdip - 0.5)
                             throw new InvalidOperationException("The branch " + br.Name + " is too short for a dip: the legs of the tracer would have no room between the 90 degree bend and the closing bend. Reduce dip_tail or branch_overshoot.");
-                        var p1 = P(br.A + br.Shift - Rdip, sigma * c.LObs, vPort); var p2 = P(br.A + br.Shift + Rdip, sigma * c.LObs, vPort);
-                        dipCorners.Add(P(br.A + br.Shift - Rdip, sigma * c.LObs, v0)); dipCorners.Add(P(br.A + br.Shift + Rdip, sigma * c.LObs, v0));
-                        v.Add(P(br.A + br.Shift - Rdip, sigma * c.LObs, v0)); v.Add(p1);
+                        var p1 = P(br.A + br.Shift - Rdip, sigma * lat, vPort); var p2 = P(br.A + br.Shift + Rdip, sigma * lat, vPort);
+                        dipCorners.Add(P(br.A + br.Shift - Rdip, sigma * lat, low)); dipCorners.Add(P(br.A + br.Shift + Rdip, sigma * lat, low));
+                        v.Add(P(br.A + br.Shift - Rdip, sigma * lat, low)); v.Add(p1);
                         paths.Add(v);
                         dips.Add(new TItem { Kind = "u", P1 = p1, P2 = p2, X = br.Down ? up : up.Negate(), Y = (p2 - p1).GetNormal(), R = Rdip, L1 = dipTail, L2 = dipTail, Tracer = "dip" });
-                        v = new List<Point3d> { p2, P(br.A + br.Shift + Rdip, sigma * c.LObs, v0) };
+                        v = new List<Point3d> { p2, P(br.A + br.Shift + Rdip, sigma * lat, low) };
                     }
-                    v.Add(P(c3, sigma * c.LObs, v0)); v.Add(P(c4, sigma * l0, v0));
+                    v.Add(P(c3, sigma * lat, low)); v.Add(P(c4, sigma * l0, v0));
                     prevEnd = c4 + rt;
                 }
                 if (bypHere && !bypDone) EmitBypass();
@@ -804,6 +821,9 @@ namespace PipingSpecPlugin.Tracing
             double pipeLen = items.Where(i => i.Kind == "pipe").Sum(i => i.P1.DistanceTo(i.P2));
             var plan = new
             {
+                 route = route?.Select(part => part.Kind + " " + part.H).ToList(),
+                 covered_handles = byp?.Handles.Concat(branches.SelectMany(branch => branch.Handles)).Distinct().ToList(),
+                 branch_routes = Array.Empty<string>(),
                 main_line = new { pipes = handles, length = Math.Round(Ltot, 1), start = Arr(A0), direction = Arr(d), outer_radius = rMain },
                 tracer = new { spec = specName, pipe = DescOf(pipePart), od = odT, gap, radius = R, view = "3 (two tracers, 45 degrees below the axis on both sides)" },
                 lateral_offset = Math.Round(l0, 2), vertical_offset = Math.Round(v0, 2), end_bend_radius = Math.Round(rU, 2),
@@ -811,20 +831,48 @@ namespace PipingSpecPlugin.Tracing
                 detours,
                 branches = branches.Select(b => new { b.Name, at_mm = Math.Round(b.A, 1), direction = b.Down ? "down (drain)" : "up (vent)", parts = b.Handles, part_info = b.Info, radius = Math.Round(b.Rho, 1), tracer_lateral = Math.Round(b.LDip, 1), dip_side = b.Side > 0 ? "+" : "-", legs_shift_mm = b.Shift, lowest_or_highest_z = Math.Round(b.Down ? b.ZMin - overshoot : b.ZMax + overshoot, 1) }).ToList(),
                 elbow_at_start = prefixInfo,
-                bypass = byp == null ? null : new { tracer = bypSide > 0 ? "+" : "-", lateral_beside_main = Math.Round(bLpass, 1), lateral_under_bypass = Math.Round(bLb, 1), top_tracer_vertical_offset_below_axis = Math.Round(bVb, 1), rise_at_mm = Math.Round(bAR1, 1), descent_at_mm = Math.Round(bAR2, 1), tees = new[] { byp.Tee1, byp.Tee2 }, chain = byp.Handles, leg1_at_mm = Math.Round(byp.Leg1A, 1), leg2_at_mm = Math.Round(byp.Leg2A, 1), top_axis_above_main_mm = Math.Round(-byp.TopAxisV, 1), pipe_radius = byp.RB, tee_lateral_radius = Math.Round(byp.TeeLat, 1),
+                 bypass = byp == null ? null : new { mode = "through", tracer = bypSide > 0 ? "+" : "-", lateral_beside_main = Math.Round(bLpass, 1), lateral_under_bypass = Math.Round(bLb, 1), top_tracer_vertical_offset_below_axis = Math.Round(bVb, 1), rise_at_mm = Math.Round(bAR1, 1), descent_at_mm = Math.Round(bAR2, 1), tees = new[] { byp.Tee1, byp.Tee2 }, chain = byp.Handles, leg1_at_mm = Math.Round(byp.Leg1A, 1), leg2_at_mm = Math.Round(byp.Leg2A, 1), top_axis_above_main_mm = Math.Round(-byp.TopAxisV, 1), pipe_radius = byp.RB, tee_lateral_radius = Math.Round(byp.TeeLat, 1),
                     top_obstacles = byp.TopObst.Select(o => new { o.H, o.Desc, from_mm = Math.Round(o.A1, 1), to_mm = Math.Round(o.A2, 1), radius = Math.Round(o.LatR, 1), tracer_lateral_needed = Math.Round(o.LObs, 1) }).ToList() },
                 collision_check = new { points_checked = samples, min_clearance_mm = Math.Round(minClear, 2), required_mm = gap, collisions },
                 parts = new { pipes = nPipes, bends = nBends, closing_bends_180 = nU, welds = nPipes + nBends + nU, tracer_pipe_length_mm = Math.Round(pipeLen, 0) },
                 warnings
             };
-            return CommitTracing(args, doc, dlm, piping, items, pipePart, odT, specName, stage, plan, collisions, nPipes, nBends, nU);
+             var routeKey = TracingTopology.RouteKey(route == null ? handles : route.Select(part => part.H));
+             return () =>
+             {
+                 if (CountUntrackedTracerPipes(doc, items, routeKey, odT) > 0 && !IsDry(args))
+                     throw new InvalidOperationException("Existing pipes coincide with the planned tracing and do not have this route's ownership marks.");
+                 return CommitTracing(args, doc, dlm, piping, items, pipePart, odT, specName, stage, plan, collisions, routeKey);
+             };
         }
 
         // The common part of the tracing tools: dry run / collision refusal, creation of the bends and pipes, the joints by ConnectorWrapper, the checks.
         static object CommitTracing(JsonElement args, Document doc, DataLinksManager dlm, PipingProject piping, List<TItem> items, SpecPart pipePart, double odT, string specName,
-                                    int stage, object plan, List<string> collisions, int nPipes, int nBends, int nU)
+            int stage, object plan, List<string> collisions, string routeKey)
         {
-            if (IsDry(args)) return new { dry_run = true, document = doc.Name, plan, note = "Nothing was changed. Repeat with dry_run=false to create the tracing." };
+            double wall = WallOf(pipePart);
+            string ItemKey(TItem item) => TracingTopology.Hash(JsonSerializer.Serialize(new
+            {
+                spec = specName.ToUpperInvariant(), diameter = odT, wall, item.Kind, item.Tracer,
+                from = Arr(item.P1), to = Arr(item.P2), corner = Arr(item.Corner), incoming = Arr(item.TIn), outgoing = Arr(item.TOut),
+                x = Arr(item.X), y = Arr(item.Y), item.R, item.Theta, item.L1, item.L2
+            }));
+            var itemKeys = items.Where(i => i.SkipReason == null).ToDictionary(i => i, ItemKey);
+            var existing = FindTracingItems(doc, routeKey);
+            var plannedKeys = itemKeys.Values.ToHashSet(StringComparer.Ordinal);
+            bool resumeConflict = existing.Any(kv => kv.Value.Count != 1 || !plannedKeys.Contains(kv.Key)) ||
+                                  plannedKeys.Count != itemKeys.Count;
+            var resumeProblems = new List<string>();
+            foreach (var (item, key) in itemKeys)
+            {
+                if (!existing.TryGetValue(key, out var matches) || matches.Count != 1) continue;
+                item.Id = matches[0];
+                try { VerifyPorts(item); item.Reused = true; }
+                catch (Exception ex) { resumeConflict = true; resumeProblems.Add(ex.Message); }
+            }
+            if (IsDry(args)) return new { dry_run = true, document = doc.Name, plan, resume = new { reusable_parts = items.Count(i => i.Reused), conflict = resumeConflict, problems = resumeProblems } };
+            if (resumeConflict) throw new InvalidOperationException("Existing tracer parts have duplicate marks, have moved, or belong to a different geometry of this route. " + string.Join(" | ", resumeProblems));
+            if (stage != 3 && existing.Count > 0) throw new InvalidOperationException("A route with existing tracer parts can only be resumed with stage 3.");
             // collisions that cannot be avoided do not stop the creation (route tool: the parts concerned are flagged and painted violet); other tools still refuse
             if (collisions.Count > 0 && !items.Any(i => i.Hit)) throw new InvalidOperationException("The tracing would collide with the main line, nothing was created: " + string.Join("; ", collisions));
 
@@ -832,6 +880,38 @@ namespace PipingSpecPlugin.Tracing
             var before = ModelRows(doc, dlm);
             var added = new HashSet<int>();
             var log = new List<string>();
+            var skippedPipes = new List<object>();
+            var skippedBends = new List<object>();
+            var skippedJoints = new List<object>();
+            var inspectHandles = new HashSet<string>();
+            object Result(int welds)
+            {
+                var placed = items.Where(i => !i.Id.IsNull).ToList();
+                bool closed = placed.Count > 0 && welds == placed.Count && skippedPipes.Count + skippedBends.Count + skippedJoints.Count + inspectHandles.Count == 0;
+                return new
+                {
+                    plan,
+                    created = new
+                    {
+                        pipes = placed.Count(i => i.Kind == "pipe"),
+                        bends = placed.Count(i => i.Kind == "bend"),
+                        closing_bends = placed.Count(i => i.Kind == "u"),
+                        welds,
+                        handles = placed.Select(i => i.Id.Handle.ToString()).ToList(),
+                        reused_parts = placed.Count(i => i.Reused),
+                        collision_handles = placed.Where(i => i.Hit).Select(i => i.Id.Handle.ToString()).ToList(),
+                        skipped_pipes = skippedPipes,
+                        skipped_bends = skippedBends,
+                        skipped_joints = skippedJoints,
+                        inspect_handles = inspectHandles.OrderBy(h => h, StringComparer.Ordinal).ToArray(),
+                        closed
+                    },
+                    log,
+                    note = closed ? "The tracing loop is closed."
+                        : placed.Count == 0 ? "No tracer pipes could be placed."
+                        : "The tracing has open ends at the skipped parts or joints."
+                };
+            }
             // one log file per run (the last 10 are kept): after a crash of Plant 3D it shows the spec, the sizes and the last part that was being made
             string progressPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "plant3d_tracing_" + DateTime.Now.ToString("yyyyMMdd_HHmmss") + ".txt");
             try
@@ -841,28 +921,84 @@ namespace PipingSpecPlugin.Tracing
             }
             catch { }
             void Prog(string msg) { try { System.IO.File.AppendAllText(progressPath, msg + Environment.NewLine); } catch { } }
+            void CleanFailedPlacement(HashSet<ObjectId> prior, Exception cause)
+            {
+                var leftovers = ModelIds(doc).Where(id => !prior.Contains(id)).ToList();
+                if (leftovers.Count == 0) return;
+                EraseIds(doc, leftovers);
+                if (ModelIds(doc).Any(id => !prior.Contains(id)))
+                    throw new InvalidOperationException("Could not remove objects from the failed placement.", cause);
+            }
             try
             {
                 int lineGroup; using (var ag = new PipingObjectAdder(piping.DataLinksManager3d, doc.Database)) lineGroup = ag.LineGroupId;
-                var rowsConn = new List<int>();
                 using (doc.LockDocument())
                 {
-                    using (var adder = new PipingObjectAdder(piping.DataLinksManager3d, doc.Database))
+                    for (int i = 0; i < items.Count; i++)
                     {
-                        string progress = progressPath;
-                        int pn = 0;
-                        foreach (var it in items.Where(i => i.Kind == "pipe"))
+                        var it = items[i];
+                        if (it.Kind != "pipe") continue;
+                        if (it.Reused) continue;
+                        if (it.SkipReason != null)
                         {
-                            try { System.IO.File.AppendAllText(progress, "pipe " + (pn++) + " tracer " + it.Tracer + " " + Fmt(it.P1) + " -> " + Fmt(it.P2) + " len " + Math.Round(it.P1.DistanceTo(it.P2), 1) + Environment.NewLine); } catch { }
-                            it.Row = AddPipe(adder, pipePart, it.P1, it.P2, odT);
+                            skippedPipes.Add(new { index = i, tracer = it.Tracer, from = Arr(it.P1), to = Arr(it.P2), reason = it.SkipReason });
+                            continue;
+                        }
+                        Prog("pipe " + i + " tracer " + it.Tracer + " " + Fmt(it.P1) + " -> " + Fmt(it.P2));
+                        var beforePipe = ModelIds(doc);
+                        try
+                        {
+                            using (var adder = new PipingObjectAdder(piping.DataLinksManager3d, doc.Database))
+                                it.Row = AddPipe(adder, pipePart, it.P1, it.P2, odT);
+                            if (it.Row <= 0) throw new InvalidOperationException("Plant 3D returned no pipe row.");
+                            Prog("pipe " + i + " added, row " + it.Row);
+                            it.Id = FindPlacedPart(doc, dlm, it.Row, beforePipe);
+                            Prog("pipe " + i + " resolved, handle " + it.Id.Handle);
+                            VerifyPorts(it);
+                            StampTracingItem(doc, it.Id, routeKey, itemKeys[it]);
                             added.Add(it.Row);
                         }
-                        try { System.IO.File.AppendAllText(progress, "pipes done" + Environment.NewLine); } catch { }
+                        catch (Exception ex)
+                        {
+                            CleanFailedPlacement(beforePipe, ex);
+                            it.Id = ObjectId.Null;
+                            skippedPipes.Add(new { index = i, tracer = it.Tracer, from = Arr(it.P1), to = Arr(it.P2), reason = ex.Message });
+                            Prog("skipped pipe " + i + ": " + ex.Message);
+                        }
                     }
+                    if (!items.Any(i => i.Kind == "pipe" && !i.Id.IsNull)) return Result(0);
+                    Prog("pipes done");
                     int bn = 0;
                     foreach (var it in items.Where(i => i.Kind != "pipe"))
                     {
+                        if (it.Reused) continue;
+                        if (it.SkipReason != null)
+                        {
+                            skippedBends.Add(new { tracer = it.Tracer, at = Arr(it.Corner), reason = it.SkipReason });
+                            continue;
+                        }
                         Prog("bend " + (bn++) + " " + it.Kind + " tracer " + it.Tracer + " at " + Fmt(it.Kind == "bend" ? it.Corner : it.P1) + " R " + Math.Round(it.R, 1) + " theta " + Math.Round(it.Theta * 180 / Math.PI, 1) + " L1 " + it.L1 + " L2 " + it.L2);
+                        var prior = ModelIds(doc);
+                        try
+                        {
+                            PlaceBend(it, lineGroup);
+                            if (prior.Contains(it.Id) || it.Row <= 0) throw new InvalidOperationException("Plant 3D returned no new bend.");
+                            VerifyPorts(it);
+                            StampTracingItem(doc, it.Id, routeKey, itemKeys[it]);
+                            added.Add(it.Row);
+                        }
+                        catch (Exception ex)
+                        {
+                            CleanFailedPlacement(prior, ex);
+                            it.Id = ObjectId.Null;
+                            skippedBends.Add(new { tracer = it.Tracer, at = Arr(it.Kind == "bend" ? it.Corner : it.P1), reason = ex.Message });
+                        }
+                    }
+                }
+                Prog("bends done");
+
+                void PlaceBend(TItem it, int lineGroup)
+                {
                         var bp = new Autodesk.ProcessPower.PnP3dPipeRouting.BentPipe();
                         bp.PartSizeProperties = pipePart;
                         bp.SymbolId = ContentManager.GetContentManager().GetSymbol(pipePart, doc.Database);
@@ -885,29 +1021,12 @@ namespace PipingSpecPlugin.Tracing
                         if (!bp.SetOrientation(x, z)) throw new InvalidOperationException("SetOrientation rejected the axes of a bend near " + Fmt(it.Kind == "bend" ? it.Corner : it.P1));
                         it.Id = bp.Append(lineGroup);
                         it.Row = RowId(dlm, it.Id);
-                        if (it.Row > 0) added.Add(it.Row);
-                    }
-                }
-                Prog("bends done");
-                foreach (var it in items.Where(i => i.Kind == "pipe")) it.Id = FindByRow(doc, dlm, it.Row);
-
-                // every created part must have its ports where the plan says
-                foreach (var it in items)
-                {
-                    var exp = new List<Point3d>();
-                    if (it.Kind == "pipe") { exp.Add(it.P1); exp.Add(it.P2); }
-                    else if (it.Kind == "bend") { double rt = it.R * Math.Tan(it.Theta / 2); exp.Add(it.Corner - it.TIn * (rt + it.L1)); exp.Add(it.Corner + it.TOut * (rt + it.L2)); }
-                    else { exp.Add(it.P1); exp.Add(it.P2); }
-                    var got = PortsOf(doc, it.Id);
-                    foreach (var e in exp)
-                        if (!got.Any(g => g.pos.DistanceTo(e) < 0.6))
-                            throw new InvalidOperationException("A " + it.Kind + " was placed with its ports at " + string.Join(" ", got.Select(g => g.name + Fmt(g.pos))) + " instead of the planned " + Fmt(e) + ".");
                 }
 
                 if (stage == 1)
                 {
                     string rb1 = RollbackSince(doc, dlm, added, before);
-                    return new { plan, stage = 1, note = "Stage 1: pipes and bends were created, their ports checked, and everything was rolled back (" + rb1 + ").", log };
+                    return new { plan, stage = 1, skipped_pipes = skippedPipes, skipped_bends = skippedBends, note = "Stage 1: placement rehearsal (" + rb1 + ").", log };
                 }
                 // joints: Plant 3D's own way (the routing class ConnectorWrapper, joint "Buttweld (RUS)"): it creates the connector with a typed weld element
                 // and PL end conditions on both ports and links it to both parts, exactly like the connectors of the user's sample.
@@ -915,56 +1034,159 @@ namespace PipingSpecPlugin.Tracing
                 int lineGroupId;
                 using (var ag = new PipingObjectAdder(piping.DataLinksManager3d, doc.Database)) lineGroupId = ag.LineGroupId;
                 int madeConnectors = 0;
-                for (int i = 0; i < items.Count; i++)
+                var expectedJoints = new List<(TItem From, string FromPort, TItem To, string ToPort)>();
+                foreach (var (i, j) in TracingTopology.Joints(items.Select(it => !it.Id.IsNull).ToArray()))
                 {
-                    var A = items[i]; var B = items[(i + 1) % items.Count];
-                    var pa = PortsOf(doc, A.Id); var pb = PortsOf(doc, B.Id);
+                    var A = items[i]; var B = items[j];
+                    if (A.Id.IsNull || B.Id.IsNull) continue;
+                    void SkipJoint(string reason)
+                    {
+                        skippedJoints.Add(new { from_handle = A.Id.Handle.ToString(), to_handle = B.Id.Handle.ToString(), reason });
+                        Prog("skipped joint " + i + ": " + reason);
+                    }
+                    List<(string name, Point3d pos, Vector3d dir)> pa, pb;
+                    try { pa = PortsOf(doc, A.Id); pb = PortsOf(doc, B.Id); }
+                    catch (Exception ex) { SkipJoint(ex.Message); continue; }
                     double best = double.MaxValue; int ia = -1, ib = -1;
                     for (int x = 0; x < pa.Count; x++) for (int y = 0; y < pb.Count; y++)
                         { double dd = pa[x].pos.DistanceTo(pb[y].pos); if (dd < best) { best = dd; ia = x; ib = y; } }
-                    if (best > 0.6) throw new InvalidOperationException("The parts " + i + " and " + ((i + 1) % items.Count) + " of the loop do not meet (closest ports " + Math.Round(best, 2) + " mm apart).");
-                    if (pa[ia].dir.GetNormal().DotProduct(pb[ib].dir.GetNormal()) > -0.9) throw new InvalidOperationException("The ports at junction " + i + " do not face each other.");
+                    if (best > 0.6)
+                    {
+                        SkipJoint("The ports do not meet.");
+                        continue;
+                    }
+                    if (pa[ia].dir.Length < 1e-9 || pb[ib].dir.Length < 1e-9 || pa[ia].dir.GetNormal().DotProduct(pb[ib].dir.GetNormal()) > -0.9)
+                    {
+                        SkipJoint("The ports do not face each other.");
+                        continue;
+                    }
                     Prog("joint " + i + " " + A.Kind + "->" + B.Kind);
                     using (doc.LockDocument())
-                    using (var tr = doc.Database.TransactionManager.StartTransaction())
                     {
-                        var partA = (Part)tr.GetObject(A.Id, OpenMode.ForWrite); var partB = (Part)tr.GetObject(B.Id, OpenMode.ForWrite);
-                        var pairA = new Pair(); pairA.ObjectId = A.Id; pairA.Port = partA.FindPort(pa[ia].name, PortType.All);
-                        var pairB = new Pair(); pairB.ObjectId = B.Id; pairB.Port = partB.FindPort(pb[ib].name, PortType.All);
-                        var cw = new Autodesk.ProcessPower.PnP3dPipeRouting.ConnectorWrapper();
-                        cw.Spec = specName;
-                        cw.Connect(pairA, pairB, WeldJointName);
-                        cw.Append(pairA, pairB, lineGroupId);
-                        tr.Commit();
-                    }
-                    {
-                        // a joint must not damage the two parts: their ports stay where they were (Plant 3D now and then leaves NaN there)
-                        var paAfter = PortsOf(doc, A.Id); var pbAfter = PortsOf(doc, B.Id);
-                        bool badPort = paAfter.Concat(pbAfter).Any(g => double.IsNaN(g.pos.X) || double.IsNaN(g.pos.Y) || double.IsNaN(g.pos.Z) || double.IsInfinity(g.pos.X));
-                        if (badPort) throw new InvalidOperationException("Joint " + i + " (" + A.Kind + " -> " + B.Kind + ") damaged its parts: before " + string.Join(" ", pa.Select(g => g.name + Fmt(g.pos))) + " | " + string.Join(" ", pb.Select(g => g.name + Fmt(g.pos))) + "; after " + string.Join(" ", paAfter.Select(g => g.name + Fmt(g.pos))) + " | " + string.Join(" ", pbAfter.Select(g => g.name + Fmt(g.pos))) + ".");
+                        (ObjectId id, string port)? connectedA, connectedB;
+                        HashSet<(string h1, string p1, string h2, string p2)> linksA, linksB;
+                        try
+                        {
+                            connectedA = AdvanceRoute(doc, A.Id, pa[ia].name);
+                            connectedB = AdvanceRoute(doc, B.Id, pb[ib].name);
+                            linksA = ConnList(doc, A.Id).ToHashSet();
+                            linksB = ConnList(doc, B.Id).ToHashSet();
+                        }
+                        catch (Exception ex) { SkipJoint(ex.Message); continue; }
+                        if (connectedA?.id == B.Id && connectedA?.port == pb[ib].name && connectedB?.id == A.Id && connectedB?.port == pa[ia].name)
+                        {
+                            expectedJoints.Add((A, pa[ia].name, B, pb[ib].name));
+                            continue;
+                        }
+                        if (connectedA != null || connectedB != null)
+                        {
+                            SkipJoint("At least one port is already connected to a different part.");
+                            continue;
+                        }
+                        var prior = ModelIds(doc);
+                        try
+                        {
+                            using (var tr = doc.Database.TransactionManager.StartTransaction())
+                            {
+                                var partA = (Part)tr.GetObject(A.Id, OpenMode.ForWrite); var partB = (Part)tr.GetObject(B.Id, OpenMode.ForWrite);
+                                var pairA = new Pair(); pairA.ObjectId = A.Id; pairA.Port = partA.FindPort(pa[ia].name, PortType.All);
+                                var pairB = new Pair(); pairB.ObjectId = B.Id; pairB.Port = partB.FindPort(pb[ib].name, PortType.All);
+                                var cw = new Autodesk.ProcessPower.PnP3dPipeRouting.ConnectorWrapper();
+                                cw.Spec = specName;
+                                cw.Connect(pairA, pairB, WeldJointName);
+                                cw.Append(pairA, pairB, lineGroupId);
+                                if (!PortsStayedPut(pa, PortsOf(doc, A.Id)) || !PortsStayedPut(pb, PortsOf(doc, B.Id)))
+                                    throw new InvalidOperationException("Plant 3D moved the ports while creating the joint.");
+                                tr.Commit();
+                            }
+                            var next = AdvanceRoute(doc, A.Id, pa[ia].name);
+                            if (!PortsStayedPut(pa, PortsOf(doc, A.Id)) || !PortsStayedPut(pb, PortsOf(doc, B.Id)) ||
+                                next == null || next.Value.id != B.Id || next.Value.port != pb[ib].name)
+                                throw new InvalidOperationException("Plant 3D did not create the intended joint without moving the ports.");
+                            expectedJoints.Add((A, pa[ia].name, B, pb[ib].name));
+                        }
+                        catch (Exception ex)
+                        {
+                            SkipJoint(ex.Message);
+                            try { CleanFailedPlacement(prior, ex); }
+                            catch (Exception cleanup)
+                            {
+                                foreach (var id in ModelIds(doc).Where(id => !prior.Contains(id))) inspectHandles.Add(id.Handle.ToString());
+                                log.Add(cleanup.Message);
+                            }
+                            IsolateChangedPart(A, pa, linksA);
+                            IsolateChangedPart(B, pb, linksB);
+                        }
                     }
                 }
-                // Plant 3D now and then makes a second connector at a junction: keep one per junction
+
+                void IsolateChangedPart(TItem item, List<(string name, Point3d pos, Vector3d dir)> ports,
+                    HashSet<(string h1, string p1, string h2, string p2)> links)
                 {
-                    string K(Point3d q) => Math.Round(q.X / 0.5) + "," + Math.Round(q.Y / 0.5) + "," + Math.Round(q.Z / 0.5);
+                    var id = item.Id;
+                    string handle = id.Handle.ToString();
+                    try
+                    {
+                        var currentLinks = ConnList(doc, id);
+                        if (PortsStayedPut(ports, PortsOf(doc, id)) && links.SetEquals(currentLinks)) return;
+                        var owned = items.Where(it => !it.Id.IsNull).Select(it => it.Id.Handle.ToString()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                        var affected = new HashSet<ObjectId> { id };
+                        foreach (var link in currentLinks)
+                        {
+                            string neighbor = link.h1 == handle ? link.h2 : link.h1;
+                            if (neighbor == null || owned.Contains(neighbor)) continue;
+                            var connector = IdFromHandle(doc.Database, neighbor);
+                            if (!connector.ObjectClass.Name.Contains("Connector") ||
+                                ConnList(doc, connector).Any(c => !owned.Contains(c.h1 == neighbor ? c.h2 : c.h1)))
+                                throw new InvalidOperationException("The damaged part has a connection outside this tracing.");
+                            affected.Add(connector);
+                        }
+                        EraseIds(doc, affected);
+                        var left = ModelIds(doc);
+                        foreach (var failed in affected.Where(left.Contains)) inspectHandles.Add(failed.Handle.ToString());
+                    }
+                    catch (Exception isolation)
+                    {
+                        inspectHandles.Add(handle);
+                        log.Add("Could not isolate damaged tracer " + handle + ": " + isolation.Message);
+                    }
+                    item.Id = ObjectId.Null;
+                }
+                bool PortsStayedPut(List<(string name, Point3d pos, Vector3d dir)> expected, List<(string name, Point3d pos, Vector3d dir)> actual) =>
+                    expected.Count == actual.Count && expected.All(p => actual.Any(q => q.name == p.name && q.pos.DistanceTo(p.pos) <= 0.6 && (q.dir - p.dir).Length <= 0.1));
+                // A duplicate must join the same two named ports. Coincident coordinates alone are insufficient.
+                {
                     var created = ModelRows(doc, dlm).Where(r => !before.Contains(r)).ToHashSet();
                     var groups = new Dictionary<string, List<ObjectId>>();
                     foreach (var o in PlantObjects(doc, dlm).Where(o => o.cls.Contains("Connector") && created.Contains(o.row)))
-                        foreach (var q in SafePorts(doc, o.id).Take(1))
-                        { var k = K(q.pos); if (!groups.ContainsKey(k)) groups[k] = new List<ObjectId>(); groups[k].Add(o.id); }
+                    {
+                        string connectorHandle = o.id.Handle.ToString();
+                        try
+                        {
+                            var links = ConnList(doc, o.id).Select(c => c.h1 == connectorHandle ? (c.h2, c.p2) : (c.h1, c.p1)).Distinct().ToArray();
+                            if (links.Length != 2 || links.Any(c => c.Item1 == null || c.Item2 == null)) { inspectHandles.Add(connectorHandle); continue; }
+                            string key = string.Join("|", links.Select(c => c.Item1 + "." + c.Item2).OrderBy(x => x, StringComparer.Ordinal));
+                            if (!groups.TryGetValue(key, out var ids)) groups.Add(key, ids = new List<ObjectId>());
+                            ids.Add(o.id);
+                        }
+                        catch (Exception ex) { inspectHandles.Add(connectorHandle); log.Add(ex.Message); }
+                    }
                     var extra = groups.Values.Where(g => g.Count > 1).SelectMany(g => g.Skip(1)).ToList();
-                    if (extra.Count > 0) { EraseIds(doc, extra); log.Add("duplicate connectors erased: " + string.Join(",", extra.Select(x => x.Handle.ToString()))); }
+                    if (extra.Count > 0)
+                    {
+                        try { EraseIds(doc, extra); log.Add("duplicate connectors erased: " + string.Join(",", extra.Select(x => x.Handle.ToString()))); }
+                        catch (Exception ex) { foreach (var id in extra) inspectHandles.Add(id.Handle.ToString()); log.Add(ex.Message); }
+                    }
                     madeConnectors = groups.Count;
-                    log.Add("connectors made by ConnectorWrapper: " + madeConnectors + " of " + items.Count + " junctions");
+                    log.Add("connectors made by ConnectorWrapper: " + madeConnectors + " of " + expectedJoints.Count + " junctions");
                 }
                 if (stage == 2 && args.TryGetProperty("keep", out var kpj) && kpj.ValueKind == JsonValueKind.True)
-                    return new { plan, stage = 2, kept = true, items = items.Select(i => i.Kind + ":" + i.Id.Handle).ToList(), note = "Stage 2 with keep: everything was LEFT in the drawing for inspection; delete it by hand afterwards.", log };
+                    return new { plan, stage = 2, kept = true, skipped_pipes = skippedPipes, skipped_bends = skippedBends, skipped_joints = skippedJoints, items = items.Where(i => !i.Id.IsNull).Select(i => i.Kind + ":" + i.Id.Handle).ToList(), note = "Stage 2 with keep: the created parts were LEFT in the drawing for inspection.", log };
                 if (stage == 2)
                 {
                     string rb2 = RollbackSince(doc, dlm, added, before);
-                    return new { plan, stage = 2, note = "Stage 2: parts and " + madeConnectors + " connectors were created and everything was rolled back (" + rb2 + ").", log };
+                    return new { plan, stage = 2, skipped_pipes = skippedPipes, skipped_bends = skippedBends, skipped_joints = skippedJoints, note = "Stage 2: placement and connection rehearsal (" + rb2 + ").", log };
                 }
-                var joints = new List<int>(new int[madeConnectors]);
 
                 // optional colour (AutoCAD colour index; default 0 = leave it): setting the colour of Plant objects in this transaction is suspected of crashing Plant 3D (eNotOpenForWrite)
                 int colorIdx = args.TryGetProperty("color", out var cj2) && cj2.ValueKind == JsonValueKind.Number ? cj2.GetInt32() : 0;
@@ -972,39 +1194,42 @@ namespace PipingSpecPlugin.Tracing
                     using (doc.LockDocument())
                     using (var trc = doc.Database.TransactionManager.StartTransaction())
                     {
-                        foreach (var it in items) { var ent = trc.GetObject(it.Id, OpenMode.ForWrite) as Entity; if (ent != null) ent.ColorIndex = colorIdx; }
+                        foreach (var it in items.Where(i => !i.Id.IsNull)) { var ent = trc.GetObject(it.Id, OpenMode.ForWrite) as Entity; if (ent != null) ent.ColorIndex = colorIdx; }
                         trc.Commit();
                     }
 
-                // nothing may stay open
-                var open = new List<string>();
-                foreach (var it in items)
+                int verifiedWelds = 0;
+                foreach (var joint in expectedJoints)
                 {
-                    int links = ConnectionCount(doc, it.Id);
-                    if (links < 2) open.Add(it.Id.Handle + " has " + links + " links");
-                }
-                if (open.Count > 0)
-                {
-                    var rep = new List<string>();
-                    for (int i = 0; i < items.Count; i++)
+                    if (joint.From.Id.IsNull || joint.To.Id.IsNull) continue;
+                    try
                     {
-                        var it = items[i];
-                        rep.Add(i + ":" + it.Kind + " " + it.Id.Handle + " ports " + string.Join(",", PortsOf(doc, it.Id).Select(p => p.name + Fmt(p.pos))) + " links " +
-                                string.Join(",", ConnList(doc, it.Id).Select(c => c.h1 + "." + c.p1 + "-" + c.h2 + "." + c.p2)));
+                        var next = AdvanceRoute(doc, joint.From.Id, joint.FromPort);
+                        if (next?.id != joint.To.Id || next?.port != joint.ToPort)
+                            throw new InvalidOperationException("The joint was lost after placement.");
+                        verifiedWelds++;
                     }
-                    throw new InvalidOperationException("Open ports remain: " + string.Join("; ", open) + " || " + string.Join(" || ", rep));
+                    catch (Exception ex)
+                    {
+                        skippedJoints.Add(new { from_handle = joint.From.Id.Handle.ToString(), to_handle = joint.To.Id.Handle.ToString(), reason = ex.Message });
+                    }
                 }
-                return new
-                {
-                    plan,
-                    created = new { pipes = nPipes, bends = nBends, closing_bends = nU, welds = joints.Count, handles = items.Select(i => i.Id.Handle.ToString()).ToList(), collision_handles = items.Where(i => i.Hit).Select(i => i.Id.Handle.ToString()).ToList() },
-                    log, note = "The tracing loop is closed (no inlet or outlet). Check it in the drawing."
-                };
+                return Result(verifiedWelds);
             }
             catch (Exception ex)
             {
                 string rb = RollbackSince(doc, dlm, added, before);
                 throw new InvalidOperationException("Tracing failed and was rolled back (" + rb + "): " + ex.Message + (log.Count > 0 ? " | " + string.Join(" | ", log.Take(6)) : ""));
+            }
+
+            void VerifyPorts(TItem it)
+            {
+                double tangent = it.Kind == "bend" ? TracingTopology.TangentLength(it.R, it.Theta) : 0;
+                var from = it.Kind == "bend" ? it.Corner - it.TIn * (tangent + it.L1) : it.P1;
+                var to = it.Kind == "bend" ? it.Corner + it.TOut * (tangent + it.L2) : it.P2;
+                var ports = ReadPortsInLockedDocument(doc, it.Id).Where(p => TracingTopology.IsRoutePort(p.name)).ToArray();
+                if (!ports.Any(a => a.pos.DistanceTo(from) < 0.6 && ports.Any(b => b.name != a.name && b.pos.DistanceTo(to) < 0.6)))
+                    throw new InvalidOperationException("Ports of tracer " + it.Id.Handle + " do not match the planned ends " + Fmt(from) + " and " + Fmt(to) + ".");
             }
         }
     }

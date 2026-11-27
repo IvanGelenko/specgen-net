@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
+using static PipingSpecPlugin.Spec.VtFieldMappings;
 
 namespace PipingSpecPlugin.Spec
 {
@@ -15,6 +17,7 @@ namespace PipingSpecPlugin.Spec
         // Column letter -> header text actually found in row 1 of the
         // workbook, for diagnostics when a required column is missing.
         public Dictionary<string, string> HeaderRow1 = new();
+        public List<string> Warnings = new();
         public string Error; // null on success.
     }
 
@@ -31,6 +34,9 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public static class VtReader
     {
+        const string MediumGroupHeader = "Группа рабочей среды";
+        const string PipelineCategoryHeader = "Категория трубопровода";
+
         // The "n/n" column is the sync key (see VtRowData.NN) — named
         // separately so the required-column check below can reference it
         // by identity instead of a fragile array index.
@@ -50,8 +56,6 @@ namespace PipingSpecPlugin.Spec
             ("Трубопровод (наружный диаметр)", (r, v) => r.PipeSize = v),
             ("Материал трубопровода",          (r, v) => r.Material = v),
             ("Наименование транспортируемого продукта", (r, v) => r.Product = v),
-            ("Классификация по ГОСТ 32569",     (r, v) => r.GostGroup = v),
-            ("Классификация по ТР ТС 032-2013", (r, v) => r.TrTsGroup = v),
             ("Плотность, кг/м3", (r, v) => r.Density = v),
             ("t°С",              (r, v) => r.DensityTemperature = v),
             ("Скорость коррозии, мм/год",  CorrosionRateAssign),
@@ -64,12 +68,9 @@ namespace PipingSpecPlugin.Spec
             ("Срок службы трубопровода/отбраковочная толщина стенки, лет/мм", ServiceLifeAssign),
             ("Срок службы трубопровода, лет", ServiceLifeAssign),
             ("Срок службы, лет",         ServiceLifeAssign),
+            ("Срок службы (лет)",        ServiceLifeAssign),
+            ("Срок службы трубопровода (лет)", ServiceLifeAssign),
             ("Срок службы",              ServiceLifeAssign),
-            ("Неразрушающий контроль сварных швов, %", (r, v) => r.NdControl = v),
-            ("Термообработка сварных соединений",      (r, v) => r.HeatTreatment = v),
-            ("Дополнительные указания",  (r, v) => r.Additional = v),
-            ("Дополнительныеуказания",   (r, v) => r.Additional = v), // header has no space in some revisions
-            ("Толщина изоляции, мм",     (r, v) => r.InsulationThickness = v),
         };
 
         // Two-level group headers: row 1 gives the group ("Рабочие условия
@@ -78,17 +79,28 @@ namespace PipingSpecPlugin.Spec
         // parser doesn't depend on fixed column letters within the group.
         static readonly (string Group, string SubHeader, Action<VtRowData, string> Assign)[] GroupedFields =
         {
-            ("Рабочие условия трубопровода", "Давление, МПа(изб.)", (r, v) => r.WorkPressure = v),
-            ("Рабочие условия трубопровода", "Температура, °С",     (r, v) => r.WorkTemperature = v),
-            ("Расчётные условия трубопровода", "Давление, МПа(изб.)", (r, v) => r.DesignPressure = v),
-            ("Расчётные условия трубопровода", "Температура, °С",     (r, v) => r.DesignTemperature = v),
             ("Условия испытаний", "На прочность/плотность, МПа(изб.)", (r, v) => r.TestStrength = v),
             ("Условия испытаний", "На герметичность, МПа(изб.)",       (r, v) => r.TestTightness = v),
         };
 
+        static readonly (string Header, Action<VtRowData, string> Assign)[] SingleColumnMappings = SingleColumnFields
+            .Concat(ImportedFields.Where(field => field.Group == null)
+                .SelectMany(field => field.Headers.Select(header => (Header: header, field.Assign))))
+            .ToArray();
+
+        static readonly (string Group, string SubHeader, Action<VtRowData, string> Assign)[] GroupedColumnMappings = GroupedFields
+            .Concat(ImportedFields.Where(field => field.Group != null)
+                .SelectMany(field => field.Headers.Select(header => (field.Group, SubHeader: header, field.Assign))))
+            .ToArray();
+
         public static VtReadResult Read(string path)
         {
             var result = new VtReadResult();
+            if (!File.Exists(path))
+            {
+                result.Error = $"Файл не найден:\n{path}";
+                return result;
+            }
             try
             {
                 using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
@@ -115,6 +127,7 @@ namespace PipingSpecPlugin.Spec
                 // from "exactly one non-empty cell", which a stray
                 // formatted-but-empty neighbour cell could defeat.
                 var wideMergeRowStartCols = new HashSet<(uint Row, string Col)>();
+                bool hasMergedHeaderRows = false;
                 var mergeCells = wsPart.Worksheet.Elements<MergeCells>().FirstOrDefault();
                 if (mergeCells != null)
                 {
@@ -127,6 +140,8 @@ namespace PipingSpecPlugin.Spec
                         var (startCol, startRow) = SplitCellRef(refParts[0]);
                         var (endCol, endRow) = SplitCellRef(refParts[1]);
                         if (startRow == 0 || endRow == 0) continue;
+                        if (startRow == 1 && endRow == 2)
+                            hasMergedHeaderRows = true;
                         // "Wide" = spans at least 10 columns — the actual
                         // ВТ section-title merges span the full sheet
                         // width (20+ columns); 10 is a conservative floor
@@ -228,119 +243,96 @@ namespace PipingSpecPlugin.Spec
                     if (col2SubHeader.ContainsKey(col)) col2Group[col] = lastGroup;
                 }
 
+                string FindColumn(Dictionary<string, string> headers, string name) => headers
+                    .FirstOrDefault(kv => string.Equals(kv.Value, name, StringComparison.OrdinalIgnoreCase)).Key;
+
+                var gostSubHeaders = col2SubHeader.Where(kv =>
+                        string.Equals(col2Group[kv.Key], GostHeader, StringComparison.OrdinalIgnoreCase))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.Ordinal);
+                var mediumGroupCol = FindColumn(gostSubHeaders, MediumGroupHeader);
+                var pipelineCategoryCol = FindColumn(gostSubHeaders, PipelineCategoryHeader);
+                var hasGroupedGost = mediumGroupCol != null && pipelineCategoryCol != null;
+                if (!hasGroupedGost)
+                {
+                    mediumGroupCol = FindColumn(col2Header, MediumGroupHeader);
+                    pipelineCategoryCol = FindColumn(col2Header, PipelineCategoryHeader);
+                }
+                var hasSplitGost = mediumGroupCol != null && pipelineCategoryCol != null;
+
                 // Build column -> assign-to-field map.
                 var singleAssign = new Dictionary<string, Action<VtRowData, string>>(StringComparer.Ordinal);
                 foreach (var kv in col2Header)
                 {
-                    var match = SingleColumnFields.FirstOrDefault(f =>
+                    if (hasGroupedGost && string.Equals(kv.Value, GostHeader, StringComparison.OrdinalIgnoreCase))
+                        continue;
+                    var match = SingleColumnMappings.FirstOrDefault(f =>
                         string.Equals(f.Header, kv.Value, StringComparison.OrdinalIgnoreCase));
                     if (match.Assign != null) singleAssign[kv.Key] = match.Assign;
                 }
 
-                // Fallback for ServiceLife: if not matched by exact header, check if any
-                // column header starts with "срок службы", or if column "T" carries it.
-                if (!singleAssign.Values.Any(a => ReferenceEquals(a, ServiceLifeAssign)))
-                {
-                    var colByPrefix = col2Header.FirstOrDefault(kv =>
-                        kv.Value.StartsWith("Срок службы", StringComparison.OrdinalIgnoreCase)).Key;
-                    if (colByPrefix != null)
-                    {
-                        singleAssign[colByPrefix] = ServiceLifeAssign;
-                    }
-                    else if (col2Header.TryGetValue("T", out var tHeader) &&
-                             (string.IsNullOrWhiteSpace(tHeader) || tHeader.IndexOf("срок", StringComparison.OrdinalIgnoreCase) >= 0))
-                    {
-                        singleAssign["T"] = ServiceLifeAssign;
-                    }
-                }
+                foreach (var (column, header) in col2Header)
+                    if (header.StartsWith("Срок службы", StringComparison.OrdinalIgnoreCase)
+                        && !singleAssign.ContainsKey(column))
+                        result.Warnings.Add($"Колонка {column} «{header}» пропущена. Для синхронизации укажите срок службы в годах.");
 
-                // Fallback for CorrosionRate: if not matched by exact header, check if any
-                // column header starts with "скорость коррозии", or contains "корроз",
-                // or if column "S" carries it (standard column before T).
-                if (!singleAssign.Values.Any(a => ReferenceEquals(a, CorrosionRateAssign)))
-                {
-                    var colByPrefix = col2Header.FirstOrDefault(kv =>
-                        kv.Value.StartsWith("Скорость коррозии", StringComparison.OrdinalIgnoreCase)).Key;
-                    if (colByPrefix != null)
-                    {
-                        singleAssign[colByPrefix] = CorrosionRateAssign;
-                    }
-                    else
-                    {
-                        var colByContains = col2Header.FirstOrDefault(kv =>
-                            kv.Value.IndexOf("корроз", StringComparison.OrdinalIgnoreCase) >= 0).Key;
-                        if (colByContains != null)
-                        {
-                            singleAssign[colByContains] = CorrosionRateAssign;
-                        }
-                        else if (col2Header.TryGetValue("S", out var sHeader) &&
-                                 (string.IsNullOrWhiteSpace(sHeader) || sHeader.IndexOf("корроз", StringComparison.OrdinalIgnoreCase) >= 0))
-                        {
-                            singleAssign["S"] = CorrosionRateAssign;
-                        }
-                    }
-                }
                 var groupedAssign = new Dictionary<string, Action<VtRowData, string>>(StringComparer.Ordinal);
                 foreach (var kv in col2SubHeader)
                 {
                     if (!col2Group.TryGetValue(kv.Key, out var group) || group == null) continue;
-                    var match = GroupedFields.FirstOrDefault(f =>
+                    var match = GroupedColumnMappings.FirstOrDefault(f =>
                         string.Equals(f.Group, group, StringComparison.OrdinalIgnoreCase)
                         && string.Equals(f.SubHeader, kv.Value, StringComparison.OrdinalIgnoreCase));
                     if (match.Assign != null) groupedAssign[kv.Key] = match.Assign;
                 }
 
-                if (!singleAssign.Values.Any(a => ReferenceEquals(a, NNAssign)))
+                var nnColumns = singleAssign.Where(kv => ReferenceEquals(kv.Value, NNAssign)).Select(kv => kv.Key).ToArray();
+                if (nnColumns.Length == 0)
                 {
                     result.Error = "В файле не найдена колонка «n/n» — "
                         + "убедитесь, что она есть в первой строке заголовков.";
                     return result;
                 }
+                if (nnColumns.Length > 1)
+                {
+                    result.Error = "В файле несколько колонок «n/n». Оставьте одну колонку для идентификаторов линий.";
+                    return result;
+                }
+                var nnColumn = nnColumns[0];
+                var styles = wbPart.WorkbookStylesPart?.Stylesheet;
 
-                // Data rows start after the header rows (skip physical rows
-                // 1 and 2 regardless of how many header rows the sheet
-                // actually uses — row 2 might be sub-headers or might
-                // already be data if a future revision drops the group
-                // header row entirely; we detect that by checking whether
-                // row 2 supplied any sub-headers at all).
-                int firstDataRowIndex = col2SubHeader.Count > 0 ? 3 : 2;
+                bool hasSecondHeader = hasMergedHeaderRows || hasGroupedGost || groupedAssign.Count > 0;
+                int firstDataRowIndex = hasSecondHeader ? 3 : 2;
 
                 foreach (var row in rows)
                 {
                     var idx = (int)(row.RowIndex?.Value ?? 0);
                     if (idx < firstDataRowIndex) continue;
+                    if (row.Elements<Cell>().Any(cell => wideMergeRowStartCols.Contains(((uint)idx, ColumnOf(cell.CellReference?.Value ?? "")))))
+                        continue;
 
                     var cellsByCol = new Dictionary<string, string>(StringComparer.Ordinal);
                     foreach (var cell in row.Elements<Cell>())
                     {
                         var col = ColumnOf(cell.CellReference?.Value ?? "");
                         if (col == "") continue;
-                        cellsByCol[col] = CellText(cell);
+                        cellsByCol[col] = col == nnColumn ? ReadSyncKey(cell, styles, CellText(cell)) : CellText(cell);
                     }
                     if (cellsByCol.Count == 0) continue;
-
-                    // Section-title rows (e.g. "873.РД-001-ТХМ.ВТ (Цех
-                    // №1)") are a single merged cell spanning the whole
-                    // row width. Primary check: a wide MergeCells range
-                    // (>=10 columns) starting on this row — structural,
-                    // survives a stray formatted-but-empty neighbour cell
-                    // that would otherwise make "exactly one non-empty
-                    // cell" miss the title row (or worse, treat a real
-                    // data row with only one populated column as a
-                    // title). Fallback for workbooks with no merge info:
-                    // exactly one non-empty cell in the row.
-                    var isSectionTitleRow = cellsByCol.Keys.Any(col => wideMergeRowStartCols.Contains(((uint)idx, col)));
-                    if (isSectionTitleRow) continue;
-
-                    var nonEmpty = cellsByCol.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)).ToList();
-                    if (nonEmpty.Count == 0) continue;   // fully blank spacer row.
-                    if (nonEmpty.Count == 1) continue;   // section-title row (no merge info available).
+                    // A key-only row still participates in duplicate detection.
 
                     var data = new VtRowData { RowNumber = idx };
                     foreach (var kv in cellsByCol)
                     {
                         if (singleAssign.TryGetValue(kv.Key, out var assign1)) assign1(data, kv.Value);
                         else if (groupedAssign.TryGetValue(kv.Key, out var assign2)) assign2(data, kv.Value);
+                    }
+
+                    if (hasSplitGost)
+                    {
+                        var group = cellsByCol.GetValueOrDefault(mediumGroupCol)?.Trim();
+                        var category = cellsByCol.GetValueOrDefault(pipelineCategoryCol)?.Trim();
+                        if (!string.IsNullOrEmpty(group) && !string.IsNullOrEmpty(category))
+                            data.GostGroup = $"{group} - {category}";
                     }
 
                     // A genuine data row that somehow still has no n/n —
@@ -356,10 +348,41 @@ namespace PipingSpecPlugin.Spec
             }
             catch (Exception ex)
             {
+                result.Rows.Clear();
                 result.Error = $"Не удалось прочитать файл: {ex.GetType().Name}: {ex.Message}";
                 return result;
             }
         }
+
+        static string ReadSyncKey(Cell cell, Stylesheet styles, string text)
+        {
+            var type = cell.DataType?.Value;
+            if (type == CellValues.Date || type == CellValues.Boolean || type == CellValues.Error)
+                throw InvalidKeyFormat(cell);
+            if (string.IsNullOrWhiteSpace(text) || (type != null && type != CellValues.Number)) return text;
+
+            if (!decimal.TryParse(cell.CellValue?.InnerText, NumberStyles.Float, CultureInfo.InvariantCulture, out var value))
+                throw InvalidKeyFormat(cell);
+            int styleIndex = checked((int)(cell.StyleIndex?.Value ?? 0));
+            var formatId = styles?.CellFormats?.Elements<CellFormat>().ElementAtOrDefault(styleIndex)?.NumberFormatId?.Value;
+            if (formatId == null && styleIndex != 0) throw InvalidKeyFormat(cell);
+            var format = (formatId ?? 0) switch
+            {
+                0 => "General",
+                1 => "0",
+                2 => "0.00",
+                _ => styles?.NumberingFormats?.Elements<NumberingFormat>()
+                    .FirstOrDefault(item => item.NumberFormatId?.Value == formatId)?.FormatCode?.Value,
+            };
+            if (string.Equals(format, "General", StringComparison.OrdinalIgnoreCase))
+                return value.ToString("0.############################", CultureInfo.InvariantCulture);
+            if (format == null || !Regex.IsMatch(format, @"^0{1,28}(?:\.0{1,28})?$", RegexOptions.CultureInvariant))
+                throw InvalidKeyFormat(cell);
+            return value.ToString(format, CultureInfo.InvariantCulture);
+        }
+
+        static InvalidDataException InvalidKeyFormat(Cell cell) =>
+            new($"Ячейка {cell.CellReference} в колонке «n/n» имеет неподдерживаемый формат. Укажите ID текстом.");
 
         static string Normalize(string s)
         {

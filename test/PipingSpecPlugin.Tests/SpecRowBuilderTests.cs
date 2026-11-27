@@ -411,7 +411,7 @@ namespace PipingSpecPlugin.Tests
                 ExtraPipeOrphanInfo = new Dictionary<int, BendOrphanInfo>
                 {
                     { 99, new BendOrphanInfo
-                        { LineTag = "L1", NominalDiameter = 24, Spec = "CS150", Material = "CS" } },
+                        { LineTag = "L1", NominalDiameter = 24, NominalUnit = "in", Spec = "CS150", Material = "CS" } },
                 },
             };
             var builder = new SpecRowBuilder(opts);

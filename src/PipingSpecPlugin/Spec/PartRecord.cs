@@ -36,9 +36,7 @@ namespace PipingSpecPlugin.Spec
         public string EquipTag;        // for Equipment naming; rarely populated outside Equipment
 
         // Position / centre-of-gravity coordinates as raw strings from
-        // DataLinks. Used by valve-companion detection for the 3D
-        // proximity match — keep them strings, the discovery code parses
-        // them on demand only when needed.
+        // DataLinks.
         public string PositionX;
         public string PositionY;
         public string PositionZ;
@@ -46,22 +44,12 @@ namespace PipingSpecPlugin.Spec
         public string CogY;
         public string CogZ;
 
-        // Millimetres per drawing unit of the DWG the record was read from
-        // (from Database.Insunits). Position/COG above are in DRAWING units,
-        // not in the part's catalogue LengthUnit — the two are unrelated (a
-        // metric catalogue can sit in an inch drawing). null = unknown /
-        // unitless drawing; consumers then assume millimetres, the Plant 3D
-        // metric default this plug-in targets. Set by PartReader.
-        public double? DrawingMmPerUnit;
-
         // Filled by PnPClassName (e.g. "Pipe", "P3dConnector", "Equipment");
         // we need this in addition to PartCategory to recognise connectors
         // — their PartCategory is empty but the class is "P3dConnector".
         public string PnPClassName;
 
-        // Optional pressure class / facing. The valve-companion fallback
-        // match keys on Spec + NominalDiameter; these are kept around for
-        // future refinements.
+        // Optional pressure class / facing.
         public string PressureClass;
         public string Facing;
 

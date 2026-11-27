@@ -24,7 +24,7 @@
                 <Button DockPanel.Dock="Right" x:Name="LoadButton"
                         Content="Загрузить" Width="90" Margin="8,0,0,0"
                         Click="LoadButton_Click"/>
-                <TextBox x:Name="VtPathBox" VerticalContentAlignment="Center"/>
+                <TextBox x:Name="VtPathBox" VerticalContentAlignment="Center" TextChanged="VtPathBox_TextChanged"/>
             </DockPanel>
         </GroupBox>
 
@@ -35,12 +35,14 @@
         <GroupBox Grid.Row="2" Padding="6" Margin="0,0,0,10">
             <GroupBox.Header>
                 <DockPanel>
-                    <CheckBox DockPanel.Dock="Right" x:Name="CollapseDuplicatesChk"
-                              Content="Объединять повторные строки"
-                              VerticalAlignment="Center" Margin="16,0,4,0"
-                              Checked="CollapseDuplicatesChk_Changed"
-                              Unchecked="CollapseDuplicatesChk_Changed"/>
-                    <TextBlock Text="Внутренняя ведомость трубопроводов (текущее состояние линий с заполненным ID)"
+                    <ComboBox DockPanel.Dock="Right" x:Name="LedgerScopeBox" MinWidth="155" Margin="12,0,0,0"
+                              SelectionChanged="LedgerScope_Changed"
+                              AutomationProperties.Name="Область ведомости">
+                        <ComboBoxItem x:Name="CurrentDrawingScopeItem" Content="Текущий чертёж"
+                                      ToolTipService.ShowOnDisabled="True"/>
+                        <ComboBoxItem x:Name="ProjectScopeItem" Content="Весь проект"/>
+                    </ComboBox>
+                    <TextBlock Text="Внутренняя ведомость трубопроводов (линии с ID)"
                                VerticalAlignment="Center"/>
                 </DockPanel>
             </GroupBox.Header>
@@ -61,6 +63,12 @@
                         <MenuItem x:Name="SyncSelectedMenuItem"
                                   Header="Синхронизировать выделенную линию"
                                   Click="ApplySelectedButton_Click"
+                                  IsEnabled="False"/>
+                        <MenuItem x:Name="DeleteDuplicateMenuItem"
+                                  Header="Удалить выбранный дубль из проекта"
+                                  Click="DeleteDuplicateMenuItem_Click"
+                                  ToolTip="Выберите строку с повторяющимся ID."
+                                  ToolTipService.ShowOnDisabled="True"
                                   IsEnabled="False"/>
                     </ContextMenu>
                 </DataGrid.ContextMenu>

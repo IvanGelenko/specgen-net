@@ -93,6 +93,14 @@ namespace PipingSpecPlugin.Spec
                 };
         }
 
+        internal static ReviewItem ForUnlinkedPart(string drawingPath, string handle, string className, string reason)
+            => new ReviewItem
+            {
+                Reason = $"Объект не связан со строкой PnP ({reason}) — не включён в спецификацию",
+                Description = $"{className}, handle {handle}",
+                DrawingPath = drawingPath,
+            };
+
         public static List<SpecRow> BuildRows(IEnumerable<ReviewItem> items)
         {
             var result = new List<SpecRow>();

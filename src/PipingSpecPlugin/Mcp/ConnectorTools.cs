@@ -27,14 +27,16 @@ namespace Plant3dMcp
         {
             var doc = ActiveDocument(); var dlm = Dlm();
             SpecPart best = null; double bestNd = -1;
-            foreach (var o in PlantObjects(doc, dlm).Where(o => o.cls.Contains("Connector")))
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartOpenCloseTransaction())
             {
-                try
+                var modelSpace = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(doc.Database), OpenMode.ForRead);
+                foreach (ObjectId id in modelSpace)
                 {
-                    using (doc.LockDocument())
-                    using (var tr = doc.Database.TransactionManager.StartTransaction())
+                    if (!id.ObjectClass.Name.Contains("Connector") || RowId(dlm, id) <= 0) continue;
+                    try
                     {
-                        var c = tr.GetObject(o.id, OpenMode.ForRead) as Connector;
+                        var c = tr.GetObject(id, OpenMode.ForRead) as Connector;
                         if (c != null && c.NumSubParts >= 1 && c.GetSubPart(0) is WeldSubPart ws)
                         {
                             var psp = ws.PartSizeProperties;
@@ -48,11 +50,11 @@ namespace Plant3dMcp
                                 }
                             }
                         }
-                        tr.Commit();
                     }
+                    catch (Exception) { }
+                    if (best != null && Math.Abs(bestNd - nd) < 1e-6) break;
                 }
-                catch (Exception) { }
-                if (best != null && Math.Abs(bestNd - nd) < 1e-6) break;
+                tr.Commit();
             }
             if (best == null) { log.Add("no typed Buttweld connector in the drawing to copy the weld element from"); return null; }
             try { best.PartId = -1; best.PartGuid = Guid.NewGuid().ToString(); } catch (Exception e) { log.Add("weld template ids: " + e.Message); }
@@ -151,14 +153,28 @@ namespace Plant3dMcp
         {
             var log = new List<string>();
             var all = PlantObjects(doc, dlm);
-            var partPorts = all.Where(o => !o.cls.Contains("Connector")).Select(o => (o.id, ports: SafePorts(doc, o.id))).ToList();
             var connectors = only != null ? only.ToList() : all.Where(o => o.cls.Contains("Connector")).Select(o => o.id).ToList();
+            var partPorts = new List<(ObjectId id, List<(string name, Point3d pos, Vector3d dir)> ports)>();
+            var connectorPorts = new Dictionary<ObjectId, List<(string name, Point3d pos, Vector3d dir)>>();
+            using (doc.LockDocument())
+            using (var tr = doc.Database.TransactionManager.StartOpenCloseTransaction())
+            {
+                foreach (var o in all.Where(o => !o.cls.Contains("Connector")))
+                {
+                    try { partPorts.Add((o.id, PortsOf(tr, o.id))); } catch (Exception) { }
+                }
+                foreach (var cid in connectors.Distinct().Where(id => !id.IsErased))
+                {
+                    try { connectorPorts.Add(cid, PortsOf(tr, cid)); } catch (Exception) { }
+                }
+                tr.Commit();
+            }
             foreach (var cid in connectors)
             {
-                if (cid.IsErased) continue;
+                if (cid.IsErased || !connectorPorts.TryGetValue(cid, out var ports)) continue;
                 string me = cid.Handle.ToString();
                 var links = ConnList(doc, cid);
-                foreach (var cp in SafePorts(doc, cid))
+                foreach (var cp in ports)
                 {
                     if (links.Any(l => (l.h1 == me && l.p1 == cp.name) || (l.h2 == me && l.p2 == cp.name))) continue;
                     var cands = partPorts.SelectMany(pp => pp.ports.Where(q => q.pos.DistanceTo(cp.pos) < 0.5 && q.dir.Length > 1e-9 && cp.dir.Length > 1e-9 &&
@@ -179,8 +195,8 @@ namespace Plant3dMcp
         public static object CreateJoint(JsonElement args)
         {
             var doc = ActiveDocument();
-            var a = IdFromHandle(doc.Database, args.GetProperty("handleA").GetString());
-            var b = IdFromHandle(doc.Database, args.GetProperty("handleB").GetString());
+            var a = IdFromHandle(doc.Database, Tools.Required(args, "handleA", JsonValueKind.String).GetString());
+            var b = IdFromHandle(doc.Database, Tools.Required(args, "handleB", JsonValueKind.String).GetString());
             string specName = (args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null) ?? DefaultSpec;
             if (a == b) throw new ArgumentException("handleA and handleB are the same object");
             string jointArg = args.TryGetProperty("joint", out var jj) && jj.ValueKind == JsonValueKind.String ? jj.GetString() : WeldJointName;
@@ -203,7 +219,7 @@ namespace Plant3dMcp
                     throw new InvalidOperationException("Connector " + o.id.Handle + " is already at this joint");
             double nd = 100;
             try { if (double.TryParse(Props(dlm, RowId(dlm, a))["NominalDiameter"], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ndv) && ndv > 0) nd = ndv; } catch (Exception) { }
-            var plan = new { joint = "Buttweld", at = Arr(at), a = a.Handle.ToString() + "." + pa[ia].name, b = b.Handle.ToString() + "." + pb[ib].name, distance = Math.Round(best, 3), nd };
+            var plan = new { joint = jointArg, at = Arr(at), a = a.Handle.ToString() + "." + pa[ia].name, b = b.Handle.ToString() + "." + pb[ib].name, distance = Math.Round(best, 3), nd };
             if (IsDry(args)) return new { dry_run = true, plan, note = "Nothing was changed. Repeat with dry_run=false to create the connector." };
 
             var before = ModelRows(doc, dlm);

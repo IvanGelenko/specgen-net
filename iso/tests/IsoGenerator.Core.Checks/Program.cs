@@ -22,6 +22,15 @@ if(Math.Abs(projected.X-sourceLength.Millimeters)<1) throw new Exception("Expect
 
 
 void Assert(bool value,string message){checks++;if(!value)throw new Exception(message);}
+var gapProfile=new IsoAdvancedSettings { PipeGap=5 };
+var gapStyle=new IsoStyleSettings(10,PipeGapLength:7);
+var gapOverride=gapProfile.WithPipeGapOverride(9);
+Near(gapProfile.ResolvePipeGap(null),5);
+Near(gapProfile.ResolvePipeGap(gapStyle),7);
+Near(gapOverride.ResolvePipeGap(gapStyle),9);
+var restoredGap=System.Text.Json.JsonSerializer.Deserialize<IsoAdvancedSettings>(
+    System.Text.Json.JsonSerializer.Serialize(gapOverride))!;
+Near(restoredGap.ResolvePipeGap(gapStyle),9);
 var cornerDirection=new SheetPoint(Math.Sqrt(.5),Math.Sqrt(.5));
 var cornerInner=new PipeDimension("corner-horizontal",new(-20,0),new(0,0),20,"chain","corner-horizontal",
     new(0,7),cornerDirection);
@@ -72,6 +81,25 @@ foreach(var sample in new[]{(Value:1.01,Text:"1,01"),(Value:1.2,Text:"1,20"),(Va
 Part Pipe(string h,ModelPoint a,ModelPoint b)=>new("test.dwg",h,"AcPpDb3dPipe","L1",new[]{new Port("S1",a,new(-1,0,0)),new Port("S2",b,new(1,0,0))},new Dictionary<string,string>{{"PnPClassName","Pipe"},{"PartSizeLongDesc","Pipe 100"},{"Length","1000"}});
 var first=Pipe("A",new(0,0,0),new(1000,0,0));var second=Pipe("B",new(1000,0,0),new(2000,0,0));
 PipelineSnapshot Snapshot(Part[] parts,Connection[] links)=>new(1,"test.dwg",parts,links,Array.Empty<string>());
+var equipmentLink=new EquipmentConnection(first.Handle,"S1","P100","S1","P-100","N1");
+var equipmentSnapshot=Snapshot(new[]{first},Array.Empty<Connection>()) with{EquipmentConnections=new[]{equipmentLink}};
+var equipmentScene=SheetPlanner.Build(equipmentSnapshot);
+var equipmentNote=equipmentScene.Annotations.Single(a=>a.Role=="equipment-connection");
+Assert(equipmentNote.Text=="Подключение к P-100, штуцер N1\nОТМ. 0.000*"&&equipmentNote.Anchor.HasValue&&equipmentNote.LeaderKnee.HasValue,
+    "An equipment connection uses a second leader line for elevation");
+Assert(equipmentScene.BillOfMaterials.All(row=>!row.Handles.Contains("P100")),"An equipment reference does not add an item to the pipe BOM");
+var raisedNozzle=SheetPlanner.Build(equipmentSnapshot with{EquipmentConnections=new[]{equipmentLink with{EquipmentElevation=1260}}});
+Assert(raisedNozzle.Annotations.Single(a=>a.Role=="equipment-connection").Text.EndsWith("\nОТМ. +1.260*",StringComparison.Ordinal),
+    "The elevation of the connected equipment port takes precedence over the line endpoint");
+var portOnlyScene=SheetPlanner.Build(equipmentSnapshot with{EquipmentConnections=new[]{equipmentLink with{Nozzle=""}}});
+Assert(portOnlyScene.Annotations.Single(a=>a.Role=="equipment-connection").Text.Split('\n')[0].EndsWith("порт S1",StringComparison.Ordinal),
+    "The model port is identified separately when the nozzle designation is missing");
+var equipmentBlock=new IsoBlockDefinition("EndEquipment",new Dictionary<string,SheetPoint>
+    {["Port1"]=new(0,0),["Port2"]=new(.75,0)},new(0,-.25),new(.75,.25));
+var equipmentCatalog=new IsoSymbolMap("<Map/>",new IsoBlockCatalog(new[]{equipmentBlock}));
+var equipmentSymbol=SheetPlanner.Build(equipmentSnapshot,symbolMap:equipmentCatalog).Symbols!.Single();
+Assert(equipmentSymbol.Context&&equipmentSymbol.Block=="EndEquipment"&&equipmentSymbol.Variant=="equipment-nozzle-S1",
+    "An equipment connection uses the EndEquipment catalog block, regardless of end condition");
 var coldDrawnPipe=first with{Properties=new Dictionary<string,string>(first.Properties)
     {["PartSizeLongDesc"]="Труба 32x3 ГОСТ 8734-75/В 09Г2С ГОСТ 8733-74"}};
 var coldDrawnRow=SheetPlanner.Build(Snapshot(new[]{coldDrawnPipe},Array.Empty<Connection>())).BillOfMaterials.Single();
@@ -941,9 +969,41 @@ foreach(int turn in Enumerable.Range(0,4))
 var weldFlange=new Part("test.dwg","weld-flange","AcPpDb3dInlineAsset","L1",new[]{new Port("S1",new(0,0,0),new(-1,0,0),"FL"),new Port("S2",new(50,0,0),new(1,0,0),"BV")},new Dictionary<string,string>{{"PnPClassName","Flange"},{"ContentIsoSymbolDefinition","TYPE=FLANGE,SKEY=FLWN"}});
 var weldPipe=Pipe("weld-pipe",new(50,0,0),new(1050,0,0));weldPipe=weldPipe with{Ports=weldPipe.Ports.Select(p=>p with{EndCondition="BV"}).ToArray()};
 var weldFlangeDefinition=new IsoBlockDefinition("LibraryFlange",new Dictionary<string,SheetPoint>{{"Port1",new(-.15625,0)},{"Port2",new(.15625,0)}},new(-.15625,-.25),new(.15625,.25));
-var weldFlangeMap=new IsoSymbolMap("<Map><SkeyMap SKEY='FLWN' AcadBlock='LibraryFlange'/></Map>",new IsoBlockCatalog(new[]{weldFlangeDefinition}));
+var weldFlangeMap=new IsoSymbolMap("<Map><SkeyMap SKEY='FLWN' AcadBlock='LibraryFlange'/></Map>",new IsoBlockCatalog(new[]{weldFlangeDefinition,equipmentBlock}));
 var weldFlangeSnapshot=Snapshot(new[]{weldFlange,weldPipe},new[]{new Connection("weld-flange","S2","weld-pipe","S1")});
 var weldFlangeScene=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap);
+var flangeWithNozzle=SheetPlanner.Build(weldFlangeSnapshot with
+    {EquipmentConnections=new[]{equipmentLink with{OwnerHandle=weldFlange.Handle}}},symbolMap:weldFlangeMap);
+var originalFlange=flangeWithNozzle.Symbols!.Single(s=>!s.Context);
+var nozzle=flangeWithNozzle.Symbols!.Single(s=>s.Variant=="equipment-nozzle-S1");
+Assert(nozzle.Context&&nozzle.Block=="EndEquipment"&&originalFlange.Block=="LibraryFlange",
+    "The pipe flange and equipment nozzle retain their respective library blocks");
+Assert(nozzle.XAxis.X*originalFlange.XAxis.X+nozzle.XAxis.Y*originalFlange.XAxis.Y<0,
+    "The equipment nozzle extends away from the line-side flange");
+var nozzleAnchor=flangeWithNozzle.Annotations.Single(a=>a.Role=="equipment-connection").Anchor!.Value;
+Near(nozzle.Origin.X,nozzleAnchor.X);
+Near(nozzle.Origin.Y,nozzleAnchor.Y);
+var nozzleJoint=new Part("test.dwg","nozzle-joint","AcPpDb3dConnector","L1",
+    new[]{new Port("S1",new(-4.5,0,0),new(-1,0,0),"FL"),new Port("S2",new(0,0,0),new(1,0,0),"FL")},
+    new Dictionary<string,string>());
+var throughNozzleJoint=weldFlangeSnapshot with
+{
+    Parts=weldFlangeSnapshot.Parts.Append(nozzleJoint).ToArray(),
+    Connections=weldFlangeSnapshot.Connections.Append(new(nozzleJoint.Handle,"S2",weldFlange.Handle,"S1")).ToArray(),
+    EquipmentConnections=new[]{equipmentLink with{OwnerHandle=nozzleJoint.Handle}}
+};
+Assert(!SheetPlanner.Build(throughNozzleJoint,symbolMap:weldFlangeMap).Strokes.Any(s=>s.SourceId==nozzleJoint.Handle&&s.Role=="joint"),
+    "The EndEquipment symbol leaves no solid connector segment between the flange and nozzle");
+Assert(SheetPlanner.Build(throughNozzleJoint with{EquipmentConnections=null},symbolMap:weldFlangeMap)
+    .Strokes.Any(s=>s.SourceId==nozzleJoint.Handle&&s.Role=="joint"),"A connector without an equipment symbol retains its geometry");
+var twoEquipmentEnds=SheetPlanner.Build(equipmentSnapshot with
+{
+    EquipmentConnections=new[]{
+        equipmentLink,
+        equipmentLink with{OwnerPort="S2",EquipmentHandle="P200",Tag="P-200"}}
+},symbolMap:weldFlangeMap);
+Assert(twoEquipmentEnds.Symbols!.Select(s=>s.Variant).ToHashSet().SetEquals(new[]{"equipment-nozzle-S1","equipment-nozzle-S2"}),
+    "Two equipment nozzles at different ports receive distinct block names");
 Assert(weldFlangeScene.Dimensions.Any(d=>Math.Abs(d.Millimeters-1050)<.001),"A flange-only interval is included in the installation dimension chain");
 var flangeDimensionsHiddenBom=SheetPlanner.Build(weldFlangeSnapshot,symbolMap:weldFlangeMap,excludeFlangeHardware:true);
 Assert(flangeDimensionsHiddenBom.Dimensions.Any(d=>Math.Abs(d.Millimeters-1050)<.001),"Hiding a flange from BOM preserves its installation length");
@@ -1597,11 +1657,11 @@ var ngDimensions=DimensionChainPlanner.Build(Snapshot(new[]{elbowNg,verticalNg},
 Assert(ngDimensions.Any(d=>d.Role=="overall"&&d.SourceIds!.Contains("ng-elbow")&&
     d.SourceIds.Contains("ng-pipe")&&d.Millimeters>1374&&d.Millimeters<1376),
     "The upper elbow contributes its vertical rise to the overall dimension");
-Assert(SheetPlanner.RemoveRepeatedStandards("Труба ГОСТ 8732-2025/ В ГОСТ 8731-2025","ГОСТ 8732–2025")==
+Assert(SheetBom.RemoveRepeatedStandards("Труба ГОСТ 8732-2025/ В ГОСТ 8731-2025","ГОСТ 8732–2025")==
     "Труба В ГОСТ 8731-2025","Remove only the standard present in designation");
-Assert(SheetPlanner.RemoveRepeatedStandards("Опора-ОСТ 36-146-88","ОСТ 36-146-88")=="Опора",
+Assert(SheetBom.RemoveRepeatedStandards("Опора-ОСТ 36-146-88","ОСТ 36-146-88")=="Опора",
     "Remove duplicate OST and its delimiter");
-Assert(SheetPlanner.RemoveRepeatedStandards("Отвод ГОСТ 17375-2001","GV-110")=="Отвод ГОСТ 17375-2001",
+Assert(SheetBom.RemoveRepeatedStandards("Отвод ГОСТ 17375-2001","GV-110")=="Отвод ГОСТ 17375-2001",
     "Keep the standard when the designation is a tag");
 Console.WriteLine($"Passed {checks} checks.");
 

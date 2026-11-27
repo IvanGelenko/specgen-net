@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace IsoGenerator.Core;
 
@@ -40,6 +41,8 @@ public sealed class IsoAdvancedSettings
     public void Validate()
     {
         Validator.ValidateObject(this,new ValidationContext(this),validateAllProperties:true);
+        if(PipeGapOverride is {} gap&&(!double.IsFinite(gap)||gap<=0))
+            throw new ValidationException("Переопределение разрыва трубы должно быть положительным конечным числом.");
         if(PaperRight-PaperLeft<40||PaperTop-PaperBottom<40)
             throw new ValidationException("Рабочее поле должно быть не меньше 40 × 40 мм.");
         if(LeaderTarget>LeaderSoftLimit||LeaderSoftLimit>LeaderMaxReach)
@@ -58,6 +61,19 @@ public sealed class IsoAdvancedSettings
     [Description("Задаёт разрыв дальней трубы в месте пересечения в проекции. Соединения модели сохраняются.")]
     [Category("Трубы и символы"),DisplayName("Разрыв трубы при перекрытии, мм"),Range(0.1,25)]
     public double PipeGap { get; set; } = 6;
+
+    [Browsable(false),JsonInclude,JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]
+    public double? PipeGapOverride { get; private set; }
+
+    public IsoAdvancedSettings WithPipeGapOverride(double millimeters)
+    {
+        if(!double.IsFinite(millimeters)||millimeters<=0)throw new ArgumentOutOfRangeException(nameof(millimeters));
+        var copy=(IsoAdvancedSettings)MemberwiseClone();
+        copy.PipeGapOverride=millimeters;
+        return copy;
+    }
+
+    internal double ResolvePipeGap(IsoStyleSettings? style)=>PipeGapOverride??style?.PipeGapLength??PipeGap;
 
     [Description("Расстояние от оси трубы до каждой из двух линий условного изображения изоляции.")]
     [Category("Трубы и символы"),DisplayName("Отступ линии изоляции, мм"),Range(0.1,20)]

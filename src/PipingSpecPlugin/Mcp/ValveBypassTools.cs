@@ -55,7 +55,7 @@ namespace Plant3dMcp
             return IdFromHandle(doc.Database, found[0].h);
         }
 
-        sealed class ValveSide { public ObjectId FlangedConn, Flange, WeldConn, Pipe; public string PipePort; public Point3d W; }
+        sealed class ValveSide { public ObjectId FlangedConn, Flange, WeldConn, Pipe; public string PipePort, WeldConnPipePort; public Point3d W; }
 
         // valve port -> flanged connector -> flange -> weld connector -> pipe
         static ValveSide WalkValveSide(Document doc, ObjectId valve, string valvePort)
@@ -67,7 +67,9 @@ namespace Plant3dMcp
             s.FlangedConn = IdFromHandle(doc.Database, link[0].h1 == vh ? link[0].h2 : link[0].h1);
             s.Flange = OtherOf(doc, s.FlangedConn, valve, out _, out _);
             s.WeldConn = OtherOf(doc, s.Flange, s.FlangedConn, out _, out _);
-            s.Pipe = OtherOf(doc, s.WeldConn, s.Flange, out string pipePort, out _);
+            s.Pipe = OtherOf(doc, s.WeldConn, s.Flange, out string pipePort, out s.WeldConnPipePort);
+            if (string.IsNullOrEmpty(s.WeldConnPipePort))
+                throw new InvalidOperationException("Cannot determine the pipe-side port of connector " + s.WeldConn.Handle);
             s.PipePort = pipePort;
             s.W = PortsOf(doc, s.Pipe).First(p => p.name == pipePort).pos;
             return s;
@@ -94,7 +96,7 @@ namespace Plant3dMcp
         public static object CreateValveBypass(JsonElement args)
         {
             var doc = ActiveDocument();
-            var valveId = IdFromHandle(doc.Database, args.GetProperty("valve_handle").GetString());
+            var valveId = IdFromHandle(doc.Database, Tools.Required(args, "valve_handle", JsonValueKind.String).GetString());
             string specName = (args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null) ?? DefaultSpec;
             double bypNd = args.TryGetProperty("bypass_nd", out var bnd) && bnd.ValueKind == JsonValueKind.Number ? bnd.GetDouble() : 50;
             double clearance = args.TryGetProperty("tee_clearance", out var tcl) && tcl.ValueKind == JsonValueKind.Number ? tcl.GetDouble() : 400;
@@ -147,26 +149,8 @@ namespace Plant3dMcp
             SpecPart byPart = bySel[0].part; double byWall = bySel[0].wall, byOd = OuterDiameter(byPart);
 
             var teeCands = CollectParts(sm, specName, key, "Tee", runNd).Where(c => (c.desc ?? "").IndexOf("переходной", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-            var reducerCands = new List<(SpecPart part, double wall, string desc)>();
-            foreach (double dn in new[] { 65.0, 80, 100, 125 })
-                try { reducerCands.AddRange(CollectParts(sm, specName, key, "Reducer", dn)); } catch (Exception) { }
-            (SpecPart tee, string teeDesc, SpecPart red, string redDesc)? chosen = null;
-            double bestScore = double.MaxValue;
-            foreach (var tc in teeCands)
-            {
-                if (!TwoSizes(tc.desc, out double mOd, out double mWall, out double bOd, out double bWall)) continue;
-                if (Math.Abs(mOd - runOd) > 0.5 || mWall + 1e-3 < runWall) continue;
-                foreach (var rc in reducerCands)
-                {
-                    if (!TwoSizes(rc.desc, out double bigOd, out double bigWall, out double smOd, out double smWall)) continue;
-                    if (Math.Abs(bigOd - bOd) > 0.5 || Math.Abs(smOd - byOd) > 0.5) continue;
-                    if (bigWall + 1e-3 < bWall || smWall + 1e-3 < byWall) continue;
-                    double score = mWall * 1000 + bWall * 100 + bigWall * 10 + smWall;
-                    if (score < bestScore) { bestScore = score; chosen = (tc.part, tc.desc, rc.part, rc.desc); }
-                }
-            }
-            if (chosen == null) throw new InvalidOperationException("No reducing tee for the DN" + runNd + " run (wall >= " + runWall + ") with a reducer to OD " + byOd + " in the spec");
-            var ch = chosen.Value;
+            var ch = PickTeeReducer(sm, specName, key, teeCands, runOd, runWall, byOd, byWall)
+                ?? throw new InvalidOperationException("No reducing tee for the DN" + runNd + " run (wall >= " + runWall + ") with a reducer to OD " + byOd + " in the spec");
             var elbowSel = CollectParts(sm, specName, key, "Elbow", bypNd).Where(c => Math.Abs(ElbowAngle(c.part, c.desc) - 90) < 0.05 && Math.Abs(c.wall - byWall) < 1e-3 && OdMatches(c.part, byOd)).ToList();
             if (elbowSel.Count != 1) throw new InvalidOperationException("Need exactly one 90-degree DN" + bypNd + " elbow with wall " + byWall + ", found " + elbowSel.Count);
             SpecPart elbowPart = elbowSel[0].part;
@@ -302,7 +286,7 @@ namespace Plant3dMcp
                     weldRows.Add((Weld(tee2.PortUp, r, runNd), "new pipe 2", "tee 2", "new pipe 2|tee 2"));
                     rowCd = Weld(tee2.PortDown, r, runNd);
                     // bypass loop
-                    weldRows.Add((Weld(tee1.PortBranch, u, 100), "tee 1", "reducer 1", "tee 1|reducer 1"));
+                    weldRows.Add((Weld(tee1.PortBranch, u, ch.branchDn), "tee 1", "reducer 1", "tee 1|reducer 1"));
                     weldRows.Add((Weld(red1.PortB, u, bypNd), "reducer 1", "leg 1", "reducer 1|leg 1"));
                     weldRows.Add((Weld(e1.TIn, u, bypNd), "leg 1", "elbow 1", "leg 1|elbow 1"));
                     weldRows.Add((Weld(e1.TOut, r, bypNd), "elbow 1", "pipe A", "elbow 1|pipe A"));
@@ -313,7 +297,7 @@ namespace Plant3dMcp
                     weldRows.Add((Weld(e2.TIn, r, bypNd), "pipe B", "elbow 2", "pipe B|elbow 2"));
                     weldRows.Add((Weld(e2.TOut, u.Negate(), bypNd), "elbow 2", "leg 2", "elbow 2|leg 2"));
                     weldRows.Add((Weld(red2.PortB, u.Negate(), bypNd), "leg 2", "reducer 2", "leg 2|reducer 2"));
-                    weldRows.Add((Weld(tee2.PortBranch, u.Negate(), 100), "reducer 2", "tee 2", "reducer 2|tee 2"));
+                    weldRows.Add((Weld(tee2.PortBranch, u.Negate(), ch.branchDn), "reducer 2", "tee 2", "reducer 2|tee 2"));
                 }
 
                 var idOf = new Dictionary<string, ObjectId>();
@@ -343,19 +327,19 @@ namespace Plant3dMcp
                 Point3d oldLeft = W1, oldRight = W2;
 
                 Disconnect(doc, left.Pipe, left.WeldConn);
-                undo.Push(() => ConnectCore(doc, left.WeldConn, left.Pipe, true, "S2"));
+                undo.Push(() => ConnectCore(doc, left.WeldConn, left.Pipe, true, left.WeldConnPipePort));
                 SetPipeEnd(doc, left.Pipe, !leftIsEnd, newLeftEnd);
-                undo.Pop(); undo.Push(() => { SetPipeEnd(doc, left.Pipe, !leftIsEnd, oldLeft); ConnectCore(doc, left.WeldConn, left.Pipe, true, "S2"); });
-                ConnectCore(doc, left.WeldConn, idOf["new pipe 1"], true, "S2");
+                undo.Pop(); undo.Push(() => { SetPipeEnd(doc, left.Pipe, !leftIsEnd, oldLeft); ConnectCore(doc, left.WeldConn, left.Pipe, true, left.WeldConnPipePort); });
+                ConnectCore(doc, left.WeldConn, idOf["new pipe 1"], true, left.WeldConnPipePort);
                 undo.Push(() => Disconnect(doc, left.WeldConn, idOf["new pipe 1"]));
                 ConnectCore(doc, idCa, left.Pipe, true, "S2");
                 undo.Push(() => Disconnect(doc, idCa, left.Pipe));
 
                 Disconnect(doc, right.Pipe, right.WeldConn);
-                undo.Push(() => ConnectCore(doc, right.WeldConn, right.Pipe, true, "S2"));
+                undo.Push(() => ConnectCore(doc, right.WeldConn, right.Pipe, true, right.WeldConnPipePort));
                 SetPipeEnd(doc, right.Pipe, rightIsStart, newRightStart);
-                undo.Pop(); undo.Push(() => { SetPipeEnd(doc, right.Pipe, rightIsStart, oldRight); ConnectCore(doc, right.WeldConn, right.Pipe, true, "S2"); });
-                ConnectCore(doc, right.WeldConn, idOf["new pipe 2"], true, "S2");
+                undo.Pop(); undo.Push(() => { SetPipeEnd(doc, right.Pipe, rightIsStart, oldRight); ConnectCore(doc, right.WeldConn, right.Pipe, true, right.WeldConnPipePort); });
+                ConnectCore(doc, right.WeldConn, idOf["new pipe 2"], true, right.WeldConnPipePort);
                 undo.Push(() => Disconnect(doc, right.WeldConn, idOf["new pipe 2"]));
                 ConnectCore(doc, idCd, right.Pipe, true, "S1");
                 undo.Push(() => Disconnect(doc, idCd, right.Pipe));

@@ -1,13 +1,11 @@
 using System;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using Autodesk.ProcessPower.DataLinks;
 using PipingSpecPlugin.Settings;
 using PipingSpecPlugin.Spec;
 using WinForms = System.Windows.Forms;
@@ -27,21 +25,22 @@ namespace PipingSpecPlugin.UI
     /// </summary>
     public partial class SyncVtWindow : Window
     {
-        readonly DataLinksManager _projectDlm;
+        readonly VtSyncSession _session;
+        readonly IVtDuplicateStore _duplicates;
         readonly PluginSettings _settings;
         readonly Action<string> _trace;
 
-        List<VtRowData> _vtRows;
-        LineSyncPlan _plan;
-        bool _collapseLedgerDuplicates;
-        int _hiddenLedgerDuplicates;
+        LineSyncPlan Plan => _session.Plan;
 
-        string DuplicateSummary => _collapseLedgerDuplicates
-            ? $" Объединено повторных строк: {_hiddenLedgerDuplicates}. Различия в ячейках отмечены ⚠; варианты разделены |." : "";
+        bool CurrentDrawingOnly => CurrentDrawingScopeItem.IsSelected;
+        string LineCountLabel => CurrentDrawingOnly ? "Линий на текущем чертеже" : "Линий в проекте";
+        string EmptyScopeStatus => CurrentDrawingOnly
+            ? "На текущем чертеже не найдено ни одной трубопроводной линии."
+            : "В проекте Plant 3D не найдено ни одной производственной линии (P3dLineGroup).";
 
         public bool Applied { get; private set; }
 
-        public SyncVtWindow(DataLinksManager projectDlm, PluginSettings settings, Action<string> trace)
+        internal SyncVtWindow(VtSyncWorkflow workflow, IVtDuplicateStore duplicates, PluginSettings settings, Action<string> trace)
         {
             InitializeComponent();
             CommandIcons.Decorate(BrowseButton, "BROWSE");
@@ -57,10 +56,15 @@ namespace PipingSpecPlugin.UI
             RefreshButton.Width = 180;
             ApplySelectedButton.Width = 195;
             ApplyButton.Width = 205;
-            _projectDlm = projectDlm;
+            _session = new VtSyncSession(workflow);
+            _duplicates = duplicates;
             _settings = settings;
             _trace = trace;
             VtPathBox.Text = settings.LastVtFilePath ?? "";
+            CurrentDrawingScopeItem.IsEnabled = _session.HasDrawing;
+            if (!_session.HasDrawing)
+                CurrentDrawingScopeItem.ToolTip = "Текущий чертёж не зарегистрирован в трубопроводном проекте.";
+            LedgerScopeBox.SelectedItem = _session.HasDrawing ? CurrentDrawingScopeItem : ProjectScopeItem;
 
             // Show the current Plant 3D state immediately — the user
             // shouldn't have to pick a ВТ file just to see what's already
@@ -80,18 +84,19 @@ namespace PipingSpecPlugin.UI
             Mouse.OverrideCursor = Cursors.Wait;
             try
             {
-                var lines = LineSyncService.ReadAllLines(_projectDlm, _trace);
-                RenderLedger(lines);
+                var preview = _session.Refresh(CurrentDrawingOnly);
+                var lines = preview.VisibleLines;
+                RenderLedger(lines, preview.ProjectLines);
                 ApplyButton.IsEnabled = false;
                 UpdateSelectedState();
                 if (lines.Count == 0)
                 {
-                    SummaryText.Text = "Линий в проекте: 0.";
+                    SummaryText.Text = $"{LineCountLabel}: 0.";
                     ProblemsText.Text = "Нет.";
-                    StatusText.Text = "В проекте Plant 3D не найдено ни одной производственной линии (P3dLineGroup).";
+                    StatusText.Text = EmptyScopeStatus;
                     return;
                 }
-                SummaryText.Text = $"Строк в ведомости: {LineSyncService.BuildLedger(lines).Count - _hiddenLedgerDuplicates}. Линий в проекте: {lines.Count}. Загрузите файл ВТ, чтобы увидеть план изменений." + DuplicateSummary;
+                SummaryText.Text = $"Строк в ведомости: {LedgerGrid.Items.Count}. {LineCountLabel}: {lines.Count}. Загрузите файл ВТ, чтобы увидеть план изменений.";
                 ProblemsText.Text = "Нет.";
                 ApplyButton.IsEnabled = false;
                 StatusText.Text = "Выберите файл ВТ и нажмите «Загрузить», чтобы найти изменения.";
@@ -125,8 +130,24 @@ namespace PipingSpecPlugin.UI
                 VtPathBox.Text = dlg.FileName;
         }
 
+        void ResetVtPlan()
+        {
+            _session.ResetWorkbook();
+            ApplyButton.IsEnabled = false;
+            UpdateSelectedState();
+            SummaryText.Text = "Файл ВТ не загружен.";
+            ProblemsText.Text = "";
+            StatusText.Text = "Нажмите «Загрузить», чтобы построить план из выбранного файла ВТ.";
+        }
+
+        void VtPathBox_TextChanged(object sender, TextChangedEventArgs e)
+        {
+            if (IsLoaded) ResetVtPlan();
+        }
+
         void LoadButton_Click(object sender, RoutedEventArgs e)
         {
+            ResetVtPlan();
             var path = (VtPathBox.Text ?? "").Trim();
             if (string.IsNullOrEmpty(path))
             {
@@ -134,17 +155,10 @@ namespace PipingSpecPlugin.UI
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
                 return;
             }
-            if (!File.Exists(path))
-            {
-                MessageBox.Show(this, $"Файл не найден:\n{path}",
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
-                return;
-            }
-
             Mouse.OverrideCursor = Cursors.Wait;
             try
             {
-                var vt = VtReader.Read(path);
+                var vt = _session.LoadWorkbook(path);
                 if (vt.Error != null)
                 {
                     MessageBox.Show(this, vt.Error, "Синхронизация ВТ",
@@ -163,15 +177,14 @@ namespace PipingSpecPlugin.UI
                     return;
                 }
 
-                _vtRows = vt.Rows;
                 _settings.LastVtFilePath = path;
-                try { RebuildPlanAndRender(vt.Rows.Count); }
+                try { RebuildPlanAndRender(offerIdFill: true); }
                 catch (Exception ex)
                 {
                     // The ВТ file was read fine (VtReader reports its own
                     // errors via vt.Error and never throws) — what failed is
                     // reading the project lines; say so.
-                    MessageBox.Show(this, $"Файл ВТ прочитан, но не удалось прочитать линии из Plant 3D:\n{ex.GetType().Name}: {ex.Message}",
+                    MessageBox.Show(this, $"Файл ВТ прочитан, но подготовка синхронизации не завершена:\n{ex.Message}",
                         "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
                 }
             }
@@ -190,40 +203,66 @@ namespace PipingSpecPlugin.UI
         /// Re-reads P3dLineGroup from Plant 3D, rebuilds the diff plan
         /// against the currently loaded ВТ rows, and re-renders the
         /// ledger grid. Called both after "Загрузить" and again after
-        /// "Применить" (with the same _vtRows) so the grid shows the
+        /// "Применить" so the grid shows the
         /// post-write state without closing the window.
         /// </summary>
-        void RebuildPlanAndRender(int vtRowCount)
+        void RebuildPlanAndRender(bool offerIdFill = false)
         {
-            var lines = LineSyncService.ReadAllLines(_projectDlm, _trace);
-            _plan = LineSyncService.BuildPlan(_vtRows, lines);
-            RenderLedger(lines);
-            RenderSummaryAndProblems(vtRowCount, lines.Count);
+            _session.InvalidatePreview();
+            ApplyButton.IsEnabled = false;
             UpdateSelectedState();
-            if (lines.Count == 0)
+            var preview = _session.Refresh(CurrentDrawingOnly, offerIdFill);
+            if (preview.IdFillProposal != null && OfferIdFill(preview.IdFillProposal))
+                preview = _session.Refresh(CurrentDrawingOnly);
+            RenderLedger(preview.VisibleLines, preview.ProjectLines);
+            RenderSummaryAndProblems(_session.WorkbookRowCount, preview.VisibleLines.Count);
+            UpdateSelectedState();
+            if (preview.VisibleLines.Count == 0)
+                StatusText.Text = EmptyScopeStatus;
+        }
+
+        bool OfferIdFill(LineSyncPlan proposal)
+        {
+            if (proposal.Actions.Count == 0) return false;
+
+            const int previewLimit = 10;
+            var preview = string.Join("\n", proposal.Actions.Take(previewLimit)
+                .Select(action => $"• {action.Line.Tag} → ID {action.Changes[0].NewValue}"));
+            if (proposal.Actions.Count > previewLimit)
+                preview += $"\n… и ещё {proposal.Actions.Count - previewLimit}.";
+
+            Mouse.OverrideCursor = null;
+            var confirm = MessageBox.Show(this,
+                $"Найдено совпадений по обозначению на текущем чертеже: {proposal.Actions.Count}.\n\n"
+                + $"{preview}\n\nЗаполнить пустые поля ID значениями из колонки n/n ВТ?",
+                "Заполнение ID по обозначению", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+            Mouse.OverrideCursor = Cursors.Wait;
+            if (confirm != MessageBoxResult.Yes) return false;
+
+            var (stale, errors) = _session.ApplyIdFill(proposal);
+            if (stale)
             {
-                MessageBox.Show(this,
-                    "В проекте Plant 3D не найдено ни одной производственной линии (P3dLineGroup). "
-                    + "Убедитесь, что проект открыт и содержит трубопроводные линии.",
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
-                return;
+                MessageBox.Show(this, "Данные линий изменились. Загрузите ВТ повторно, чтобы проверить совпадения.",
+                    "Заполнение ID по обозначению", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return true;
             }
 
+            if (errors.Count == 0)
+                Applied = true;
+            else
+                MessageBox.Show(this, string.Join("\n", errors), "Заполнение ID по обозначению",
+                    MessageBoxButton.OK, MessageBoxImage.Error);
+            return true;
         }
 
         /// <summary>
         /// Builds the "внутренняя ведомость" grid: one row per project
         /// line with a non-blank ID, one column per property
         /// СИНХРОНИЗАЦИЯ ВТ knows how to write. Columns are generated in
-        /// code because their set (KnownLineGroupColumns) isn't static
-        /// XAML content — WPF's DataGrid has no built-in "bind to
-        /// Dictionary key" column type, so a DataTable is the simplest
-        /// bridge: each column becomes a DataColumn, AutoGenerateColumns
-        /// then does the rest.
+        /// code from the field mappings. The projected row retains typed
+        /// PnPIDs and the original tag for selection and actions.
         /// </summary>
-        // "Tag" and "Номер" are written by the sync (both get the full
-        // designation string — see LineSyncService's comment on why both
-        // are targeted) but are redundant to show as their own columns:
+        // The ledger already shows the tag; the numeric line number is part of it.
         // they duplicate the "Тег линии" column already rendered from
         // LineGroupInfo.Tag. Excluded here only from the UI grid — the
         // underlying write/KnownLineGroupColumns logic is untouched.
@@ -243,85 +282,37 @@ namespace PipingSpecPlugin.UI
             "CorrosionSpeed", "Corrosion", "srok", "NDControl", "Thermo", "Additional",
         };
 
-        void RenderLedger(List<LineGroupInfo> lines)
+        void RenderLedger(List<LineGroupInfo> lines, List<LineGroupInfo> projectLines)
         {
-            var ledgerRows = LineSyncService.BuildLedger(lines, _collapseLedgerDuplicates);
-            _hiddenLedgerDuplicates = lines.Count(l => !string.IsNullOrWhiteSpace(l.Id)) - ledgerRows.Count;
-            var labels = LineSyncService.KnownLineGroupColumnLabels;
-            var known = new HashSet<string>(LineSyncService.KnownLineGroupColumns, StringComparer.OrdinalIgnoreCase);
-            // Anything KnownLineGroupColumns has that LedgerColumnOrder
-            // doesn't list (e.g. a future new field) still shows up,
-            // appended after the fixed order, instead of silently
-            // disappearing from the grid.
-            var visibleColumns = LedgerColumnOrder
-                .Where(c => known.Contains(c) && LineSyncService.IsLedgerVisibleColumn(c))
-                .Concat(LineSyncService.KnownLineGroupColumns
-                    .Where(c => LineSyncService.IsLedgerVisibleColumn(c) && !LedgerColumnOrder.Contains(c, StringComparer.OrdinalIgnoreCase)))
-                .ToList();
-
-            var table = new DataTable();
-            table.Columns.Add("_RowIds", typeof(string));
-            table.Columns.Add("ID");
-            table.Columns.Add("Тег линии");
-            foreach (var col in visibleColumns)
-                if (!table.Columns.Contains(col))
-                    table.Columns.Add(col, typeof(string));
-
-            foreach (var row in ledgerRows)
-            {
-                var dr = table.NewRow();
-                dr["_RowIds"] = string.Join(",", row.AllRowIds);
-                dr["ID"] = row.Id ?? "";
-                dr["Тег линии"] = row.Tag ?? "";
-                foreach (var col in visibleColumns)
-                    dr[col] = row.Values.TryGetValue(col, out var v) ? v : "";
-                table.Rows.Add(dr);
-            }
+            var visibleColumns = LedgerColumnOrder.Concat(VtFieldMappings.KnownLineGroupColumns)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(name => VtFieldMappings.KnownLineGroupColumnLabels.ContainsKey(name)
+                    && LineLedgerProjection.IsLedgerVisibleColumn(name));
 
             LedgerGrid.Columns.Clear();
-            LedgerGrid.ItemsSource = table.DefaultView;
-            foreach (DataColumn col in table.Columns)
+            AddLedgerColumn("ID", nameof(LineLedgerRow.Id), horizontalHeader: true, maxWidth: 58);
+            AddLedgerColumn("Тег линии", nameof(LineLedgerRow.DisplayTag), horizontalHeader: true, maxWidth: 170);
+            foreach (var name in visibleColumns)
+                AddLedgerColumn(VtFieldMappings.KnownLineGroupColumnLabels[name], $"Values[{name}]");
+            LedgerGrid.ItemsSource = LineLedgerProjection.BuildLedger(lines, projectLines: projectLines);
+        }
+
+        void AddLedgerColumn(string header, string path, bool horizontalHeader = false, double maxWidth = 58)
+        {
+            var cellStyle = new Style(typeof(TextBlock));
+            cellStyle.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.Wrap));
+            cellStyle.Setters.Add(new Setter(FrameworkElement.ToolTipProperty, new System.Windows.Data.Binding(path)));
+            LedgerGrid.Columns.Add(new DataGridTextColumn
             {
-                if (col.ColumnName.StartsWith("_")) continue;
-                var header = col.ColumnName == "ID" || col.ColumnName == "Тег линии"
-                    ? col.ColumnName
-                    : (labels.TryGetValue(col.ColumnName, out var ru) ? ru : col.ColumnName);
-                bool isFixedColumn = col.ColumnName == "ID" || col.ColumnName == "Тег линии";
-                // "Тег линии" carries the full designation string (e.g.
-                // "150-KSN002-LS016C-HN", ~20 chars) — needs real width
-                // unlike the short codes/numbers in every other data
-                // column, so it gets its own wider cap instead of the
-                // shared 58px used for the rest.
-                double maxWidth = col.ColumnName == "Тег линии" ? 170 : 58;
-                var cellStyle = new Style(typeof(TextBlock));
-                cellStyle.Setters.Add(new Setter(TextBlock.TextWrappingProperty, TextWrapping.Wrap));
-                cellStyle.Setters.Add(new Setter(FrameworkElement.ToolTipProperty,
-                    new System.Windows.Data.Binding(col.ColumnName)));
-                LedgerGrid.Columns.Add(new DataGridTextColumn
-                {
-                    // Compact layout: data columns stay narrow (most
-                    // values here are short codes/numbers like "1.6" or
-                    // "Б(б)"). Their headers are long ГОСТ-style labels
-                    // ("Классификация по ГОСТ 32569"), so instead of
-                    // wrapping onto several horizontal lines (which
-                    // still needed real column width to stay legible)
-                    // they're rotated -90° — same trick the .docx spec
-                    // template itself uses for narrow columns (see
-                    // SpecTemplateWriter's TextDirection handling). This
-                    // is what actually lets ~22 data columns fit on a
-                    // 1080p-class monitor without a horizontal scrollbar.
-                    // ID / Тег линии keep a normal horizontal header —
-                    // short enough not to need it, and they're the two
-                    // columns a user scans first.
-                    Header = header,
-                    HeaderTemplate = isFixedColumn ? null : MakeVerticalHeaderTemplate(header),
-                    Binding = new System.Windows.Data.Binding(col.ColumnName),
-                    ElementStyle = cellStyle,
-                    Width = new DataGridLength(1, DataGridLengthUnitType.Auto),
-                    MinWidth = 42,
-                    MaxWidth = maxWidth,
-                });
-            }
+                Header = header,
+                HeaderTemplate = horizontalHeader ? null : MakeVerticalHeaderTemplate(header),
+                Binding = new System.Windows.Data.Binding(path),
+                SortMemberPath = path,
+                ElementStyle = cellStyle,
+                Width = new DataGridLength(1, DataGridLengthUnitType.Auto),
+                MinWidth = 42,
+                MaxWidth = maxWidth,
+            });
         }
 
         static DataTemplate MakeVerticalHeaderTemplate(string headerText)
@@ -337,33 +328,33 @@ namespace PipingSpecPlugin.UI
 
         void RenderSummaryAndProblems(int vtRowCount, int lineCount)
         {
-            var linesTouched = _plan.Actions.Select(a => a.Line.RowId).Distinct().Count();
-            var fieldsTotal = _plan.TotalChangedFields();
+            var linesTouched = Plan.Actions.Count(a => a.Changes.Count > 0);
+            var fieldsTotal = Plan.TotalChangedFields();
             SummaryText.Text =
-                $"Строк в ВТ с заполненным n/n: {vtRowCount}. Линий в проекте: {lineCount}. " +
-                $"Совпало по ID: {linesTouched}. Полей к изменению: {fieldsTotal}. " +
-                $"Не найдено в проекте: {_plan.UnmatchedVtRows.Count}. " +
-                $"Линий без соответствия в ВТ: {_plan.UnmatchedLines.Count}." +
-                (_plan.DuplicateIds.Count > 0 ? $" ⚠ Повторяющихся ID в проекте: {_plan.DuplicateIds.Count}." : "") +
-                (_plan.DuplicateVtNN.Count > 0 ? $" ⚠ Повторяющихся n/n в файле ВТ: {_plan.DuplicateVtNN.Count}." : "") + DuplicateSummary;
+                $"Строк в ВТ с заполненным n/n: {vtRowCount}. {LineCountLabel}: {lineCount}. " +
+                $"Сопоставлено линий: {Plan.MatchedRowIds.Count}. Линий с изменениями: {linesTouched}. Полей к изменению: {fieldsTotal}. " +
+                $"Не найдено в проекте: {Plan.UnmatchedVtRows.Count}. " +
+                $"Линий без соответствия в ВТ: {Plan.UnmatchedLines.Count}." +
+                (Plan.DuplicateIds.Count > 0 ? $" ⚠ Повторяющихся ID в проекте: {Plan.DuplicateIds.Count}." : "") +
+                (Plan.DuplicateVtNN.Count > 0 ? $" ⚠ Повторяющихся n/n в файле ВТ: {Plan.DuplicateVtNN.Count}." : "");
 
             var problems = new System.Text.StringBuilder();
-            foreach (var id in _plan.DuplicateIds)
-                problems.AppendLine($"⚠ ID «{id}» встречается у нескольких линий в проекте — при применении изменения затронут все совпавшие записи. Скрытие повторов в таблице не удаляет записи проекта.");
-            foreach (var nn in _plan.DuplicateVtNN)
+            foreach (var warning in _session.WorkbookWarnings)
+                problems.AppendLine($"⚠ {warning}");
+            foreach (var id in Plan.DuplicateIds)
+                problems.AppendLine($"⚠ ID «{id}» встречается у нескольких линий. Запись разрешена при единственном совпадении по обозначению. Дубли без деталей можно удалить в режиме «Весь проект».");
+            foreach (var nn in Plan.DuplicateVtNN)
                 problems.AppendLine($"⚠ n/n «{nn}» встречается у нескольких строк в файле ВТ — все они пропущены (неоднозначно, с какой линией сопоставлять). Проверьте нумерацию в ВТ.");
-            var duplicateNNSet = new HashSet<string>(_plan.DuplicateVtNN, StringComparer.OrdinalIgnoreCase);
-            foreach (var vtRow in _plan.UnmatchedVtRows)
-            {
-                // vtRow.NN is already trimmed by VtReader (VtReader.cs)
-                // before it reaches this plan, same as every value in
-                // DuplicateVtNN — no second Trim() needed here.
-                if (duplicateNNSet.Contains(vtRow.NN ?? "")) continue; // already reported above.
+            foreach (var vtRow in Plan.UnmatchedVtRows)
                 problems.AppendLine($"— n/n «{vtRow.NN}» (строка {vtRow.RowNumber} ВТ) не найден среди линий проекта (поле ID).");
-            }
-            foreach (var line in _plan.UnmatchedLines)
+            foreach (var reason in Plan.BlockedLines.Values)
+                problems.AppendLine($"— {reason}");
+            if (CurrentDrawingOnly)
+                foreach (var reason in _session.IdFillSkips)
+                    problems.AppendLine($"— При загрузке ВТ ID не заполнен для {reason}");
+            foreach (var line in Plan.UnmatchedLines)
                 problems.AppendLine($"— Линия «{line.Tag}» (ID «{line.Id}») в проекте не встречается в ВТ.");
-            foreach (var action in _plan.Actions)
+            foreach (var action in Plan.Actions)
                 foreach (var rej in action.PicklistRejections)
                     problems.AppendLine($"— ID «{action.Line.Id}»: {rej}");
             ProblemsText.Text = problems.Length > 0 ? problems.ToString() : "Нет.";
@@ -371,15 +362,16 @@ namespace PipingSpecPlugin.UI
             ApplyButton.IsEnabled = fieldsTotal > 0;
             StatusText.Text = fieldsTotal > 0
                 ? $"Найдено изменений: {fieldsTotal}. Нажмите «Применить в Plant 3D»."
-                : "Изменений не найдено — все совпавшие значения уже актуальны.";
+                : Plan.BlockedLines.Count > 0 || Plan.DuplicateVtNN.Count > 0
+                    ? "Нет изменений для записи. Проверьте конфликты в списке проблем."
+                    : "Нет изменений для записи.";
         }
 
         void RefreshButton_Click(object sender, RoutedEventArgs e)
         {
-            _collapseLedgerDuplicates = CollapseDuplicatesChk.IsChecked == true;
-            if (_vtRows == null) { RefreshLedgerOnly(); return; }
+            if (!_session.HasWorkbook) { RefreshLedgerOnly(); return; }
             Mouse.OverrideCursor = Cursors.Wait;
-            try { RebuildPlanAndRender(_vtRows.Count); }
+            try { RebuildPlanAndRender(); }
             catch (Exception ex)
             {
                 // Same as Load/RefreshLedgerOnly: never let a read failure
@@ -390,52 +382,68 @@ namespace PipingSpecPlugin.UI
             finally { Mouse.OverrideCursor = null; }
         }
 
-        void CollapseDuplicatesChk_Changed(object sender, RoutedEventArgs e)
+        void LedgerScope_Changed(object sender, SelectionChangedEventArgs e)
         {
             if (!IsLoaded) return;
-            _collapseLedgerDuplicates = CollapseDuplicatesChk.IsChecked == true;
-            if (_vtRows != null)
-            {
-                Mouse.OverrideCursor = Cursors.Wait;
-                try { RebuildPlanAndRender(_vtRows.Count); }
-                catch (Exception ex)
-                {
-                    MessageBox.Show(this, $"Не удалось перечитать линии из Plant 3D:\n{ex.GetType().Name}: {ex.Message}",
-                        "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
-                }
-                finally { Mouse.OverrideCursor = null; }
-            }
-            else
-            {
-                RefreshLedgerOnly();
-            }
+            _session.InvalidatePreview();
+            ApplyButton.IsEnabled = false;
+            LedgerGrid.ItemsSource = null;
+            SummaryText.Text = "";
+            ProblemsText.Text = "";
+            StatusText.Text = "Обновите ведомость, чтобы прочитать линии выбранной области.";
+            UpdateSelectedState();
+            RefreshButton_Click(sender, e);
         }
 
         void CloseButton_Click(object sender, RoutedEventArgs e) => Close();
 
+        bool ConfirmServiceLifeColumn()
+        {
+            var cursor = Mouse.OverrideCursor;
+            Mouse.OverrideCursor = null;
+            try
+            {
+                var confirm = MessageBox.Show(this,
+                    "Для записи срока службы нужно добавить свойство «Срок службы, лет» (srok) в схему проекта Plant 3D. Добавить свойство и продолжить синхронизацию?",
+                    "Изменение схемы проекта", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
+                return confirm == MessageBoxResult.Yes;
+            }
+            finally { Mouse.OverrideCursor = cursor; }
+        }
+
         void ApplyButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_plan == null || _plan.Actions.Count == 0) return;
+            var plan = Plan;
+            var fieldsTotal = plan?.TotalChangedFields() ?? 0;
+            if (fieldsTotal == 0) return;
 
-            var linesTouched = _plan.Actions.Select(a => a.Line.RowId).Distinct().Count();
-            var fieldsTotal = _plan.TotalChangedFields();
+            var linesTouched = plan.Actions.Count(action => action.Changes.Count > 0);
+            var scope = CurrentDrawingOnly ? "на текущем чертеже" : "во всём проекте Plant 3D";
             var confirm = MessageBox.Show(this,
-                $"Будет изменено полей: {fieldsTotal} на {linesTouched} линиях в текущем проекте Plant 3D.\n\n"
+                $"Будет изменено полей: {fieldsTotal} на {linesTouched} линиях {scope}.\n\n"
                 + "Действие нельзя отменить средствами плагина (только вручную в Plant 3D). Продолжить?",
                 "Синхронизация ВТ", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (confirm != MessageBoxResult.Yes) return;
 
+            ApplyConfirmedPlan(plan, $"Готово. Изменено полей: {fieldsTotal} на {linesTouched} линиях.",
+                "Синхронизация не завершена.");
+        }
+
+        void ApplyConfirmedPlan(LineSyncPlan plan, string success, string failure, IReadOnlyCollection<int> rowIds = null)
+        {
             Mouse.OverrideCursor = Cursors.Wait;
-            List<string> errors;
+            IReadOnlyList<string> errors;
             try
             {
-                errors = LineSyncService.Apply(_plan, _projectDlm, _trace);
+                var result = _session.Apply(plan, ConfirmServiceLifeColumn);
+                if (result.Cancelled) return;
+                errors = result.Errors;
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, $"Синхронизация прервана:\n{ex.GetType().Name}: {ex.Message}",
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
-                if (_vtRows != null) try { RebuildPlanAndRender(_vtRows.Count); } catch { }
+                RefreshAfterWrite(false, rowIds);
                 return;
             }
             finally
@@ -443,102 +451,61 @@ namespace PipingSpecPlugin.UI
                 Mouse.OverrideCursor = null;
             }
 
-            // Latch: a later failed Apply in the same window must not hide an
-            // earlier successful one (SYNCVT then reported "no confirmed
-            // successful sync" although values had been written).
-            if (errors.Count == 0) Applied = true;
-            // Same guard as SyncVtCommand: defaults from a failed Load()
-            // must not overwrite the user's settings.json.
+            var confirmed = errors.Count == 0;
+            if (confirmed) Applied = true;
             if (!_settings.LoadFailed)
                 try { _settings.Save(); }
                 catch (Exception ex) { _trace?.Invoke($"Не удалось сохранить настройки: {ex.Message}"); }
 
-            // Re-read from Plant 3D and re-render the ledger so the user
-            // sees the post-write state in the same window rather than
-            // having to close and re-run the command to check the result.
-            // Guarded: an exception escaping a WPF click handler inside
-            // AutoCAD takes the dispatcher (and the session) down, and the
-            // write itself has already happened at this point.
-            try { RebuildPlanAndRender(_vtRows.Count); }
-            catch (Exception ex)
+            RefreshAfterWrite(confirmed, rowIds);
+            if (confirmed)
             {
-                _trace?.Invoke($"Не удалось перечитать линии после записи: {ex.GetType().Name}: {ex.Message}");
-                StatusText.Text = "Изменения записаны, но перечитать линии не удалось — нажмите «Обновить ведомость».";
-            }
-
-            if (errors.Count == 0)
-            {
-                MessageBox.Show(this,
-                    $"Готово. Изменено полей: {fieldsTotal} на {linesTouched} линиях.\n\n"
+                MessageBox.Show(this, success + "\n\n"
                     + "Значения записаны в проектную базу Plant 3D (P3dLineGroup). "
                     + "Если на деталях этих линий настроено наследование свойств "
                     + "(правила Property Acquisition), для их обновления может "
                     + "понадобиться пересохранить/переоткрыть соответствующие чертежи.",
                     "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
             }
-            else
+
+            MessageBox.Show(this,
+                $"{failure} Ошибок: {errors.Count}. Проверьте состояние проекта.\n\n"
+                + string.Join("\n", errors.Take(20))
+                + (errors.Count > 20 ? $"\n… и ещё {errors.Count - 20}." : ""),
+                "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
+        void RefreshAfterWrite(bool confirmed, IReadOnlyCollection<int> rowIds)
+        {
+            if (!_session.HasWorkbook) return;
+            try
             {
-                MessageBox.Show(this,
-                    $"Синхронизация не завершена. Ошибок: {errors.Count}. Проверьте состояние проекта.\n\n"
-                    + string.Join("\n", errors.Take(20))
-                    + (errors.Count > 20 ? $"\n… и ещё {errors.Count - 20}." : ""),
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
+                RebuildPlanAndRender();
+                ReselectLine(rowIds);
             }
-        }
-
-        DataRowView SelectedRowView => LedgerGrid.SelectedItem as DataRowView;
-
-        List<int> GetSelectedRowIds()
-        {
-            var drv = SelectedRowView;
-            if (drv == null) return new List<int>();
-            if (drv.Row.Table.Columns.Contains("_RowIds"))
+            catch (Exception ex)
             {
-                var s = drv["_RowIds"] as string;
-                if (!string.IsNullOrEmpty(s))
-                {
-                    return s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                            .Select(part => int.TryParse(part, out var id) ? id : 0)
-                            .Where(id => id != 0)
-                            .ToList();
-                }
+                _trace?.Invoke($"Не удалось перечитать линии после записи: {ex.GetType().Name}: {ex.Message}");
+                StatusText.Text = confirmed
+                    ? "Запись подтверждена, но обновить ведомость не удалось."
+                    : "Запись завершилась с ошибкой, перечитать линии не удалось.";
             }
-            return new List<int>();
         }
 
-        string GetSelectedLineId()
-        {
-            var drv = SelectedRowView;
-            return (drv?["ID"] as string ?? "").Trim();
-        }
+        LineLedgerRow SelectedRow => LedgerGrid.SelectedItem as LineLedgerRow;
 
-        string GetSelectedLineTag()
-        {
-            var drv = SelectedRowView;
-            var tag = drv?["Тег линии"] as string ?? "";
-            return tag.Replace("⚠ дубль ID · ", "").Trim();
-        }
+        List<int> GetSelectedRowIds() => SelectedRow?.AllRowIds.ToList() ?? new List<int>();
+
+        string GetSelectedLineId() => SelectedRow?.Id?.Trim() ?? "";
+
+        string GetSelectedLineTag() => SelectedRow?.Tag?.Trim() ?? "";
 
         List<LineSyncAction> GetSelectedActions()
         {
-            if (_plan == null || _plan.Actions == null || _plan.Actions.Count == 0)
-                return new List<LineSyncAction>();
-
-            var rowIds = GetSelectedRowIds();
-            if (rowIds.Count > 0)
-            {
-                var idSet = new HashSet<int>(rowIds);
-                var actions = _plan.Actions.Where(a => a.Line != null && idSet.Contains(a.Line.RowId)).ToList();
-                if (actions.Count > 0) return actions;
-            }
-
-            var lineId = GetSelectedLineId();
-            if (!string.IsNullOrEmpty(lineId))
-            {
-                return _plan.Actions.Where(a => a.Line != null && string.Equals(a.Line.Id?.Trim(), lineId, StringComparison.OrdinalIgnoreCase)).ToList();
-            }
-
-            return new List<LineSyncAction>();
+            var rowIds = GetSelectedRowIds().ToHashSet();
+            return Plan?.Actions.Where(action => rowIds.Contains(action.Line.RowId)).ToList()
+                ?? new List<LineSyncAction>();
         }
 
         void UpdateSelectedState()
@@ -546,6 +513,8 @@ namespace PipingSpecPlugin.UI
             var rowIds = GetSelectedRowIds();
             var lineId = GetSelectedLineId();
             var lineTag = GetSelectedLineTag();
+            if (DeleteDuplicateMenuItem != null)
+                DeleteDuplicateMenuItem.IsEnabled = rowIds.Count == 1 && SelectedRow?.HasProjectDuplicate == true;
 
             if (rowIds.Count == 0 && string.IsNullOrEmpty(lineId))
             {
@@ -554,7 +523,7 @@ namespace PipingSpecPlugin.UI
                 return;
             }
 
-            if (_plan == null)
+            if (Plan == null)
             {
                 ApplySelectedButton.IsEnabled = false;
                 if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
@@ -576,12 +545,17 @@ namespace PipingSpecPlugin.UI
                 ApplySelectedButton.IsEnabled = false;
                 if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
 
-                var isUnmatchedLine = _plan.UnmatchedLines.Any(l => rowIds.Contains(l.RowId) || string.Equals(l.Id?.Trim(), lineId, StringComparison.OrdinalIgnoreCase));
-                var isDuplicateVtNN = _plan.DuplicateVtNN.Contains(lineId);
+                var isUnmatchedLine = Plan.UnmatchedLines.Any(l => rowIds.Contains(l.RowId));
+                var isDuplicateVtNN = Plan.DuplicateVtNN.Contains(lineId, StringComparer.OrdinalIgnoreCase);
+                var blockedReason = rowIds.Select(id => Plan.BlockedLines.GetValueOrDefault(id)).FirstOrDefault(reason => reason != null);
 
                 if (isDuplicateVtNN)
                 {
                     StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): n/n встречается несколько раз в файле ВТ (пропущена).";
+                }
+                else if (blockedReason != null)
+                {
+                    StatusText.Text = blockedReason;
                 }
                 else if (isUnmatchedLine)
                 {
@@ -603,51 +577,77 @@ namespace PipingSpecPlugin.UI
         {
             var dep = e.OriginalSource as DependencyObject;
             while (dep != null && dep is not DataGridRow)
-            {
-                if (dep is System.Windows.Controls.Primitives.DataGridColumnHeader)
-                    return;
                 dep = VisualTreeHelper.GetParent(dep);
-            }
-            if (dep is DataGridRow row)
+            LedgerGrid.SelectedItem = (dep as DataGridRow)?.Item;
+        }
+
+        void DeleteDuplicateMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var rowIds = GetSelectedRowIds();
+            if (rowIds.Count != 1 || SelectedRow?.HasProjectDuplicate != true) return;
+
+            var rowId = rowIds[0];
+            var lineId = GetSelectedLineId();
+            const string unavailable = "Запись можно удалить, если её ID повторяется и в Plant 3D удалось подтвердить отсутствие связей с деталями и другими записями проекта.";
+            try
             {
-                LedgerGrid.SelectedItem = row.Item;
+                var candidate = _duplicates.FindDeletableDuplicate(rowId, lineId);
+                if (candidate == null)
+                {
+                    MessageBox.Show(this, unavailable, "Удаление дубля", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                var confirm = MessageBox.Show(this,
+                    $"Удалить из проекта запись «{candidate.Line.Tag}» (ID «{lineId}», PnPID {rowId})?\n\n"
+                    + "Удаление записи нельзя отменить командой AutoCAD «Отменить».",
+                    "Удаление дубля", MessageBoxButton.YesNo, MessageBoxImage.Warning, MessageBoxResult.No);
+                if (confirm != MessageBoxResult.Yes) return;
+
+                candidate = _duplicates.FindDeletableDuplicate(rowId, lineId);
+                if (candidate == null)
+                {
+                    MessageBox.Show(this, unavailable, "Удаление дубля", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+
+                IReadOnlyList<string> errors;
+                try
+                {
+                    errors = _duplicates.DeleteDuplicate(candidate);
+                }
+                finally
+                {
+                    _session.InvalidatePreview();
+                    ApplyButton.IsEnabled = false;
+                    UpdateSelectedState();
+                    RefreshButton_Click(sender, e);
+                }
+                if (errors.Count == 0)
+                    StatusText.Text = $"Удалён дубль ID «{lineId}» (PnPID {rowId}).";
+                else
+                    MessageBox.Show(this, string.Join("\n", errors), "Удаление дубля", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, $"Не удалось удалить дубль:\n{ex.Message}",
+                    "Удаление дубля", MessageBoxButton.OK, MessageBoxImage.Error);
             }
         }
 
-        void ReselectLine(List<int> rowIds, string lineId)
+        void ReselectLine(IReadOnlyCollection<int> rowIds)
         {
-            if (LedgerGrid.ItemsSource is not DataView dataView) return;
-            var targetSet = new HashSet<int>(rowIds ?? Enumerable.Empty<int>());
-            foreach (DataRowView drv in dataView)
-            {
-                if (targetSet.Count > 0 && drv.Row.Table.Columns.Contains("_RowIds"))
-                {
-                    var s = drv["_RowIds"] as string;
-                    if (!string.IsNullOrEmpty(s))
-                    {
-                        var ids = s.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries)
-                                   .Select(p => int.TryParse(p, out var id) ? id : 0)
-                                   .Where(id => id != 0);
-                        if (ids.Any(targetSet.Contains))
-                        {
-                            LedgerGrid.SelectedItem = drv;
-                            LedgerGrid.ScrollIntoView(drv);
-                            return;
-                        }
-                    }
-                }
-                if (!string.IsNullOrEmpty(lineId) && string.Equals((drv["ID"] as string ?? "").Trim(), lineId, StringComparison.OrdinalIgnoreCase))
-                {
-                    LedgerGrid.SelectedItem = drv;
-                    LedgerGrid.ScrollIntoView(drv);
-                    return;
-                }
-            }
+            if (rowIds == null || rowIds.Count == 0 || LedgerGrid.ItemsSource is not IEnumerable<LineLedgerRow> rows) return;
+            var targetIds = rowIds.ToHashSet();
+            var row = rows.FirstOrDefault(item => item.AllRowIds.Any(targetIds.Contains));
+            if (row == null) return;
+            LedgerGrid.SelectedItem = row;
+            LedgerGrid.ScrollIntoView(row);
         }
 
         void ApplySelectedButton_Click(object sender, RoutedEventArgs e)
         {
-            if (_plan == null) return;
+            if (Plan == null) return;
 
             var actions = GetSelectedActions();
             var changes = actions.SelectMany(a => a.Changes).ToList();
@@ -678,62 +678,9 @@ namespace PipingSpecPlugin.UI
                 Actions = actions
             };
 
-            Mouse.OverrideCursor = Cursors.Wait;
-            List<string> errors;
-            try
-            {
-                errors = LineSyncService.Apply(singlePlan, _projectDlm, _trace);
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show(this, $"Синхронизация прервана:\n{ex.GetType().Name}: {ex.Message}",
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Error);
-                if (_vtRows != null)
-                {
-                    try { RebuildPlanAndRender(_vtRows.Count); ReselectLine(rowIds, lineId); } catch { }
-                }
-                return;
-            }
-            finally
-            {
-                Mouse.OverrideCursor = null;
-            }
-
-            if (errors.Count == 0) Applied = true;
-            if (!_settings.LoadFailed)
-                try { _settings.Save(); }
-                catch (Exception ex) { _trace?.Invoke($"Не удалось сохранить настройки: {ex.Message}"); }
-
-            try
-            {
-                RebuildPlanAndRender(_vtRows.Count);
-                ReselectLine(rowIds, lineId);
-            }
-            catch (Exception ex)
-            {
-                _trace?.Invoke($"Не удалось перечитать линии после записи: {ex.GetType().Name}: {ex.Message}");
-                StatusText.Text = "Изменения записаны, но перечитать линии не удалось — нажмите «Обновить ведомость».";
-            }
-
-            if (errors.Count == 0)
-            {
-                MessageBox.Show(this,
-                    $"Готово. Линия «{lineTag}» (ID «{lineId}») успешно синхронизирована.\n"
-                    + $"Изменено полей: {changes.Count}.\n\n"
-                    + "Значения записаны в проектную базу Plant 3D (P3dLineGroup). "
-                    + "Если на деталях этой линии настроено наследование свойств "
-                    + "(правила Property Acquisition), для их обновления может "
-                    + "понадобиться пересохранить/переоткрыть соответствующие чертежи.",
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            else
-            {
-                MessageBox.Show(this,
-                    $"Синхронизация линии «{lineTag}» не завершена. Ошибок: {errors.Count}. Проверьте состояние проекта.\n\n"
-                    + string.Join("\n", errors.Take(20))
-                    + (errors.Count > 20 ? $"\n… и ещё {errors.Count - 20}." : ""),
-                    "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
-            }
+            ApplyConfirmedPlan(singlePlan,
+                $"Готово. Линия «{lineTag}» (ID «{lineId}») успешно синхронизирована.\nИзменено полей: {changes.Count}.",
+                $"Синхронизация линии «{lineTag}» не завершена.", rowIds);
         }
     }
 }

@@ -22,7 +22,7 @@ namespace PipingSpecPlugin.Tests
   {
    var line = new LineGroupInfo { RowId=1, Id="1" };
    line.AllProperties["Номер"]="previous";
-   var plan=LineSyncService.BuildPlan(new List<VtRowData>{new VtRowData{NN="1",Designation=designation}},new List<LineGroupInfo>{line});
+   var plan=LineSyncPlanner.BuildPlan(new List<VtRowData>{new VtRowData{NN="1",Designation=designation}},new List<LineGroupInfo>{line});
    var changes=plan.Actions.Single().Changes;
    Assert.Equal(expected,changes.SingleOrDefault(c=>c.PropertyName=="Номер")?.NewValue);
    Assert.Equal(designation,changes.Single(c=>c.PropertyName=="Tag").NewValue);
@@ -35,7 +35,7 @@ namespace PipingSpecPlugin.Tests
   {
    var line = new LineGroupInfo { RowId=1, Id="1" };
    line.AllProperties["Tag"]=currentTag;
-   var plan=LineSyncService.BuildPlan(new List<VtRowData>{new VtRowData{NN="1",Designation="150-KSN001-LS016C-HN (Врезка 2; 5)"}},new List<LineGroupInfo>{line});
+   var plan=LineSyncPlanner.BuildPlan(new List<VtRowData>{new VtRowData{NN="1",Designation="150-KSN001-LS016C-HN (Врезка 2; 5)"}},new List<LineGroupInfo>{line});
    var changes=plan.Actions.SelectMany(a=>a.Changes).ToList();
    Assert.Equal(expectedNewTag,changes.SingleOrDefault(c=>c.PropertyName=="Tag")?.NewValue);
    Assert.Equal("001",changes.SingleOrDefault(c=>c.PropertyName=="Номер")?.NewValue);

@@ -16,11 +16,13 @@ public sealed class SchematicLayout
     public int ClosedLoops {get;}
     internal IReadOnlyList<string> NonGridPipes {get;}
     public SchematicLayout(PipelineSnapshot snapshot,int quarterTurns=0,int compactLevel=0,IReadOnlyDictionary<string,double>? pipeExtensions=null,IsoSymbolMap? symbolMap=null,double paperMargin=0,double? fixedScale=null)
-        :this(snapshot,PipelineTopology.Build(snapshot),quarterTurns,compactLevel,pipeExtensions,symbolMap,paperMargin,fixedScale)
+        :this(snapshot,PipelineTopology.Build(snapshot),quarterTurns,compactLevel,pipeExtensions,
+            symbolMap is null?null:symbolMap.ResolveGeometry,paperMargin,fixedScale)
     {}
 
     internal SchematicLayout(PipelineSnapshot snapshot,PipelineTopology topology,int quarterTurns,int compactLevel,
-        IReadOnlyDictionary<string,double>? pipeExtensions,IsoSymbolMap? symbolMap,double paperMargin,double? fixedScale=null,PlanningExecution? execution=null)
+        IReadOnlyDictionary<string,double>? pipeExtensions,Func<Part,(IsoBlockDefinition Definition,double Scale)?>? symbolGeometry,
+        double paperMargin,double? fixedScale=null,PlanningExecution? execution=null)
     {
         graph=topology;
         var hiddenGaskets=FlangedJointPolicy.Find(snapshot).Select(j=>j.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -32,11 +34,9 @@ public sealed class SchematicLayout
         {
             if(edge.Kind==ComponentKind.TapOffset)return 0;
             if(edge.Kind==ComponentKind.Joint)return 1; // Requested visible flange-joint gap, not a symbol size.
-            if(symbolMap?.Catalog is {} catalog&&parts.TryGetValue(edge.Source,out var part))
+            if(parts.TryGetValue(edge.Source,out var part)&&symbolGeometry?.Invoke(part) is {} geometry)
             {
-                var block=symbolMap.Resolve(IsoDefinition.Parse(part.SymbolDefinition).Skey);
-                var definition=block is null?null:catalog.Find(block);
-                if(definition is null)return 10; // Explicit missing-block placeholder policy.
+                var (definition,scale)=geometry;
                 var ports=definition.Ports.Where(p=>p.Key.StartsWith("Port",StringComparison.OrdinalIgnoreCase)).OrderBy(p=>int.TryParse(p.Key[4..],out int number)?number:int.MaxValue).Select(p=>p.Value).ToArray();
                 if(edge.Kind is ComponentKind.Elbow or ComponentKind.Tee)
                 {
@@ -59,13 +59,13 @@ public sealed class SchematicLayout
                             len=Math.Abs(port.X-apexX);
                         }
                         else len=Math.Sqrt(Math.Pow(port.X-localCenter.X,2)+Math.Pow(port.Y-localCenter.Y,2));
-                        return len*catalog.ScaleFor(part);
+                        return len*scale;
                     }
                 }
                 var a=ports.Length>0?ports[0]:new SheetPoint(definition.Minimum.X,0);
                 var b=ports.Length>1?ports[1]:new SheetPoint(definition.Maximum.X,0);
                 double span=Math.Sqrt(Math.Pow(b.X-a.X,2)+Math.Pow(b.Y-a.Y,2));
-                return (span>1e-8?span:definition.Maximum.X-definition.Minimum.X)*catalog.ScaleFor(part);
+                return (span>1e-8?span:definition.Maximum.X-definition.Minimum.X)*scale;
             }
             return 10; // No library: same explicit missing-symbol policy, never a fitting minimum.
 

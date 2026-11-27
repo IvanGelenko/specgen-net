@@ -23,6 +23,7 @@ namespace PipingSpecPlugin.Spec
         // the caller must also supply ValveCompanionPnPIds from
         // ValveCompanionFinder.Discover.
         public bool ExcludeValveCompanions = false;
+        public bool ExcludeValvesAndInstruments = false;
 
         // PnPIDs of parts that are owned by equipment (nozzles, manways,
         // internal supports) and must therefore never appear in the spec
@@ -54,6 +55,7 @@ namespace PipingSpecPlugin.Spec
         public Dictionary<int, BendOrphanInfo> ExtraPipeOrphanInfo = null;
         public bool DisableElementGrouping = false;
         public bool IncludePipeBendsAsPipe = false;
+        internal bool UseCatalogueBendNames;
         public IDictionary<int, List<int>> Topology = null;
     }
 
@@ -117,7 +119,7 @@ namespace PipingSpecPlugin.Spec
             // warning instead of on its sibling pipe.
             Dictionary<int, string> extraPipeLineTags = _opts.ExtraPipeLineTags;
             Dictionary<int, BendOrphanInfo> extraPipeOrphanInfo = _opts.ExtraPipeOrphanInfo;
-            Dictionary<int, List<int>> extraPipeBendIds = null;
+            Dictionary<int, List<(PartRecord Bend, double Metres)>> foldedBends = null;
             HashSet<int> orphanBends = null;
 
             // null = no status filter; non-null = include only listed statuses.
@@ -139,6 +141,7 @@ namespace PipingSpecPlugin.Spec
                 var selected = rowList.Where(r =>
                     (statusSet == null || statusSet.Contains(r.Status ?? "")) &&
                     (catSet == null || catSet.Contains(NormalizeCategory(r))) &&
+                    !(_opts.ExcludeValvesAndInstruments && IsValveOrInstrument(NormalizeCategory(r))) &&
                     (lineSet == null || lineSet.Contains(string.IsNullOrEmpty(r.LineNumberTag)
                         ? SpecConstants.NullLine : r.LineNumberTag)) &&
                     !(_opts.EquipmentOwnedPnPIds?.Contains(r.PnPID) ?? false) &&
@@ -151,23 +154,15 @@ namespace PipingSpecPlugin.Spec
                 extraPipeMetres = folded.ExtraPipeMetres;
                 extraPipeLineTags = folded.ExtraPipeLineTags;
                 extraPipeOrphanInfo = folded.ExtraPipeOrphanInfo;
-                extraPipeBendIds = folded.ExtraPipeBendIds;
+                foldedBends = folded.FoldedBends;
                 orphanBends = folded.OrphanBends;
             }
-
-            // First record per PnPID, to name bends whose metres got stranded.
-            var recordById = new Dictionary<int, PartRecord>();
-            foreach (var r in rowList)
-                if (!recordById.ContainsKey(r.PnPID)) recordById[r.PnPID] = r;
 
             var buckets = new Dictionary<BucketKey, Bucket>();
             var seenPids = new Dictionary<int, string>();   // pid -> first-seen LineTag
             var multiLine = new HashSet<int>();
             var zeroPipes = 0;
-            // Index of created pipe buckets keyed by their procurement
-            // identity (line, ND, spec, material) so we can park orphan
-            // bend metres into a sibling pipe when the original target
-            // pipe got filtered out.
+            // Candidate buckets for precomputed or otherwise stranded bend lengths.
             var pipeFallbackBuckets = new Dictionary<string, Bucket>(
                 System.StringComparer.Ordinal);
 
@@ -189,6 +184,8 @@ namespace PipingSpecPlugin.Spec
                 { Drop("valve-companion"); continue; }
 
                 var category = NormalizeCategory(r);
+                if (_opts.ExcludeValvesAndInstruments && IsValveOrInstrument(category))
+                { Drop("valve-or-instrument"); continue; }
                 if (_opts.ExcludeEquipment && category == "Equipment")
                 { Drop("equipment-category"); continue; }
                 if (_opts.ExcludeConnectors && IsConnector(category, r))
@@ -251,7 +248,7 @@ namespace PipingSpecPlugin.Spec
                             : $"Компонент PnPID {r.PnPID} связан с несколькими линиями ('{oldLine}', '{rawLine}', ...). Учтен один раз.");
                         _review.Add(ReviewItem.ForPart(r,
                             $"Деталь связана с несколькими линиями ({LineLabel(oldLine)}, {LineLabel(rawLine)}) — учтена один раз, в {LineLabel(oldLine)}",
-                            BuildName(NormalizeCategory(r), r)));
+                            BuildName(r)));
                     }
                     Drop("dedup-by-pid");
                     continue;
@@ -265,8 +262,12 @@ namespace PipingSpecPlugin.Spec
                 // see CategoryClassifier.SpecSection for the why.
                 category = CategoryClassifier.SpecSection(category, r, _opts.IncludePipeBendsAsPipe);
                 var isPipe = category == "Pipe";
-                var name = BuildName(category, r);
-                var typeMark = BuildTypeMark(category, r);
+                var rawName = RawName(r);
+                var groupingName = r.IsPipeBend ? BendNameNormalizer.Normalize(rawName) : rawName;
+                var (name, pipeStandard) = r.IsPipeBend && !_opts.UseCatalogueBendNames
+                    ? BendNameNormalizer.FormatForSpecification(rawName)
+                    : (groupingName, null);
+                var typeMark = pipeStandard ?? BuildTypeMark(category, r);
                 // Quantise the nominal diameter before it enters the bucket
                 // key. The raw catalogue value can arrive as "100" or
                 // "100.00" (fine — same double) but also as a slightly
@@ -361,7 +362,7 @@ namespace PipingSpecPlugin.Spec
                     pieces = qparsed ?? 1.0;
                 }
 
-                var key = new BucketKey(category, name, ndVal, nomUnit, material,
+                var key = new BucketKey(category, groupingName, ndVal, nomUnit, material,
                                         typeMark, itemCode, manuf, currentLine,
                                         _opts.DisableElementGrouping ? r.PnPID : 0,
                                         ((r.PressureClass ?? "").Trim(), (r.Facing ?? "").Trim(),
@@ -369,9 +370,11 @@ namespace PipingSpecPlugin.Spec
                                         (ParseNullableDouble(r.WallThickness), (r.Schedule ?? "").Trim()));
                 if (!buckets.TryGetValue(key, out var b))
                 {
-                    b = new Bucket { LineTag = currentLine };
+                    b = new Bucket { LineTag = currentLine, Name = name };
                     buckets[key] = b;
                 }
+                else if (string.CompareOrdinal(name, b.Name) < 0)
+                    b.Name = name;
                 b.SourceCount++;
                 var weightsBefore = b.Weights.Count;
                 var massFlagged = false;
@@ -399,36 +402,11 @@ namespace PipingSpecPlugin.Spec
                 if (isPipe)
                 {
                     b.Qty += (decimal)ParseDouble(r.Length) * (decimal)toMeters;
-                    // Fold accumulated PipeBend lengths into this pipe.
-                    // extraPipeMetres is keyed by Pipe PnPID; the bends
-                    // themselves were dropped earlier via bendsConsumed,
-                    // so this is the only place their length surfaces.
-                    if (extraPipeMetres != null
-                        && extraPipeMetres.TryGetValue(r.PnPID, out var extra))
-                    {
-                        b.Qty += (decimal)extra;
-                        extraPipeMetres.Remove(r.PnPID);  // accounted for
-                    }
-                    // Remember this bucket as a fallback target so
-                    // bend metres tied to a pipe that itself got
-                    // filtered out (status, line, category) can still
-                    // land *somewhere* in the same line and not vanish.
-                    // Keyed by (LineTag, NominalDiameter, Spec) — the
-                    // identity a procurement person would treat as
-                    // "the same piping run".
-                    // Wall / schedule / pressure class are part of the key:
-                    // PipeBendFolder only folds a bend into a pipe that
-                    // matches on them (Compatible), so a reroute must not
-                    // be looser and park the metres on a sibling with a
-                    // different wall — that is a different purchased pipe.
-                    //
-                    // An ON-mode orphan bend is itself a "Pipe" row, but it
-                    // is NOT a valid target: stranded metres belong to the
-                    // straight-pipe row, not to an «Изгиб трубы …» line
-                    // (which one won depended on read order).
+                    // Only straight pipes are eligible, with the same identity
+                    // constraints as a connected target in PipeBendFolder.
                     if (!r.IsPipeBend)
-                        pipeFallbackBuckets[FallbackKey(rawLine, ndVal, spec, material,
-                            ParseNullableDouble(r.WallThickness), r.Schedule, r.PressureClass)] = b;
+                        pipeFallbackBuckets[FallbackKey(r.SourceDwgPath, rawLine, ndVal, nomUnit,
+                            spec, material, ParseNullableDouble(r.WallThickness), r.Schedule, r.PressureClass)] = b;
                     // A zero/negative LinearWeight is "not filled in", not a
                     // mass: fall through to Weight / length instead of
                     // reporting the pipe as massless while Weight is set.
@@ -497,8 +475,7 @@ namespace PipingSpecPlugin.Spec
                     // landed in the review section as "масса не задана". Never
                     // overrides a real Weight, and never guesses past an
                     // unknown unit. No double count: a bend folded into a pipe
-                    // never reaches this branch (its metres take the pipe's
-                    // kg/m), and an ON-mode orphan WITH a length is a «Трубы»
+                    // never reaches this branch, and an ON-mode orphan WITH a length is a «Трубы»
                     // row whose mass column is already kg/m.
                     if (r.IsPipeBend && b.Weights.Count == weightsBefore && !massFlagged)
                     {
@@ -512,6 +489,34 @@ namespace PipingSpecPlugin.Spec
                 // drawings (the row note only says "X of Y").
                 if (b.Weights.Count == weightsBefore && !massFlagged)
                     b.NoMassParts.Add(r);
+
+                if (isPipe && extraPipeMetres != null && extraPipeMetres.Remove(r.PnPID, out var extra))
+                    AddFoldedBends(b, r.PnPID, extra);
+            }
+
+            void AddFoldedBends(Bucket bucket, int targetId, double metres)
+            {
+                bucket.Qty += (decimal)metres;
+                if (foldedBends == null || !foldedBends.TryGetValue(targetId, out var bends))
+                    return;
+
+                foreach (var (bend, length) in bends)
+                {
+                    var weight = ParseNullableDouble(bend.Weight);
+                    var factor = WeightFactor(bend.WeightUnit);
+                    var mass = weight > 0 && factor.HasValue
+                        ? weight.Value * factor.Value
+                        : BendMassFromLinearWeight(bend);
+                    bucket.SourceCount++;
+                    if (mass > 0 && double.IsFinite(mass.Value / length))
+                        AddWeight(bucket, mass.Value / length, length);
+                    else
+                        bucket.NoMassParts.Add(bend);
+
+                    if (bend.ReadWarnings != null)
+                        foreach (var warning in bend.ReadWarnings)
+                            _review.Add(ReviewItem.ForPart(bend, warning, BuildName(bend)));
+                }
             }
 
             if (zeroPipes > 0)
@@ -535,11 +540,6 @@ namespace PipingSpecPlugin.Spec
                     extraPipeLineTags.TryGetValue(orphanPipePid, out var bendLine);
                     if (string.IsNullOrEmpty(bendLine)) continue;
 
-                    // Stage 1 — exact procurement match. The bend carries
-                    // its own ND/spec/material; the bucket key is
-                    // (line|nd|spec|material). Prefer a sibling pipe of the
-                    // SAME bore so a 24" bend's metres never land on a 2"
-                    // pipe just because they share a line.
                     Bucket target = null;
                     if (extraPipeOrphanInfo != null
                         && extraPipeOrphanInfo.TryGetValue(orphanPipePid, out var info))
@@ -548,14 +548,14 @@ namespace PipingSpecPlugin.Spec
                         // caller (legacy precomputed path) that did not
                         // quantise ND, while fallbackKey uses the rounded
                         // ndVal. Unrounded 3.99999 vs 4.000 never matched.
-                        var exactKey = FallbackKey(bendLine, Math.Round(info.NominalDiameter, 3),
-                            info.Spec, info.Material, info.WallThickness, info.Schedule, info.PressureClass);
+                        var exactKey = FallbackKey(info.DrawingPath, bendLine, Math.Round(info.NominalDiameter, 3),
+                            info.NominalUnit, info.Spec, info.Material, info.WallThickness, info.Schedule, info.PressureClass);
                         pipeFallbackBuckets.TryGetValue(exactKey, out target);
                     }
 
                     if (target != null)
                     {
-                        target.Qty += (decimal)orphanMetres;
+                        AddFoldedBends(target, orphanPipePid, orphanMetres);
                         extraPipeMetres.Remove(orphanPipePid);
                     }
                 }
@@ -576,14 +576,9 @@ namespace PipingSpecPlugin.Spec
                     foreach (var kv in extraPipeMetres)
                     {
                         if (!(kv.Value > 0)) continue;
-                        List<int> bendIds = null;
-                        extraPipeBendIds?.TryGetValue(kv.Key, out bendIds);
-                        var bends = (bendIds ?? new List<int>())
-                            .Select(id => recordById.TryGetValue(id, out var br) ? br : null)
-                            .Where(br => br != null).ToList();
-                        if (bends.Count == 0)
+                        if (foldedBends == null || !foldedBends.TryGetValue(kv.Key, out var bends))
                         {
-                            // Legacy precomputed path: no bend ids, only the total.
+                            // Legacy precomputed path: only the total is available.
                             string orphanLine = null;
                             extraPipeLineTags?.TryGetValue(kv.Key, out orphanLine);
                             _review.Add(new ReviewItem
@@ -594,17 +589,15 @@ namespace PipingSpecPlugin.Spec
                             });
                             continue;
                         }
-                        foreach (var br in bends)
+                        foreach (var (bend, bendMetres) in bends)
                         {
-                            var bf = LengthFactor(br.LengthUnit);
-                            var bendM = bf.HasValue ? ParseDouble(br.Length) * bf.Value : 0;
                             // 1 µm, like the pipe rows: ReviewSection sums the
                             // bends and rounds UP to 0.1 m, so a per-bend
                             // round to 1 mm could show less than the main
                             // section would have added (300.04 mm → 0.3 m
                             // instead of 0.4 m).
-                            _review.Add(ReviewItem.ForPart(br, stranded, BuildName("Pipe", br),
-                                bendM > 0 ? Math.Round(bendM, 6) : (double?)null, "м"));
+                            _review.Add(ReviewItem.ForPart(bend, stranded, BuildName(bend),
+                                Math.Round(bendMetres, 6), "м"));
                         }
                     }
                 }
@@ -628,13 +621,13 @@ namespace PipingSpecPlugin.Spec
                         weightWarning = $"Внимание: разный вес {FormatInv(min)}..{FormatInv(max)} кг";
                         weight = b.WeightedMass / b.WeightQuantity;
                         _warnings.Add(
-                            $"Разнородные веса в группе '{k.Name}': {FormatInv(min)}..{FormatInv(max)} кг. Использовано среднее: {weight.ToString("F3", CultureInfo.InvariantCulture)} кг.");
+                            $"Разнородные веса в группе '{b.Name}': {FormatInv(min)}..{FormatInv(max)} кг. Использовано среднее: {weight.ToString("F3", CultureInfo.InvariantCulture)} кг.");
                         // Row-level doubt (no single part is "wrong"), so no
                         // PnPID/drawing; the row itself stays in its section.
                         _review.Add(new ReviewItem
                         {
                             Reason = $"Разная масса 1 ед. в одной строке: {FormatInv(min)}..{FormatInv(max)} кг — в спецификации взято среднее {weight.ToString("F3", CultureInfo.InvariantCulture)} кг",
-                            Description = string.IsNullOrEmpty(k.Name) ? null : k.Name,
+                            Description = string.IsNullOrEmpty(b.Name) ? null : b.Name,
                         });
                     }
                     else
@@ -651,13 +644,14 @@ namespace PipingSpecPlugin.Spec
                 {
                     var missing = $"Масса не задана или некорректна у {b.SourceCount - b.Weights.Count} из {b.SourceCount} компонентов";
                     weightWarning = string.IsNullOrEmpty(weightWarning) ? missing : weightWarning + "; " + missing;
-                    _warnings.Add($"{k.Name}: {missing}.");
+                    _warnings.Add($"{b.Name}: {missing}.");
                 }
                 // Parts flagged for an unknown mass unit already have their
                 // own review item; NoMassParts holds only the rest.
                 foreach (var nm in b.NoMassParts)
                     _review.Add(ReviewItem.ForPart(nm,
-                        "Масса не задана или некорректна — в строке спецификации масса не учтена", k.Name));
+                         "Масса не задана или некорректна — в строке спецификации масса не учтена",
+                         nm.IsPipeBend ? BuildName(nm) : b.Name));
 
                 double qty;
                 string note;
@@ -698,7 +692,7 @@ namespace PipingSpecPlugin.Spec
                 result.Add(new SpecRow
                 {
                     Category = k.Category,
-                    Name = k.Name,
+                    Name = b.Name,
                     TypeMark = typeMarkOut,
                     ItemCode = k.ItemCode,
                     Manufacturer = k.Manufacturer,
@@ -795,11 +789,13 @@ namespace PipingSpecPlugin.Spec
         /// formatting can never drift apart. Invariant formatting: the key is
         /// internal, but culture-dependent "F6" is a needless trap.
         /// </summary>
-        static string FallbackKey(string line, double nd, string spec, string material,
+        static string FallbackKey(string drawing, string line, double nd, string nominalUnit, string spec, string material,
                                   double? wall, string schedule, string pressure)
             => string.Join("|",
+                (drawing ?? "").ToUpperInvariant(),
                 line ?? "",
                 nd.ToString("F6", CultureInfo.InvariantCulture),
+                (nominalUnit ?? "").Trim().ToLowerInvariant(),
                 (spec ?? "").Trim(),
                 (material ?? "").Trim(),
                 wall.HasValue ? wall.Value.ToString("R", CultureInfo.InvariantCulture) : "",
@@ -826,17 +822,20 @@ namespace PipingSpecPlugin.Spec
         static bool IsConnector(string category, PartRecord r)
             => CategoryClassifier.IsConnector(category, r);
 
-        static string BuildName(string category, PartRecord r)
+        static bool IsValveOrInstrument(string category)
+            => CategoryClassifier.CanonicalSection(category) is "Valves" or "Instruments"
+                || string.Equals(category, "Valve", StringComparison.OrdinalIgnoreCase);
+
+        static string RawName(PartRecord r)
+            => CollapseWs(FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "");
+
+        string BuildName(PartRecord r)
         {
-            // Note: for Equipment the Tag (identifier) used to be appended to
-            // the name. It now goes into the "Тип, марка…" column instead
-            // (see BuildTypeMark / TagOf), so the name is just the description.
-            var n = CollapseWs(FirstNonEmpty(r.PartSizeLongDesc, r.PartFamilyLongDesc, r.ShortDescription) ?? "");
-            // The name doubles as the grouping key. Bend descriptions carry
-            // a direction-dependent Д1/Д2 pair and a noisy computed length,
-            // so the same procurement item would otherwise split into
-            // several rows — see BendNameNormalizer.
-            return r.IsPipeBend ? BendNameNormalizer.Normalize(n) : n;
+            var name = RawName(r);
+            if (!r.IsPipeBend) return name;
+            return _opts.UseCatalogueBendNames
+                ? BendNameNormalizer.Normalize(name)
+                : BendNameNormalizer.FormatForSpecification(name).Name;
         }
 
         // Categories whose identifier (Tag) is written into the
@@ -999,6 +998,7 @@ namespace PipingSpecPlugin.Spec
 
         sealed class Bucket
         {
+            public string Name;
             public decimal Qty;
             public double WeightedMass, WeightQuantity;
             public int SourceCount;

@@ -19,6 +19,7 @@ using(var source=JsonDocument.Parse(snapshotJson))
         var props=item.EnumerateObject().Select(p=>new KeyValuePair<string,string>(p.Name,
             p.Value.ValueKind==JsonValueKind.Null?null:p.Value.ToString()));
         var record=PartPropertyReader.Build(id,props,Value("LineNumberTag"));
+        if (record == null) continue;
         record.SourceDwgPath=Value("SourceDwgPath");
         mapped.Add(record);
     }

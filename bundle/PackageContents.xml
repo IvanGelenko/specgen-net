@@ -18,7 +18,7 @@
          while this says R25.0: .NET cannot bind a 25.1 reference to 2025's
          25.0 and the plug-in would fail at every 2025 start. -->
     <RuntimeRequirements OS="Win64"
-                         Platform="AutoCAD*"
+                         Platform="Plant3D"
                          SeriesMin="R25.0"
                          SeriesMax="R25.1"
                          SupportPath="./Contents/Windows/"/>

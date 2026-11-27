@@ -2,6 +2,9 @@ using System.Globalization;
 namespace IsoGenerator.Core;
 internal static class ElevationNotation
 {
+    internal static string Format(double millimeters)=>
+        "ОТМ. "+(millimeters/1000).ToString("+0.000;-0.000;0.000",CultureInfo.InvariantCulture)+"*";
+
     public static void Add(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,List<Annotation> labels,Func<ModelPoint,string,SheetPoint>? projectSource=null,PipelineTopology? topology=null)
     {
         var graph=topology??PipelineTopology.Build(snapshot);
@@ -19,9 +22,7 @@ internal static class ElevationNotation
         {
             SheetPoint At(ModelPoint point,string source)=>projectSource is null?project(point):projectSource(point,source);
             var node=level.First().Node;var anchor=At(node.Point,node.Source);
-            double meters=node.Point.Z/1000;
-            string text="ОТМ. "+meters.ToString("+0.000;-0.000;0.000",CultureInfo.InvariantCulture)+"*";
-            labels.Add(new(node.Source,"elevation",anchor,text,Anchor:anchor));
+            labels.Add(new(node.Source,"elevation",anchor,Format(node.Point.Z),Anchor:anchor));
         }
     }
 }

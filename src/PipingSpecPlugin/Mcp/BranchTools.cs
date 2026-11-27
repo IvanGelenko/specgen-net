@@ -283,7 +283,7 @@ namespace Plant3dMcp
         public static object CreateBranch(JsonElement args)
         {
             var doc = ActiveDocument();
-            var runId = IdFromHandle(doc.Database, args.GetProperty("run_handle").GetString());
+            var runId = IdFromHandle(doc.Database, Tools.Required(args, "run_handle", JsonValueKind.String).GetString());
             string specName = (args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null) ?? DefaultSpec;
             double nd = args.TryGetProperty("nd", out var ndEl) && ndEl.ValueKind == JsonValueKind.Number ? ndEl.GetDouble() : 25;
             double dist = args.TryGetProperty("distance_from_high_end", out var de) && de.ValueKind == JsonValueKind.Number ? de.GetDouble() : 500;
@@ -309,7 +309,7 @@ namespace Plant3dMcp
                 tr.Commit();
             }
             Point3d high = e.Z > s.Z + 1e-6 ? e : s;
-            Point3d low = ReferenceEquals(high, e) || high == e ? s : e;
+            Point3d low = high == e ? s : e;
             if (high == s && Math.Abs(e.Z - s.Z) <= 1e-6) low = e;
             var runDir = (low - high).GetNormal();
             double runLen = high.DistanceTo(low);

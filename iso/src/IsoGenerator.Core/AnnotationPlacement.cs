@@ -121,13 +121,14 @@ internal static class AnnotationPlacement
         }
         var result=new List<Annotation>();
         var leaderPaths=new List<(SheetPoint A,SheetPoint B)>();
-        foreach(var label in labels.OrderBy(l=>l.Role=="bend-angle"?-1:l.Role is "slope-angle" or "slope-value" or "slope-projection"?0:l.Role is "valve-tag" or "instrument-tag" or "external-line" or "support-type"?1:l.Role=="elevation"?2:l.Role is "position" or "position-group"?3:4))
+        foreach(var label in labels.OrderBy(l=>AnnotationPresentation.ForRole(l.Role).Priority))
         {
             execution?.Check();
-            if(label.Role is ("elevation" or "valve-tag" or "instrument-tag" or "external-line" or "support-type" or "continuation")&&label.Anchor is {} anchor)
+            var presentation=AnnotationPresentation.ForRole(label.Role);
+            if(presentation.Leader&&label.Anchor is {} anchor)
             {
                 bool placed=false;double width=TextLength(label.Text)*2.1*(IsoAdvancedSettings.Current.LeaderTextHeight/3.5)+3;int rejectedText=0;
-                bool remoteLeader=label.Role is "valve-tag" or "elevation" or "continuation" or "instrument-tag" or "external-line";
+                bool remoteLeader=presentation.RemoteLeader;
                 (SheetPoint Anchor,SheetPoint Knee,SheetPoint Left,SheetPoint Right,SheetPoint Text,Box Box,double Crowding,int Crossings,int LeaderCrossings,double Score,double Overflow)? bestLeader=null;
                 // Keep text clear, but allow the leader and shelf to cross dimension ink as a fallback.
                 for(int pass=0;pass<2&&!placed&&bestLeader is null;pass++)

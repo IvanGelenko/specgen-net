@@ -267,6 +267,7 @@ namespace PipingSpecPlugin.Commands
                 + $"lines={result.Lines?.Count ?? 0}; "
                 + $"groupByLine={result.GroupByLine}; "
                 + $"excludeValveCompanions={result.ExcludeValveCompanions}; "
+                + $"excludeValvesAndInstruments={result.ExcludeValvesAndInstruments}; "
                 + $"includePipeBends={result.IncludePipeBendsAsPipe}");
 
             // Default: feed every project record into the builder. The
@@ -371,6 +372,7 @@ namespace PipingSpecPlugin.Commands
                 ExcludeEquipment = result.ExcludeEquipment,
                 ExcludeConnectors = result.ExcludeConnectors,
                 ExcludeValveCompanions = result.ExcludeValveCompanions,
+                ExcludeValvesAndInstruments = result.ExcludeValvesAndInstruments,
                 EquipmentOwnedPnPIds = scan.ownedPnPIds,
                 ValveCompanionPnPIds = companionIds,
                 DisableElementGrouping = result.DisableElementGrouping,
@@ -517,6 +519,7 @@ namespace PipingSpecPlugin.Commands
 
             settings.GroupByLine = result.GroupByLine;
             settings.ExcludeValveCompanions = result.ExcludeValveCompanions;
+            settings.ExcludeValvesAndInstruments = result.ExcludeValvesAndInstruments;
             settings.ExcludeEquipment = result.ExcludeEquipment;
             settings.ExcludeConnectors = result.ExcludeConnectors;
             settings.IncludePipeBendsAsPipe = result.IncludePipeBendsAsPipe;

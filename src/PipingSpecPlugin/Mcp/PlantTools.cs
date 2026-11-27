@@ -28,7 +28,6 @@ namespace Plant3dMcp
 
         public static object ProjectInfo()
         {
-            var cur = PlantApplication.CurrentProject ?? throw new InvalidOperationException("No Plant 3D project is open");
             var piping = Piping();
             var drawings = new List<string>();
             foreach (var f in piping.GetPnPDrawingFiles()) drawings.Add(f.ResolvedFilePath);
@@ -46,7 +45,7 @@ namespace Plant3dMcp
         static int RowId(DataLinksManager dlm, ObjectId id)
         {
             try { return dlm.FindAcPpRowId(id); }
-            catch (Exception e) when (e.Message.Contains("ObjectDoesNotHaveLink")) { return 0; }
+            catch (DLException e) when (e.ErrorCode == DLStatus.ObjectDoesNotHaveLink) { return 0; }
         }
 
         static Dictionary<string, string> Props(DataLinksManager dlm, int rowId)
@@ -91,7 +90,7 @@ namespace Plant3dMcp
         public static object PartProperties(JsonElement args)
         {
             var doc = AcApp.DocumentManager.MdiActiveDocument ?? throw new InvalidOperationException("No active document");
-            string hs = args.GetProperty("handle").GetString();
+            string hs = Tools.Required(args, "handle", JsonValueKind.String).GetString();
             var id = IdFromHandle(doc.Database, hs);
             var dlm = Dlm();
             int rowId = RowId(dlm, id);
@@ -107,8 +106,8 @@ namespace Plant3dMcp
         {
             var doc = AcApp.DocumentManager.MdiActiveDocument ?? throw new InvalidOperationException("No active document");
             string spec = (args.TryGetProperty("spec", out var sp) && sp.ValueKind == JsonValueKind.String ? sp.GetString() : null) ?? DefaultSpec;
-            double nd = args.GetProperty("nd").GetDouble();
-            double length = args.GetProperty("length").GetDouble();
+            double nd = Tools.Required(args, "nd", JsonValueKind.Number).GetDouble();
+            double length = Tools.Required(args, "length", JsonValueKind.Number).GetDouble();
             double[] s = Vec(args, "start", 0, 0, 0);
             double[] dir = Vec(args, "direction", 1, 0, 0);
             double n = Math.Sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
@@ -120,7 +119,7 @@ namespace Plant3dMcp
             spec = LoadSpecKey(sm, piping, spec);
 
             // Collect all candidates; ambiguity is an error, never a silent choice.
-            double? wall = args.TryGetProperty("wall", out var w) ? w.GetDouble() : (double?)null;
+            double? wall = Tools.OptionalNumber(args, "wall");
             var candidates = ChoosePipe(CollectParts(sm, specName, spec, "Pipe", nd), wall, spec, nd, out string wallRule);
             SpecPart part = candidates[0].part;
             int matches = 1;

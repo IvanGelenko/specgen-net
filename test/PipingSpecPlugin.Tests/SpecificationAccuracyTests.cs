@@ -9,6 +9,38 @@ namespace PipingSpecPlugin.Tests;
 
 public class SpecificationAccuracyTests
 {
+    [Fact]
+    public void NewAndExistingSettingsExcludeValvesAndInstrumentsByDefault()
+    {
+        Assert.True(new PipingSpecPlugin.Settings.PluginSettings().ExcludeValvesAndInstruments);
+        var existing = System.Text.Json.JsonSerializer.Deserialize<PipingSpecPlugin.Settings.PluginSettings>("{}");
+        Assert.True(existing.ExcludeValvesAndInstruments);
+        var enabledForOutput = System.Text.Json.JsonSerializer.Deserialize<PipingSpecPlugin.Settings.PluginSettings>(
+            "{\"ExcludeValvesAndInstruments\":false}");
+        Assert.False(enabledForOutput.ExcludeValvesAndInstruments);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void SpecOptionFiltersValvesAndBothInstrumentCategories(bool exclude)
+    {
+        var records = new[]
+        {
+            Pipe(1),
+            new PartRecord { PnPID = 2, PartCategory = "Valves", PartSizeLongDesc = "Valve", Weight = "1" },
+            new PartRecord { PnPID = 3, PartCategory = "Instrument", PartSizeLongDesc = "Gauge", Weight = "1" },
+            new PartRecord { PnPID = 4, PnPClassName = "Instrument", PartSizeLongDesc = "Transmitter", Weight = "1" },
+            new PartRecord { PnPID = 5, PartCategory = "PipeSpecialties", PartSizeLongDesc = "Strainer", Weight = "1" },
+        };
+        var builder = new SpecRowBuilder(new() { ExcludeValvesAndInstruments = exclude });
+        var rows = builder.Build(records);
+        Assert.Contains(rows, row => row.Category == "Pipe");
+        Assert.Contains(rows, row => row.Category == "PipeSpecialties");
+        Assert.Equal(exclude ? 2 : 5, rows.Count);
+        Assert.Empty(builder.ReviewItems);
+    }
+
     [Fact] public void EmptyAndMissingDesignStandardUseSameProcurementGroup()
     {
         var a=Pipe(1,"1001");a.DesignStd=null;a.CompatibleStandard="ГОСТ 8732";
@@ -234,7 +266,56 @@ public class SpecificationAccuracyTests
         Assert.Equal(1,Assert.Single(new SpecRowBuilder(new(){EquipmentOwnedPnPIds=ownedA}).Build(new[]{a,b})).Qty);
     }
 
-    [Theory] [InlineData("drawing")] [InlineData("line")] [InlineData("far")] [InlineData("feet")]
+    [Fact] public void FoldedBendContributesItsOwnMass()
+    {
+        var bend = Bend(2);
+        bend.Weight = "10";
+        var builder = new SpecRowBuilder(new() { IncludePipeBendsAsPipe = true, Topology = Graph() });
+        var row = Assert.Single(builder.Build(new[] { Pipe(1), bend }));
+        Assert.Equal(1.5, row.Qty);
+        Assert.Equal(13.333, row.Weight);
+    }
+
+    [Fact] public void FoldedBendWithoutMassRequestsReview()
+    {
+        var bend = Bend(2);
+        bend.LinearWeight = null;
+        var builder = new SpecRowBuilder(new() { IncludePipeBendsAsPipe = true, Topology = Graph() });
+        var row = Assert.Single(builder.Build(new[] { Pipe(1), bend }));
+        Assert.Equal(1.5, row.Qty);
+        Assert.Contains(builder.ReviewItems, item => item.PnPID == 2 && item.Reason.Contains("Масса"));
+    }
+
+    [Fact] public void InvalidTargetDoesNotMoveBendMetresToDifferentDiameter()
+    {
+        var target = Pipe(1);
+        target.LengthUnit = "furlong";
+        var bend = Bend(2);
+        var other = Pipe(3);
+        target.NominalDiameter = bend.NominalDiameter = other.NominalDiameter = "4";
+        target.NominalUnit = bend.NominalUnit = "in";
+        other.NominalUnit = "mm";
+        var builder = new SpecRowBuilder(new() { IncludePipeBendsAsPipe = true, Topology = Graph() });
+        var rows = builder.Build(new[] { target, bend, other });
+        Assert.Equal(1, Assert.Single(rows, row => row.NominalDiameterMm == 4).Qty);
+        Assert.Equal(0.5, Assert.Single(rows, row => row.Name == bend.PartSizeLongDesc).Qty);
+    }
+
+    [Fact] public void BendChoosesAUsableNeighbourWhenBothAreConnected()
+    {
+        var invalid = Pipe(1);
+        invalid.LengthUnit = "furlong";
+        var valid = Pipe(3);
+        var bend = Bend(2);
+        var graph = new Dictionary<int, List<int>> { [2] = new() { 1, 3 } };
+        var builder = new SpecRowBuilder(new() { IncludePipeBendsAsPipe = true, Topology = graph });
+        var row = Assert.Single(builder.Build(new[] { invalid, bend, valid }));
+        Assert.Equal(1.5, row.Qty);
+        Assert.Equal(valid.PartSizeLongDesc, row.Name);
+        Assert.Contains(builder.ReviewItems, item => item.PnPID == 1);
+    }
+
+    [Theory] [InlineData("drawing")] [InlineData("line")] [InlineData("far")] [InlineData("near")]
     public void CompanionSearchDoesNotDeleteUnrelatedGasket(string difference)
     {
         var valve=new PartRecord{PnPID=1,PartCategory="Valves"};
@@ -244,8 +325,6 @@ public class SpecificationAccuracyTests
         if(difference=="drawing") gasket.SourceDwgPath="B.dwg";
         if(difference=="line") gasket.LineNumberTag="L2";
         if(difference=="far") gasket.PositionX="10000";
-        // Drawing in feet: 1 unit apart is 304.8 mm — far beyond the 100 mm radius.
-        if(difference=="feet") {gasket.DrawingMmPerUnit=304.8;flange.DrawingMmPerUnit=304.8;gasket.PositionX="1";}
         var graph=new Dictionary<int,List<int>>{[1]=new(){2},[2]=new(){1,3}};
         Assert.DoesNotContain(4,ValveCompanionFinder.Discover(new[]{valve,connector,flange,gasket},graph));
     }

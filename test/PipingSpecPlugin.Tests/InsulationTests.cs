@@ -36,6 +36,7 @@ namespace PipingSpecPlugin.Tests
             var builder = new SpecRowBuilder(new SpecBuilderOptions
             {
                 GroupByLine = true, ExcludeEquipment = false, ExcludeConnectors = false, IncludePipeBendsAsPipe = false,
+                UseCatalogueBendNames = true,
             });
             var rows = builder.Build(prepared.Records);
             return (rows, prepared.ReviewItems.Concat(InsulationTakeoff.WithoutMassNotes(builder.ReviewItems)).ToList());

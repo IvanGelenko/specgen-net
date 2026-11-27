@@ -176,5 +176,5 @@ internal sealed class PartitionLayout
 
     SchematicLayout Project(int index,SheetGeometry geometry)=>
         new(Snapshots[index],prepare(Snapshots[index]).Topology,turns,geometry.Level,geometry.Extensions,
-            symbols,geometry.Margin,geometry.Scale,execution);
+            symbols is null?null:symbols.ResolveGeometry,geometry.Margin,geometry.Scale,execution);
 }

@@ -1,11 +1,13 @@
 // Minimal MCP stdio server (no dependencies) that forwards tool calls to the Plant 3D plugin.
 import { DatabaseSync } from 'node:sqlite';
-import { copyFileSync, readdirSync, readFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, readdirSync, readFileSync, mkdtempSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, basename } from 'node:path';
+import { join, basename, extname, relative, isAbsolute, sep } from 'node:path';
+import { createInterface } from 'node:readline';
 
 const CATALOG_DIR = process.env.PLANT3D_CATALOG_DIR || 'Z:\\DIR_AUTOCAD_PLANT_3D\\Монтажный отдел\\CATALOGS PLANT 3D 2014\\AutoCAD Plant 3D 2023 Content';
 const URL_BASE = process.env.PLANT3D_URL || 'http://127.0.0.1:18765/';
+const MAX_CATALOG_BYTES = 512 * 1024 * 1024;
 
 const TOOLS = [
   { name: 'ping', description: 'Check connection to Plant 3D; returns AutoCAD version', inputSchema: { type: 'object', properties: {} } },
@@ -22,7 +24,7 @@ const TOOLS = [
   { name: 'list_specs', description: 'Names of piping specs in the current project', inputSchema: { type: 'object', properties: {} } },
   { name: 'list_spec_parts', description: 'List part classes in a project spec, or look up catalog records by class and DN. Optional case-insensitive search matches the size description.',
     inputSchema: { type: 'object', properties: { spec: { type: 'string' }, part_class: { type: 'string' }, dn: { type: 'number', exclusiveMinimum: 0 }, search: { type: 'string' }, offset: { type: 'integer', minimum: 0 } }, required: ['spec'], additionalProperties: false } },
-  { name: 'insert_spec_part', description: 'Place one catalog part in the active Plant drawing at a model position. Use list_spec_parts to select a unique record. Dry run by default. For a standalone part provide position (and length for a straight pipe). For a flanged valve insertion into a straight existing pipe provide pipe_handle and bolt_length, optionally fraction and gasket_type.',
+  { name: 'insert_spec_part', description: 'Place one catalog part in the active Plant drawing at a model position. Use drawing = the name from document_info and list_spec_parts to select a unique record. Dry run by default. For a standalone part provide position (and length for a straight pipe). For a flanged valve insertion into a straight existing pipe provide pipe_handle and bolt_length, optionally fraction and gasket_type.',
     inputSchema: { type: 'object', properties: { drawing: { type: 'string' }, spec: { type: 'string' }, part_class: { type: 'string' }, dn: { type: 'number', exclusiveMinimum: 0 }, record_id: { type: 'integer' }, description: { type: 'string' },
       position: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, axis: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, up: { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 }, length: { type: 'number', exclusiveMinimum: 0 }, pipe_handle: { type: 'string' }, fraction: { type: 'number', exclusiveMinimum: 0, exclusiveMaximum: 1 }, bolt_length: { type: 'number', exclusiveMinimum: 0 }, gasket_type: { type: 'string' }, dry_run: { type: 'boolean' } },
       required: ['drawing', 'spec', 'part_class', 'dn'], allOf: [
@@ -50,9 +52,15 @@ const TOOLS = [
   { name: 'probe_bend', description: 'Experiment for tracing: lists the parametric bend ("ИЗГИБ ТРУБЫ", PipeBend) parts of a spec with all their properties. With place=true it places ONE trial bend (radius, angle) far from the model, reads its ports and description back and erases it again.',
     inputSchema: { type: 'object', properties: { spec: { type: 'string' }, nd: { type: 'number', exclusiveMinimum: 0 }, radius: { type: 'number', exclusiveMinimum: 0 }, angle: { type: 'number', exclusiveMinimum: 0, maximum: 180 }, type: { type: 'string' }, l1: { type: 'number', minimum: 0 }, l2: { type: 'number', minimum: 0 }, wall: { type: 'number', exclusiveMinimum: 0 }, place: { type: 'boolean' }, keep: { type: 'boolean' }, line_group: { type: 'integer' } }, additionalProperties: false } },
   { name: 'create_joint', description: 'Creates the Buttweld connector of a weld joint between two parts whose ports coincide and face each other (for example a flange and a pipe whose connector was lost), and joins both parts to it. TWO-PHASE: default is a dry run; dry_run=false creates. Refuses if a connector is already at the joint.',
-    inputSchema: { type: 'object', properties: { handleA: { type: 'string' }, handleB: { type: 'string' }, spec: { type: 'string' }, dry_run: { type: 'boolean' } }, required: ['handleA', 'handleB'], additionalProperties: false } },
+    inputSchema: { type: 'object', properties: { handleA: { type: 'string' }, handleB: { type: 'string' }, spec: { type: 'string' }, joint: { type: 'string', description: 'Plant joint type override for the weld connector' }, s2_first: { type: 'boolean', description: 'Connect S2 before S1' }, dry_run: { type: 'boolean' } }, required: ['handleA', 'handleB'], additionalProperties: false } },
   { name: 'repair_connections', description: 'Restores missing connector links: every connector port without a connection is joined to the part port that sits on it and faces it. TWO-PHASE: default is a dry run listing what would be joined; dry_run=false applies. handles = connectors to check (default: all connectors in the drawing).',
     inputSchema: { type: 'object', properties: { handles: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 100 }, dry_run: { type: 'boolean' } }, additionalProperties: false } },
+  { name: 'restore_branch_link', description: 'Restore the connection between a Tap connector and the run pipe by adding a dynamic port. Dry run by default; dry_run=false applies.',
+    inputSchema: { type: 'object', properties: { run_handle: { type: 'string' }, connector_handle: { type: 'string' }, branch_handle: { type: 'string' }, dry_run: { type: 'boolean' } }, required: ['run_handle', 'connector_handle', 'branch_handle'], additionalProperties: false } },
+  { name: 'set_layer', description: 'Move drawing objects to a layer, creating it with the specified color if needed. Dry run by default; dry_run=false applies. Object color follows the layer by default.',
+    inputSchema: { type: 'object', properties: { handles: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 200 }, layer: { type: 'string', minLength: 1 }, color: { type: 'integer', minimum: 1, maximum: 255 }, by_layer: { type: 'boolean' }, dry_run: { type: 'boolean' } }, required: ['handles', 'layer'], additionalProperties: false } },
+  { name: 'port_conditions', description: 'Read the end conditions and matching properties of a Plant 3D part by DWG handle.',
+    inputSchema: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'], additionalProperties: false } },
   { name: 'inspect_connector', description: 'Read-only. Contents of a joint connector (AcPpDb3dConnector) by DWG handle: joint type, axes, ports and every sub-part (weld, gasket block, bolt set) with its property set.',
     inputSchema: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'], additionalProperties: false } },
   { name: 'get_connections', description: 'Read-only. The connections of a part or connector by DWG handle: which object and port each connection joins.',
@@ -63,8 +71,8 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: { handle: { type: 'string' } }, required: ['handle'], additionalProperties: false } },
   { name: 'delete_objects', description: 'DELETES Plant 3D objects by DWG handle (max 50). TWO-PHASE: default is a dry run listing what would be deleted; dry_run=false erases. Refuses non-Plant objects and objects outside model space. The dry run returns the drawing name and the connection count of each object; pass "document" with that name in the real call so a change of the active drawing in between cannot redirect the delete.',
     inputSchema: { type: 'object', properties: { handles: { type: 'array', items: { type: 'string' }, minItems: 1, maxItems: 50 }, document: { type: 'string' }, dry_run: { type: 'boolean' } }, required: ['handles'], additionalProperties: false } },
-  { name: 'send_command', description: 'DISABLED unless Plant 3D was started with PLANT3D_MCP_ALLOW_COMMANDS=1. Queues one plain command (no LISP, no newlines) in the active document.',
-    inputSchema: { type: 'object', properties: { command: { type: 'string' } }, required: ['command'] } },
+  { name: 'send_command', description: 'Disabled unless PLANT3D_MCP_ALLOW_COMMANDS=1 was set before starting Plant 3D. Queues a regeneration or redraw command in the active drawing.',
+    inputSchema: { type: 'object', properties: { command: { type: 'string', enum: ['REGEN', 'REGENALL', 'REDRAW', 'REDRAWALL'] } }, required: ['command'], additionalProperties: false } },
   { name: 'list_catalog_parts', description: 'Read parts from a Plant 3D catalog (.pcat, SQLite) without Plant 3D. Pick the catalog with path or catalog (part of the file name, searched in the project and in the shared content folder); if several match, their list is returned. Filters: search (text in descriptions), class, category, size (NominalDiameter), material. Without filters returns counts by class/category.',
     inputSchema: { type: 'object', properties: { path: { type: 'string' }, catalog: { type: 'string' }, search: { type: 'string' }, class: { type: 'string' }, category: { type: 'string' }, size: { type: 'number' }, material: { type: 'string' }, limit: { type: 'integer' } } } },
 ];
@@ -79,6 +87,8 @@ const WRITE_ANNOTATIONS = {
   create_valve_bypass: { readOnlyHint: false, destructiveHint: true, idempotentHint: false },
   create_joint: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   repair_connections: { readOnlyHint: false, destructiveHint: false, idempotentHint: true },
+  restore_branch_link: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  set_layer: { readOnlyHint: false, destructiveHint: true, idempotentHint: true },
   add_supports: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   probe_bend: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   create_tracing: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
@@ -89,42 +99,63 @@ const WRITE_ANNOTATIONS = {
 };
 for (const t of TOOLS) t.annotations = WRITE_ANNOTATIONS[t.name] ?? { readOnlyHint: true };
 
-function findPcat(dir, depth = 4, out = []) {
+function findCatalogs(dir, depth = 4, out = []) {
   if (depth < 0) return out;
   let entries;
   try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return out; }
   for (const e of entries) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) findPcat(p, depth - 1, out);
-    else if (e.name.toLowerCase().endsWith('.pcat')) out.push(p);
+    if (e.isDirectory()) findCatalogs(p, depth - 1, out);
+    else if (e.isFile() && /\.(pcat|pspc)$/i.test(e.name)) out.push(p);
   }
   return out;
 }
 
 async function listCatalogParts(args) {
   let path = args.path;
-  if (!path) {
-    let found = findPcat(CATALOG_DIR, 4);
+  if (path !== undefined && (typeof path !== 'string' || !isAbsolute(path) || /^[\\/]{2}/.test(path) || !/\.(pcat|pspc)$/i.test(path)))
+    throw new Error('path must be an absolute local path to a .pcat or .pspc file');
+  const inside = (root, file) => {
+    const rel = relative(root, file);
+    return rel && rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel);
+  };
+  const roots = [];
+  function addRoot(dir) {
+    if (!dir || !isAbsolute(dir) || /^[\\/]{2}/.test(dir)) return;
+    try { roots.push({ path: dir, real: realpathSync(dir) }); } catch { /* root unavailable */ }
+  }
+  addRoot(CATALOG_DIR);
+  const contains = (root, file) => inside(root.path, file) || inside(root.real, file);
+  if (!path || !roots.some(root => contains(root, path))) {
     try {
       const info = await call('plant_project_info', {});
-      if (info.ok) found = [...findPcat(info.result.directory), ...found];
+      if (info.ok) addRoot(info.result.directory);
     } catch { /* Plant 3D not running: catalog folder only */ }
+  }
+  if (!path) {
+    let found = [...new Set(roots.flatMap(root => findCatalogs(root.path)))];
     if (args.catalog) {
       const q = args.catalog.toLowerCase();
       found = found.filter(f => basename(f).toLowerCase().includes(q));
     }
-    if (found.length !== 1) return { note: 'Specify "catalog" (part of file name) or "path"; matching .pcat files:', files: found };
+    if (found.length !== 1) return { note: 'Specify "catalog" (part of file name) or "path"; matching .pcat/.pspc files:', files: found };
     path = found[0];
   }
-  // Only catalog/spec data files, never UNC paths (no NTLM leak, no arbitrary file probing).
-  if (/^[\\/]{2}/.test(path) || !/\.(pcat|pspc)$/i.test(path))
-    throw new Error('path must be a local .pcat or .pspc file (for a .pspx use the .pspc next to it)');
+  if (!roots.some(root => contains(root, path)))
+    throw new Error('catalog must be inside PLANT3D_CATALOG_DIR or the active Plant 3D project');
+  path = realpathSync(path);
+  if (!roots.some(root => inside(root.real, path)) || !['.pcat', '.pspc'].includes(extname(path).toLowerCase()))
+    throw new Error('catalog must resolve to a .pcat or .pspc file inside an allowed directory');
+  const file = statSync(path);
+  if (!file.isFile() || file.size > MAX_CATALOG_BYTES)
+    throw new Error('catalog must be a regular file of at most 512 MiB');
   // Copy first: the live catalog may be locked or being edited by Plant 3D.
-  const tmpDir = mkdtempSync(join(tmpdir(), 'plant3d-mcp-'));
-  const tmp = join(tmpDir, 'catalog.db');
-  copyFileSync(path, tmp);
-  const db = new DatabaseSync(tmp, { readOnly: true });
+  let tmpDir, db;
   try {
+    tmpDir = mkdtempSync(join(tmpdir(), 'plant3d-mcp-'));
+    const tmp = join(tmpDir, 'catalog.db');
+    copyFileSync(path, tmp);
+    db = new DatabaseSync(tmp, { readOnly: true });
     const limit = Math.min(Math.max(Number(args.limit ?? 50) || 0, 0), 500);
     const where = [], params = [];
     if (args.search) { where.push('(e.PartFamilyLongDesc like ? or e.PartSizeLongDesc like ? or e.ShortDescription like ?)'); const s = `%${args.search}%`; params.push(s, s, s); }
@@ -141,19 +172,24 @@ async function listCatalogParts(args) {
           e.PressureClass pressureClass, e.ItemCode itemCode ${from} limit ?`).all(...params, limit).map(r => ({ ...r }))
       : [];
     return { file: path, total, byClass, items };
-  } finally { db.close(); try { rmSync(tmpDir, { recursive: true, force: true }); } catch {} }
+  } finally {
+    try { db?.close(); }
+    finally { if (tmpDir) rmSync(tmpDir, { recursive: true, force: true }); }
+  }
 }
 
 // The plugin writes a per-session token here; without it the endpoint answers 403.
 function readToken() {
-  const p = join(process.env.LOCALAPPDATA || '', 'Plant3dMcp', 'token');
+  const local = process.env.LOCALAPPDATA;
+  if (!local || !isAbsolute(local)) throw new Error('LOCALAPPDATA must be set to an absolute path');
+  const p = join(local, 'Plant3dMcp', 'token');
   try { return readFileSync(p, 'utf8').trim(); } catch { return null; }
 }
 
 async function call(tool, args) {
   if (tool === 'list_catalog_parts') return { ok: true, result: await listCatalogParts(args) };
   const token = readToken();
-  if (!token) throw new Error('token file not found: Plant 3D is not running or the plugin is not loaded (NETLOAD / MCPSTART)');
+  if (!token) throw new Error('token file not found: start Plant 3D, load the plugin and start the server with PSMCP');
   let r;
   try {
     r = await fetch(URL_BASE, {
@@ -166,7 +202,7 @@ async function call(tool, args) {
     if (e.name === 'TimeoutError') throw new Error('timed out; the operation may still have completed - check the drawing before retrying');
     throw e;
   }
-  if (r.status === 403) throw new Error('plugin rejected the request (403): token is stale, restart the Claude Code session or run MCPSTOP/MCPSTART');
+  if (r.status === 403) throw new Error('plugin rejected the request (403): check or restart the MCP server with PSMCP');
   return r.json();
 }
 
@@ -179,10 +215,11 @@ async function handle(msg) {
       return { tools: TOOLS };
     case 'tools/call': {
       try {
+        if (!TOOLS.some(tool => tool.name === params?.name)) throw new Error('Unknown tool: ' + params?.name);
         const res = await call(params.name, params.arguments || {});
         return { isError: !res.ok, content: [{ type: 'text', text: JSON.stringify(res.ok ? res.result : res.error, null, 2) }] };
       } catch (e) {
-        return { isError: true, content: [{ type: 'text', text: e.name === 'TypeError' ? `Plant 3D plugin unreachable (is Plant 3D running and MCPSTART done?): ${e.message}` : e.message }] };
+        return { isError: true, content: [{ type: 'text', text: e.name === 'TypeError' ? `Plant 3D plugin unreachable (is the server enabled with PSMCP?): ${e.message}` : e.message }] };
       }
     }
     case 'ping': return {};
@@ -192,23 +229,21 @@ async function handle(msg) {
   }
 }
 
-let buf = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', async chunk => {
-  buf += chunk;
-  let i;
-  while ((i = buf.indexOf('\n')) >= 0) {
-    const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+const lines = createInterface({ input: process.stdin, crlfDelay: Infinity });
+for await (const raw of lines) {
+    const line = raw.trim();
     if (!line) continue;
     let msg;
     try { msg = JSON.parse(line); }
     catch { process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }) + '\n'); continue; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg) || typeof msg.method !== 'string') {
+      process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }) + '\n');
+      continue;
+    }
     try {
       const result = await handle(msg);
       if (msg.id !== undefined && result !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result }) + '\n');
     } catch (e) {
       if (msg.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: e.code || -32603, message: e.message } }) + '\n');
     }
-  }
-});
-process.stdin.on('end', () => process.exit(0));
+}

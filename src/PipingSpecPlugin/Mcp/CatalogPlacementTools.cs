@@ -20,7 +20,7 @@ namespace Plant3dMcp
 
         static double CatalogPositiveNumber(JsonElement args, string name)
         {
-            double number = args.GetProperty(name).GetDouble();
+            double number = Tools.Required(args, name, JsonValueKind.Number).GetDouble();
             if (!double.IsFinite(number) || number <= 0)
                 throw new ArgumentException(name + " must be finite and positive");
             return number;
@@ -28,7 +28,7 @@ namespace Plant3dMcp
 
         static double[] CatalogCoordinates(JsonElement args, string name)
         {
-            var coordinates = args.GetProperty(name).EnumerateArray().Select(value => value.GetDouble()).ToArray();
+            var coordinates = Tools.Required(args, name, JsonValueKind.Array).EnumerateArray().Select(value => value.GetDouble()).ToArray();
             if (coordinates.Length != 3 || coordinates.Any(value => !double.IsFinite(value)))
                 throw new ArgumentException(name + " must contain three finite coordinates");
             return coordinates;
@@ -63,7 +63,7 @@ namespace Plant3dMcp
                     wall = candidate.wall,
                     part_class = candidate.part.Type
                 }).Distinct().ToArray();
-            int offset = args.TryGetProperty("offset", out var start) ? start.GetInt32() : 0;
+            int offset = Tools.OptionalInt(args, "offset") ?? 0;
             if (offset < 0) throw new ArgumentOutOfRangeException("offset");
             return new { spec, part_class = kind, dn, total = parts.Length, offset, items = parts.Skip(offset).Take(100).ToArray() };
         }
@@ -80,7 +80,7 @@ namespace Plant3dMcp
             string spec = RequiredCatalogString(args, "spec");
             string kind = RequiredCatalogString(args, "part_class");
             double dn = CatalogPositiveNumber(args, "dn");
-            int? record = args.TryGetProperty("record_id", out var rid) ? rid.GetInt32() : null;
+            int? record = Tools.OptionalInt(args, "record_id");
             string description = CatalogString(args, "description");
             if (record is null && string.IsNullOrEmpty(description))
                 throw new ArgumentException("Specify a record_id or an exact description from list_spec_parts.");

@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using System.Text.RegularExpressions;
 
@@ -28,7 +29,7 @@ namespace PipingSpecPlugin.Spec
             string Num(string s)
             {
                 s = (s ?? "").Trim().Trim('*'); // ВТ sometimes marks a value "1,4*" with a footnote asterisk (either side).
-                return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d)
+                return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) && double.IsFinite(d)
                     ? d.ToString("0.####", CultureInfo.InvariantCulture)
                     : null;
             }
@@ -53,15 +54,7 @@ namespace PipingSpecPlugin.Spec
         /// Handles text with units (e.g. "0,1 мм/год"), footnote asterisks,
         /// or comma decimal separators. Returns null if missing/non-numeric.
         /// </summary>
-        public static string ExtractCorrosionRate(string vtCell)
-        {
-            if (string.IsNullOrWhiteSpace(vtCell)) return null;
-            var cleaned = vtCell.Replace(",", ".").Trim();
-            var m = Regex.Match(cleaned, @"\d+(?:\.\d+)?");
-            if (m.Success && double.TryParse(m.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                return d.ToString("0.####", CultureInfo.InvariantCulture);
-            return null;
-        }
+        public static string ExtractCorrosionRate(string vtCell) => FormatExact(CorrosionRateOf(vtCell));
 
         /// <summary>
         /// ВТ's "Срок службы .../отбраковочная толщина стенки, лет/мм"
@@ -70,14 +63,23 @@ namespace PipingSpecPlugin.Spec
         /// used in the corrosion-allowance calculation below. A cell with
         /// no '/' is treated as years-only. Also handles optional text like "20 лет".
         /// </summary>
-        public static string ExtractServiceLifeYears(string vtCell)
+        public static string ExtractServiceLifeYears(string vtCell) => FormatExact(ServiceLifeOf(vtCell));
+
+        const string NumberPattern = @"(?<value>\+?(?:[0-9]+(?:[.,][0-9]*)?|[.,][0-9]+)(?:[eE][+-]?[0-9]+)?)";
+        static readonly Regex CorrosionRatePattern = new($@"^\s*\**\s*{NumberPattern}\s*\**\s*(?:мм\.?\s*/\s*год\.?)?\s*\**\s*$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        static readonly Regex ServiceLifePattern = new($@"^\s*\**\s*{NumberPattern}\s*\**\s*(?:лет|год(?:а|ов)?|г\.)?\s*\**\s*$",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+        static decimal? CorrosionRateOf(string cell) => ParseQuantity(cell, CorrosionRatePattern);
+        static decimal? ServiceLifeOf(string cell) => ParseQuantity(cell?.Split('/', 2)[0], ServiceLifePattern);
+        static string FormatExact(decimal? value) => value?.ToString("0.############################", CultureInfo.InvariantCulture);
+
+        static decimal? ParseQuantity(string cell, Regex pattern)
         {
-            if (string.IsNullOrWhiteSpace(vtCell)) return null;
-            var first = vtCell.Replace(",", ".").Trim().Split('/')[0].Trim();
-            var m = Regex.Match(first, @"\d+(?:\.\d+)?");
-            if (m.Success && double.TryParse(m.Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var d))
-                return d.ToString("0.####", CultureInfo.InvariantCulture);
-            return null;
+            var match = pattern.Match(cell ?? "");
+            return match.Success && decimal.TryParse(match.Groups["value"].Value.Replace(',', '.'),
+                NumberStyles.Float, CultureInfo.InvariantCulture, out var value) ? value : null;
         }
 
         /// <summary>
@@ -89,13 +91,11 @@ namespace PipingSpecPlugin.Spec
         /// </summary>
         public static string ComputeCorrosionAllowance(string corrosionRateCell, string serviceLifeCell)
         {
-            var rateStr = ExtractCorrosionRate(corrosionRateCell);
-            if (rateStr == null || !double.TryParse(rateStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate))
-                return null;
-            var yearsStr = ExtractServiceLifeYears(serviceLifeCell);
-            if (yearsStr == null || !double.TryParse(yearsStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var yearsNum))
-                return null;
-            return (rate * yearsNum).ToString("0.####", CultureInfo.InvariantCulture);
+            var rate = CorrosionRateOf(corrosionRateCell);
+            var years = ServiceLifeOf(serviceLifeCell);
+            if (rate == null || years == null) return null;
+            try { return (rate.Value * years.Value).ToString("0.####", CultureInfo.InvariantCulture); }
+            catch (OverflowException) { return null; }
         }
 
         /// <summary>
@@ -106,13 +106,12 @@ namespace PipingSpecPlugin.Spec
         {
             if (string.IsNullOrWhiteSpace(corrosionAllowance) || string.IsNullOrWhiteSpace(corrosionRate))
                 return null;
-            if (!double.TryParse(corrosionAllowance.Replace(",", ".").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var corr) || corr <= 0)
+            if (!decimal.TryParse(corrosionAllowance.Replace(",", ".").Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var corr) || corr <= 0)
                 return null;
-            var rateStr = ExtractCorrosionRate(corrosionRate);
-            if (rateStr == null || !double.TryParse(rateStr, NumberStyles.Float, CultureInfo.InvariantCulture, out var rate) || rate <= 0)
-                return null;
-            var years = corr / rate;
-            return years.ToString("0.####", CultureInfo.InvariantCulture);
+            var rate = CorrosionRateOf(corrosionRate);
+            if (rate is not > 0) return null;
+            try { return (corr / rate.Value).ToString("0.####", CultureInfo.InvariantCulture); }
+            catch (OverflowException) { return null; }
         }
 
         /// <summary>

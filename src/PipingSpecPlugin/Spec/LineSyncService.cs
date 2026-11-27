@@ -2,8 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Linq;
+using Autodesk.AutoCAD.ApplicationServices;
+using Autodesk.AutoCAD.DatabaseServices;
 using Autodesk.ProcessPower.DataLinks;
 using Autodesk.ProcessPower.DataObjects;
+using Autodesk.ProcessPower.PnP3dObjects;
 
 namespace PipingSpecPlugin.Spec
 {
@@ -20,94 +23,110 @@ namespace PipingSpecPlugin.Spec
     /// rowId only exists in that drawing's id space.)
     ///
     /// Empty ВТ cells never clear a project value (BuildPlan skips them).
-    /// FindOrphanLines / DeleteOrphanLines are currently not called from
-    /// anywhere — the automatic orphan cleanup was taken out of the
-    /// window; the code is kept for a deliberate, confirmed cleanup.
+    /// The ledger uses FindOrphanLines / DeleteOrphanLines when the user
+    /// confirms deletion of a selected duplicate ID record.
     /// </summary>
-    public static partial class LineSyncService
+    public static class LineSyncService
     {
+        const string DrawingLineGroupRelationship = "P3dDrawingLineGroupRelationship";
+        const string LineGroupPartRelationship = "P3dLineGroupPartRelationship";
+
+        internal static HashSet<int> ReadDrawingLineIds(DataLinksManager projectDlm, Document drawing)
+        {
+            // Drawing-to-line registrations can outlive the parts on the DWG.
+            // Start at live parts and resolve both row IDs with the project DLM,
+            // which also supplies the P3dLineGroup IDs used by the sync plan.
+            var lineIds = new HashSet<int>();
+            var seenBlocks = new HashSet<ObjectId>();
+            var pendingBlocks = new Stack<ObjectId>();
+            var db = drawing.Database;
+            using (drawing.LockDocument())
+            using (var transaction = db.TransactionManager.StartOpenCloseTransaction())
+            {
+                pendingBlocks.Push(SymbolUtilityServices.GetBlockModelSpaceId(db));
+                while (pendingBlocks.Count > 0)
+                {
+                    var blockId = pendingBlocks.Pop();
+                    if (blockId.IsNull || blockId.IsErased || !seenBlocks.Add(blockId)) continue;
+                    var block = (BlockTableRecord)transaction.GetObject(blockId, OpenMode.ForRead);
+                    if (block.IsFromExternalReference || block.IsFromOverlayReference) continue;
+
+                    foreach (ObjectId entityId in block)
+                    {
+                        var entity = transaction.GetObject(entityId, OpenMode.ForRead);
+                        if (entity is not Part)
+                        {
+                            if (entity is BlockReference reference)
+                                pendingBlocks.Push(reference.BlockTableRecord);
+                            continue;
+                        }
+
+                        int partRowId;
+                        try { partRowId = projectDlm.FindAcPpRowId(entityId); }
+                        catch (DLException ex) when (ex.ErrorCode == DLStatus.ObjectDoesNotHaveLink) { continue; }
+                        if (partRowId <= 0) continue;
+
+                        var related = projectDlm.GetRelatedRowIds(LineGroupPartRelationship, "Part", partRowId, "LineGroup");
+                        if (related == null) continue;
+                        foreach (int rowId in related)
+                            if (rowId > 0) lineIds.Add(rowId);
+                    }
+                }
+                transaction.Commit();
+            }
+            return lineIds;
+        }
+
         /// <summary>
         /// Reads every P3dLineGroup row's PnPID / ID / Tag from the
         /// project DataLinksManager. Used both to build the sync plan and,
         /// standalone, to let a settings screen show "known Ids in the
         /// project" for the picklist-mapping table.
         /// </summary>
-        public static List<LineGroupInfo> ReadAllLines(DataLinksManager projectDlm, Action<string> trace = null)
+        public static List<LineGroupInfo> ReadAllLines(DataLinksManager projectDlm)
         {
-            void Trace(string msg) { try { trace?.Invoke(msg); } catch { } }
+            var pnpDb = projectDlm?.GetPnPDatabase()
+                ?? throw new InvalidOperationException("База данных проекта Plant 3D недоступна.");
+            var table = pnpDb.Tables["P3dLineGroup"]
+                ?? throw new InvalidOperationException("Таблица P3dLineGroup не найдена в проекте.");
+            table.RefreshCachedRows();
+            var rows = table.Select()
+                ?? throw new InvalidOperationException("Не удалось прочитать список строк P3dLineGroup.");
+
             var result = new List<LineGroupInfo>();
-            if (projectDlm == null) { Trace("LineSyncService: projectDlm отсутствует."); return result; }
-
-            PnPDatabase pnpDb;
-            try { pnpDb = projectDlm.GetPnPDatabase(); }
-            catch (Exception ex)
-            {
-                Trace($"LineSyncService: GetPnPDatabase не удался — {ex.GetType().Name}: {ex.Message}");
-                return result;
-            }
-            if (pnpDb == null) { Trace("LineSyncService: PnPDatabase недоступна."); return result; }
-
-            PnPTable table;
-            try { table = pnpDb.Tables["P3dLineGroup"]; }
-            catch (Exception ex)
-            {
-                Trace($"LineSyncService: таблица P3dLineGroup недоступна — {ex.GetType().Name}: {ex.Message}");
-                return result;
-            }
-            if (table == null) { Trace("LineSyncService: таблица P3dLineGroup не найдена в проекте."); return result; }
-
-            EnsureLineGroupSrokColumn(pnpDb, trace);
-
-            try { table.RefreshCachedRows(); } catch { }
-
-            PnPRow[] rows;
-            try { rows = table.Select(); }
-            catch (Exception ex)
-            {
-                Trace($"LineSyncService: Select на P3dLineGroup не удался — {ex.GetType().Name}: {ex.Message}");
-                return result;
-            }
-            if (rows == null) return result;
-
-            // PnPTable.Select() has been observed returning the same
-            // PnPID more than once (e.g. a tombstoned/superseded revision
-            // of a row alongside its current one) — dedupe by rowId so
-            // the ledger shows exactly one row per physical line, not one
-            // per Select() entry. Last-write-wins on GetAllProperties'
-            // return, which reflects the current row state regardless of
-            // how many times its rowId appeared in rows.
             var seenRowIds = new HashSet<int>();
-
             foreach (var row in rows)
             {
-                int rowId;
-                try { rowId = Convert.ToInt32(row["PnPID"]); }
-                catch (Exception ex)
-                {
-                    Trace($"LineSyncService: не удалось прочитать PnPID строки — {ex.GetType().Name}: {ex.Message}");
-                    continue;
-                }
-                if (!seenRowIds.Add(rowId)) continue;
+                var rowId = Convert.ToInt32(row["PnPID"]);
+                if (rowId <= 0)
+                    throw new InvalidOperationException("В таблице P3dLineGroup найдена строка без корректного PnPID.");
+                if (!seenRowIds.Add(rowId) || pnpDb.IsRowDeleted(rowId)) continue;
 
                 try
                 {
-                    var props = projectDlm.GetAllProperties(rowId, true);
-                    if (props == null) { Trace($"LineSyncService: rowId {rowId} — GetAllProperties вернул null."); continue; }
                     var info = new LineGroupInfo { RowId = rowId };
-                    foreach (var kv in props)
-                    {
+                    foreach (var kv in ReadLineProperties(projectDlm, rowId))
                         info.AllProperties[kv.Key] = kv.Value;
-                        if (string.Equals(kv.Key, "ID", StringComparison.OrdinalIgnoreCase)) info.Id = kv.Value;
-                        else if (string.Equals(kv.Key, "Tag", StringComparison.OrdinalIgnoreCase)) info.Tag = kv.Value;
-                    }
+                    info.AllProperties.TryGetValue("ID", out info.Id);
+                    info.AllProperties.TryGetValue("Tag", out info.Tag);
                     result.Add(info);
                 }
                 catch (Exception ex)
                 {
-                    Trace($"LineSyncService: rowId {rowId} пропущен при чтении — {ex.GetType().Name}: {ex.Message}");
+                    throw new InvalidOperationException($"Не удалось прочитать линию PnPID {rowId}: {ex.Message}", ex);
                 }
             }
             return result;
+        }
+
+        static Dictionary<string, string> ReadLineProperties(DataLinksManager projectDlm, int rowId)
+        {
+            var values = projectDlm.GetAllProperties(rowId, true)
+                ?? throw new InvalidOperationException($"Свойства строки PnPID {rowId} недоступны.");
+            var properties = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var value in values)
+                properties[value.Key] = value.Value;
+            return properties;
         }
 
         /// <summary>
@@ -161,7 +180,7 @@ namespace PipingSpecPlugin.Spec
                 try
                 {
                     var related = projectDlm.GetRelatedRowIds(
-                        "P3dLineGroupPartRelationship", "LineGroup", line.RowId, "Part");
+                        LineGroupPartRelationship, "LineGroup", line.RowId, "Part");
                     check1Empty = related == null || !related.GetEnumerator().MoveNext();
                 }
                 catch (Exception ex)
@@ -196,7 +215,7 @@ namespace PipingSpecPlugin.Spec
                     var otherRelations = allRelations
                         .Where(r =>
                         {
-                            try { return !string.Equals(r.RelationshipType?.Name, "P3dDrawingLineGroupRelationship", StringComparison.OrdinalIgnoreCase); }
+                            try { return !string.Equals(r.RelationshipType?.Name, DrawingLineGroupRelationship, StringComparison.OrdinalIgnoreCase); }
                             catch { return true; } // can't identify it — treat as "other", err on not deleting.
                         })
                         .ToList();
@@ -290,70 +309,108 @@ namespace PipingSpecPlugin.Spec
         public static List<string> Apply(LineSyncPlan plan, DataLinksManager projectDlm, Action<string> trace = null)
         {
             var errors = new List<string>();
-            if (plan == null || plan.Actions.Count == 0) return errors;
+            var actions = plan?.Actions.Where(action => action.Changes.Count > 0).ToList();
+            if (actions == null || actions.Count == 0) return errors;
 
-            PnPDatabase pnpDb;
-            try { pnpDb = projectDlm.GetPnPDatabase(); }
-            catch (Exception ex) { errors.Add($"Синхронизация не начата: {ex.Message}"); return errors; }
-            if (pnpDb == null) { errors.Add("PnPDatabase недоступна. Изменения не выполнялись."); return errors; }
+            bool? previousCaching = null;
+            try
+            {
+                var pnpDb = projectDlm.GetPnPDatabase()
+                    ?? throw new InvalidOperationException("База данных проекта Plant 3D недоступна.");
+                var table = pnpDb.Tables["P3dLineGroup"]
+                    ?? throw new InvalidOperationException("Таблица P3dLineGroup недоступна.");
+                previousCaching = projectDlm.EnableCaching;
+                projectDlm.EnableCaching = false;
 
-            EnsureLineGroupSrokColumn(pnpDb, trace);
-
-            errors = SyncTransaction.Run(
-                () => pnpDb.StartTransaction(),
-                () =>
-                {
-                    foreach (var action in plan.Actions)
+                errors = SyncTransaction.Run(
+                    () => pnpDb.StartTransaction(),
+                    () =>
                     {
-                        if (action.Changes.Count == 0) continue;
-                        var names = new StringCollection();
-                        var values = new StringCollection();
-                        foreach (var change in action.Changes)
+                        table.RefreshCachedRows();
+                        foreach (var action in actions)
                         {
-                            names.Add(change.PropertyName);
-                            values.Add(change.NewValue);
+                            int rowId = action.Line.RowId;
+                            if (pnpDb.IsRowDeleted(rowId))
+                                throw new InvalidOperationException($"Строка PnPID {rowId} удалена. Обновите ведомость.");
+                            var mismatches = LineSyncPlanner.FindWriteMismatches(action, ReadLineProperties(projectDlm, rowId), afterWrite: false);
+                            if (mismatches.Count > 0)
+                                throw new InvalidOperationException($"Строка PnPID {rowId} изменилась ({string.Join(", ", mismatches)}). Обновите ведомость.");
                         }
-                        try { projectDlm.SetProperties(action.Line.RowId, names, values); }
-                        catch (Exception ex) { throw new InvalidOperationException($"Линия ID={action.Line.Id}: {ex.Message}", ex); }
+                        var newIds = actions.SelectMany(action => action.Changes)
+                            .Where(change => change.PropertyName == "ID").Select(change => change.NewValue).ToList();
+                        if (newIds.Count > 0)
+                        {
+                            var occupied = ReadAllLines(projectDlm).Select(line => line.Id?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                            foreach (var id in newIds)
+                                if (!occupied.Add(id))
+                                    throw new InvalidOperationException($"ID «{id}» уже используется. Загрузите ВТ повторно.");
+                        }
+                        foreach (var action in actions)
+                        {
+                            var names = new StringCollection();
+                            var values = new StringCollection();
+                            foreach (var change in action.Changes)
+                            {
+                                names.Add(change.PropertyName);
+                                values.Add(change.NewValue);
+                            }
+                            try { projectDlm.SetProperties(action.Line.RowId, names, values); }
+                            catch (Exception ex) { throw new InvalidOperationException($"PnPID {action.Line.RowId}: {ex.Message}", ex); }
+                        }
+                    },
+                    () => projectDlm.AcceptChanges(),
+                    () => pnpDb.CommitTransaction(),
+                    () => pnpDb.RollbackTransaction());
+
+                if (errors.Count == 0)
+                {
+                    try
+                    {
+                        table.RefreshCachedRows();
+                        foreach (var action in actions)
+                        {
+                            int rowId = action.Line.RowId;
+                            var mismatches = LineSyncPlanner.FindWriteMismatches(action, ReadLineProperties(projectDlm, rowId), afterWrite: true);
+                            if (mismatches.Count > 0)
+                                errors.Add($"После записи не подтверждены значения в строке PnPID {rowId}: {string.Join(", ", mismatches)}.");
+                        }
                     }
-                },
-                () => projectDlm.AcceptChanges(),
-                () => pnpDb.CommitTransaction(),
-                () => pnpDb.RollbackTransaction());
+                    catch (Exception ex) { errors.Add($"Транзакция завершена, но проверить запись не удалось: {ex.Message}"); }
+                }
+            }
+            catch (Exception ex) { errors.Add($"Синхронизация не начата: {ex.Message}"); }
+            finally
+            {
+                if (previousCaching.HasValue)
+                    try { projectDlm.EnableCaching = previousCaching.Value; }
+                    catch (Exception ex) { errors.Add($"Не удалось восстановить режим кэша Plant 3D: {ex.Message}"); }
+            }
             foreach (var error in errors)
                 try { trace?.Invoke(error); } catch { }
             return errors;
         }
 
-        public static void EnsureLineGroupSrokColumn(PnPDatabase pnpDb, Action<string> trace = null)
-        {
-            if (pnpDb == null) return;
-            try
-            {
-                var table = pnpDb.Tables["P3dLineGroup"];
-                if (table == null || table.Columns.Contains("srok")) return;
+        internal static bool RequiresServiceLifeColumn(LineSyncPlan plan, DataLinksManager projectDlm) =>
+            plan.Actions.Any(action => action.Changes.Any(change => change.PropertyName == "srok"))
+            && !GetLineGroupTable(projectDlm).Columns.Contains("srok");
 
-                trace?.Invoke("LineSyncService: свойство «srok» отсутствует в P3dLineGroup. Добавление в схему проекта...");
-                try
-                {
-                    var col = new PnPColumn("srok", typeof(string), 255);
-                    table.Columns.Add(col);
-                    try { table.SetColumnAttribute("srok", "DISPLAYNAME", "Срок службы, лет"); } catch { }
-                    try { table.SetColumnAttribute("srok", "ISHIDDENINAREAVIEW", "false"); } catch { }
-                    try { table.SetColumnAttribute("srok", "ISNEWCREATION", "true"); } catch { }
-                    try { table.SetColumnAttribute("srok", "TYPE", "PnPStringType"); } catch { }
-                    try { pnpDb.AcceptSchemaChanges(); } catch { }
-                    trace?.Invoke("LineSyncService: свойство «srok» (Срок службы, лет) успешно добавлено в схему P3dLineGroup.");
-                }
-                catch (Exception ex)
-                {
-                    trace?.Invoke($"LineSyncService: не удалось добавить свойство «srok» через PnPTable: {ex.Message}");
-                }
-            }
-            catch (Exception ex)
-            {
-                trace?.Invoke($"LineSyncService: EnsureLineGroupSrokColumn: {ex.Message}");
-            }
+        static PnPTable GetLineGroupTable(DataLinksManager projectDlm) =>
+            projectDlm.GetPnPDatabase()?.Tables["P3dLineGroup"]
+            ?? throw new InvalidOperationException("Таблица P3dLineGroup недоступна.");
+
+        internal static void CreateServiceLifeColumn(DataLinksManager projectDlm)
+        {
+            var pnpDb = projectDlm.GetPnPDatabase()
+                ?? throw new InvalidOperationException("База данных проекта Plant 3D недоступна.");
+            var table = pnpDb.Tables["P3dLineGroup"];
+            if (table.Columns.Contains("srok")) return;
+
+            table.Columns.Add(new PnPColumn("srok", typeof(string), 255));
+            table.SetColumnAttribute("srok", "DISPLAYNAME", "Срок службы, лет");
+            table.SetColumnAttribute("srok", "ISHIDDENINAREAVIEW", "false");
+            table.SetColumnAttribute("srok", "ISNEWCREATION", "true");
+            table.SetColumnAttribute("srok", "TYPE", "PnPStringType");
+            pnpDb.AcceptSchemaChanges();
         }
     }
 }

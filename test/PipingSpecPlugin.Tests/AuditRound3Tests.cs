@@ -172,12 +172,11 @@ public class AuditRound3Tests
         Assert.DoesNotContain("1.23456789", row.Note);
     }
 
-    // ---- stranded bend metres: reroute only to the same purchased pipe ----
+    // ---- a bend keeps its measured length when its neighbour is invalid ----
 
-    static (List<SpecRow> rows, SpecRowBuilder builder) StrandedScenario(string siblingWall, bool withOrphanBend = false)
+    static (List<SpecRow> rows, SpecRowBuilder builder) InvalidNeighbourScenario(string siblingWall, bool withOrphanBend = false)
     {
-        // Pipe 1 has an unknown length unit → it goes to review, the bend's
-        // metres (folded into it) are stranded and look for a sibling.
+        // Pipe 1 has an unknown length unit. The sibling has no connection to the bend.
         var target = Pipe(1); target.LengthUnit = "furlong"; target.WallThickness = "4";
         var bend = Bend(2); bend.WallThickness = "4";
         var records = new List<PartRecord> { target, bend };
@@ -196,26 +195,24 @@ public class AuditRound3Tests
         return (builder.Build(records), builder);
     }
 
-    [Fact] public void StrandedMetresGoToSiblingOfSameWall()
+    [Theory]
+    [InlineData("4")]
+    [InlineData("8")]
+    public void InvalidNeighbourDoesNotMoveBendToAnUnconnectedPipe(string siblingWall)
     {
-        var (rows, _) = StrandedScenario(siblingWall: "4");
-        Assert.Equal(1.5, Assert.Single(rows).Qty);
+        var (rows, builder) = InvalidNeighbourScenario(siblingWall);
+        Assert.Equal(1.0, Assert.Single(rows, row => row.Name == "Pipe DN100").Qty);
+        Assert.Equal(0.5, Assert.Single(rows, row => row.Name == "Bend DN100").Qty);
+        Assert.Contains(builder.ReviewItems, i => i.PnPID == 2 && i.Reason.Contains("учтён отдельной строкой"));
     }
 
-    [Fact] public void StrandedMetresDoNotGoToSiblingOfDifferentWall()
+    [Fact] public void TwoUnfoldedBendsOfTheSameItemKeepBothLengths()
     {
-        var (rows, builder) = StrandedScenario(siblingWall: "8");
-        Assert.Equal(1.0, Assert.Single(rows).Qty);
-        Assert.Contains(builder.ReviewItems, i => i.Reason.StartsWith("Длину гиба не удалось отнести") && i.Qty == 0.5);
-    }
-
-    [Fact] public void StrandedMetresDoNotLandOnAnOrphanBendRow()
-    {
-        var (rows, builder) = StrandedScenario(siblingWall: null, withOrphanBend: true);
+        var (rows, builder) = InvalidNeighbourScenario(siblingWall: null, withOrphanBend: true);
         var bendRow = Assert.Single(rows);
         Assert.Equal("Bend DN100", bendRow.Name);
-        Assert.Equal(0.7, bendRow.Qty);   // its own 700 mm only
-        Assert.Contains(builder.ReviewItems, i => i.Reason.StartsWith("Длину гиба не удалось отнести"));
+        Assert.Equal(1.2, bendRow.Qty);
+        Assert.Equal(2, builder.ReviewItems.Count(i => i.Reason.Contains("учтён отдельной строкой")));
     }
 
     // ---- consecutive bends fold into the run's pipe ------------------------

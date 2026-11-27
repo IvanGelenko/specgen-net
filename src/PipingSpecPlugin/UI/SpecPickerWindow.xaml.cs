@@ -285,6 +285,7 @@ namespace PipingSpecPlugin.UI
         void ApplySavedExclusions()
         {
             ExcludeValveCompanionsChk.IsChecked = _settings.ExcludeValveCompanions;
+            ExcludeValvesAndInstrumentsChk.IsChecked = _settings.ExcludeValvesAndInstruments;
             IncludePipeBendsAsPipeChk.IsChecked = _settings.IncludePipeBendsAsPipe;
             OpenAfterGenerateChk.IsChecked = _settings.OpenAfterGenerate;
             DisableElementGroupingChk.IsChecked = _settings.DisableElementGrouping;
@@ -400,6 +401,7 @@ namespace PipingSpecPlugin.UI
                 Lines = selLines,
                 GroupByLine = GroupByLineChk.IsChecked == true,
                 ExcludeValveCompanions = ExcludeValveCompanionsChk.IsChecked == true,
+                ExcludeValvesAndInstruments = ExcludeValvesAndInstrumentsChk.IsChecked == true,
                 IncludePipeBendsAsPipe = IncludePipeBendsAsPipeChk.IsChecked == true,
                 OpenAfterGenerate = OpenAfterGenerateChk.IsChecked == true,
                 DisableElementGrouping = DisableElementGroupingChk.IsChecked == true,
@@ -437,6 +439,7 @@ namespace PipingSpecPlugin.UI
         public List<string> Lines;
         public bool GroupByLine;
         public bool ExcludeValveCompanions;
+        public bool ExcludeValvesAndInstruments;
         public bool ExcludeEquipment;
         public bool ExcludeConnectors;
         public bool IncludePipeBendsAsPipe;

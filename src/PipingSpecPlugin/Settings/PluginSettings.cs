@@ -50,6 +50,7 @@ namespace PipingSpecPlugin.Settings
         public string Scope { get; set; } = "proj";
 
         public bool ExcludeValveCompanions { get; set; } = true;
+        public bool ExcludeValvesAndInstruments { get; set; } = true;
         public bool ExcludeEquipment { get; set; } = true;
         public bool ExcludeConnectors { get; set; } = true;
         // Fold PipeBend rows into the adjacent straight pipe — defaults

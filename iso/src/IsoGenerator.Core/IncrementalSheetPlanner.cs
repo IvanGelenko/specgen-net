@@ -182,6 +182,8 @@ internal static class IncrementalSheetPlanner
             Cuts=(snapshot.RequiredCuts??Array.Empty<Connection>()).Select(CutPreferences.Key).OrderBy(key=>key,StringComparer.Ordinal),
             TapAxes=(snapshot.BoundaryTapAxes??Array.Empty<BoundaryTapAxis>()).Where(axis=>handles.Contains(axis.Handle)).OrderBy(axis=>axis.Handle,StringComparer.Ordinal).ThenBy(axis=>axis.Port,StringComparer.Ordinal),
             Context=(snapshot.ExternalLineContexts??Array.Empty<ExternalLineContext>()).Where(item=>handles.Contains(item.OwnerHandle))
+                .OrderBy(item=>item.OwnerHandle,StringComparer.Ordinal).ThenBy(item=>item.OwnerPort,StringComparer.Ordinal),
+            Equipment=(snapshot.EquipmentConnections??Array.Empty<EquipmentConnection>()).Where(item=>handles.Contains(item.OwnerHandle))
                 .OrderBy(item=>item.OwnerHandle,StringComparer.Ordinal).ThenBy(item=>item.OwnerPort,StringComparer.Ordinal)
         });
     }

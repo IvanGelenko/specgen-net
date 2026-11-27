@@ -14,20 +14,20 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
-        public void RefreshCollapsesEqualRowsWithoutChangingSourceOrSyncTargets()
+        public void RefreshCollapsesEqualRowsWithoutChangingSourceOrResolvingDuplicates()
         {
             var lines = new List<LineGroupInfo> { Line(10), Line(20) };
-            Assert.Equal(2, LineSyncService.BuildLedger(lines).Count);
-            var ledger = LineSyncService.BuildLedger(lines, true);
+            Assert.Equal(2, LineLedgerProjection.BuildLedger(lines).Count);
+            var ledger = LineLedgerProjection.BuildLedger(lines, true);
             Assert.Single(ledger);
-            Assert.DoesNotContain("дубль", ledger[0].Tag);
+            Assert.DoesNotContain("дубль", ledger[0].DisplayTag);
             Assert.Equal(2, lines.Count);
             Assert.Equal("150-KSN001-LS016C-HN", lines[0].Tag);
-            Assert.Equal(2, LineSyncService.BuildLedger(lines, false).Count);
-            Assert.Single(LineSyncService.BuildLedger(lines, true));
-            var plan = LineSyncService.BuildPlan(
+            Assert.Equal(2, LineLedgerProjection.BuildLedger(lines, false).Count);
+            Assert.Single(LineLedgerProjection.BuildLedger(lines, true));
+            var plan = LineSyncPlanner.BuildPlan(
                 new List<VtRowData> { new VtRowData { NN = "1", WorkPressure = "2.0" } }, lines);
-            Assert.Equal(2, plan.Actions.Count);
+            Assert.Empty(plan.Actions);
         }
 
         [Fact]
@@ -41,8 +41,8 @@ namespace PipingSpecPlugin.Tests
             second.AllProperties["Номер"] = "2";
             second.Id = " 1 ";
             var lines = new List<LineGroupInfo> { first, second };
-            Assert.Single(LineSyncService.BuildLedger(lines, true));
-            Assert.Equal(2, LineSyncService.BuildLedger(lines).Count);
+            Assert.Single(LineLedgerProjection.BuildLedger(lines, true));
+            Assert.Equal(2, LineLedgerProjection.BuildLedger(lines).Count);
             Assert.Equal("2", second.AllProperties["Номер"]);
         }
 
@@ -50,20 +50,20 @@ namespace PipingSpecPlugin.Tests
         public void MergesSameIdAndTagShowingConflictsButKeepsDifferentTags()
         {
             var lines = new List<LineGroupInfo> { Line(10), Line(20, pressure: "2.0"), Line(30, tag: "other") };
-            var ledger = LineSyncService.BuildLedger(lines, true);
+            var ledger = LineLedgerProjection.BuildLedger(lines, true);
             Assert.Equal(2, ledger.Count);
             Assert.Equal("⚠ 1.6 | 2.0", ledger[0].Values["Pwork"]);
-            Assert.All(ledger, row => Assert.Contains("дубль ID", row.Tag));
+            Assert.All(ledger, row => Assert.Contains("дубль ID", row.DisplayTag));
         }
 
         [Fact]
         public void MergePreservesEmptyConflictsAndDoesNotChangeSyncTargets()
         {
             var lines = new List<LineGroupInfo> { Line(10), Line(20, pressure: ""), Line(30) };
-            var row = Assert.Single(LineSyncService.BuildLedger(lines, true));
+            var row = Assert.Single(LineLedgerProjection.BuildLedger(lines, true));
             Assert.Equal("⚠ 1.6 | (пусто)", row.Values["Pwork"]);
             Assert.Equal("", lines[1].AllProperties["Pwork"]);
-            Assert.Equal(3, LineSyncService.BuildPlan(new List<VtRowData> { new VtRowData { NN = "1", WorkPressure = "3.0" } }, lines).Actions.Count);
+            Assert.Empty(LineSyncPlanner.BuildPlan(new List<VtRowData> { new VtRowData { NN = "1", WorkPressure = "3.0" } }, lines).Actions);
         }
 
         [Fact]
@@ -72,15 +72,29 @@ namespace PipingSpecPlugin.Tests
             var first = Line(10);
             var second = Line(20);
             second.Id = "2";
-            Assert.Equal(2, LineSyncService.BuildLedger(new List<LineGroupInfo> { first, second }, true).Count);
-            Assert.Empty(LineSyncService.BuildLedger(new List<LineGroupInfo>(), true));
+            Assert.Equal(2, LineLedgerProjection.BuildLedger(new List<LineGroupInfo> { first, second }, true).Count);
+            Assert.Empty(LineLedgerProjection.BuildLedger(new List<LineGroupInfo>(), true));
+        }
+
+        [Fact]
+        public void Ledger_Keeps_Original_Tag_And_Recognizes_Duplicate_Outside_Drawing()
+        {
+            var line = Line(10, tag: "⚠ дубль ID · исходный тег");
+            var otherDrawing = Line(20);
+            var row = Assert.Single(LineLedgerProjection.BuildLedger(new List<LineGroupInfo> { line },
+                projectLines: new List<LineGroupInfo> { line, otherDrawing }));
+
+            Assert.True(row.HasProjectDuplicate);
+            Assert.Equal(line.Tag, row.Tag);
+            Assert.Equal(line.Tag, row.DisplayTag);
+            Assert.Equal(10, Assert.Single(row.AllRowIds));
         }
 
         [Fact]
         public void BuildLedgerPopulatesRowIdsWhenUncollapsed()
         {
             var lines = new List<LineGroupInfo> { Line(101), Line(102) };
-            var ledger = LineSyncService.BuildLedger(lines, false);
+            var ledger = LineLedgerProjection.BuildLedger(lines, false);
             Assert.Equal(2, ledger.Count);
             Assert.Equal(new[] { 101 }, ledger[0].AllRowIds);
             Assert.Equal(new[] { 102 }, ledger[1].AllRowIds);
@@ -90,13 +104,82 @@ namespace PipingSpecPlugin.Tests
         public void BuildLedgerAggregatesRowIdsWhenCollapsed()
         {
             var lines = new List<LineGroupInfo> { Line(101), Line(102), Line(201, tag: "other") };
-            var ledger = LineSyncService.BuildLedger(lines, true);
+            var ledger = LineLedgerProjection.BuildLedger(lines, true);
             Assert.Equal(2, ledger.Count);
             var merged = ledger[0];
             Assert.Equal(2, merged.RowIds.Count);
             Assert.Contains(101, merged.RowIds);
             Assert.Contains(102, merged.RowIds);
             Assert.Equal(new[] { 201 }, ledger[1].AllRowIds);
+        }
+
+        [Fact]
+        public void Proposes_Id_From_Nn_For_An_Exact_Drawing_Tag_Match()
+        {
+            var line = Line(10, tag: "50-KSN003-LS016C-HN");
+            line.Id = " ";
+            var existing = Line(20, tag: "EXISTING");
+            var outside = new LineGroupInfo { RowId = 30, Tag = "OUTSIDE" };
+            var rows = new List<VtRowData>
+            {
+                new() { NN = " 51 ", Id = "old-id", Designation = "OTHER\r\n 50-ksn003-LS016C-HN " },
+                new() { NN = "52", Designation = "EXISTING" },
+                new() { NN = "53", Designation = "OUTSIDE" },
+            };
+            var plan = LineSyncPlanner.BuildIdFillPlan(rows, new[] { line, existing }, new[] { line, existing, outside });
+            var action = Assert.Single(plan.Actions);
+            Assert.Same(line, action.Line);
+            var change = Assert.Single(action.Changes);
+            Assert.Equal("ID", change.PropertyName);
+            Assert.Equal("51", change.NewValue);
+            Assert.Equal(" ", line.Id);
+
+            line.Id = change.NewValue;
+            var sync = LineSyncPlanner.BuildPlan(rows, new List<LineGroupInfo> { line, existing, outside });
+            var syncAction = Assert.Single(sync.Actions);
+            Assert.DoesNotContain(syncAction.Changes, item => item.PropertyName == "Tag");
+            Assert.Contains(syncAction.Changes, item => item.PropertyName == "Номер" && item.NewValue == "003");
+        }
+
+        [Fact]
+        public void Skips_Ambiguous_Designation_Matches_And_Occupied_Ids()
+        {
+            var lines = new[]
+            {
+                new LineGroupInfo { RowId = 10, Tag = "DUP-EXCEL" },
+                new LineGroupInfo { RowId = 20, Tag = "OCCUPIED" },
+                new LineGroupInfo { RowId = 30, Tag = "MULTI-A" },
+                new LineGroupInfo { RowId = 40, Tag = "MULTI-B" },
+                new LineGroupInfo { RowId = 50, Tag = "DUP-NN" },
+                new LineGroupInfo { RowId = 60, Tag = "DUP-TAG" },
+                new LineGroupInfo { RowId = 70, Tag = "DUP-TAG" },
+            };
+            var project = new List<LineGroupInfo>(lines) { new() { RowId = 80, Id = "3", Tag = "OUTSIDE" } };
+            var rows = new List<VtRowData>
+            {
+                new() { NN = "1", Designation = "DUP-EXCEL" },
+                new() { NN = "2", Designation = "DUP-EXCEL" },
+                new() { NN = "3", Designation = "OCCUPIED" },
+                new() { NN = "4", Designation = "MULTI-A\nMULTI-B" },
+                new() { NN = "5", Designation = "DUP-NN" },
+                new() { NN = "5", Designation = "OTHER" },
+                new() { NN = "6", Designation = "DUP-TAG" },
+            };
+            var plan = LineSyncPlanner.BuildIdFillPlan(rows, lines, project);
+            Assert.Empty(plan.Actions);
+            Assert.Equal(5, plan.IdFillSkips.Count);
+        }
+
+        [Fact]
+        public void Sync_Uses_Unique_Designation_Among_Duplicate_Ids()
+        {
+            var matching = Line(10);
+            var wrong = Line(20, "50-KSN003-LS016C-HN");
+            var rows = new List<VtRowData> { new() { NN = "1", Designation = matching.Tag, WorkPressure = "2" } };
+            var plan = LineSyncPlanner.BuildPlan(rows, new List<LineGroupInfo> { wrong, matching });
+            Assert.Same(matching, Assert.Single(plan.Actions).Line);
+            Assert.Empty(LineSyncPlanner.BuildPlan(rows, new List<LineGroupInfo> { wrong }).Actions);
+            Assert.Empty(LineSyncPlanner.BuildPlan(rows, new List<LineGroupInfo> { matching, Line(30) }).Actions);
         }
 
         [Fact]
@@ -115,7 +198,7 @@ namespace PipingSpecPlugin.Tests
                 new() { NN = "2", WorkPressure = "3.0" }
             };
 
-            var plan = LineSyncService.BuildPlan(vtRows, lines);
+            var plan = LineSyncPlanner.BuildPlan(vtRows, lines);
             Assert.Equal(2, plan.Actions.Count);
             Assert.Equal(2, plan.TotalChangedFields());
 
@@ -155,7 +238,7 @@ namespace PipingSpecPlugin.Tests
                 new() { NN = "3", WorkPressure = "2.0" }
             };
 
-            var plan = LineSyncService.BuildPlan(vtRows, lines);
+            var plan = LineSyncPlanner.BuildPlan(vtRows, lines);
             Assert.Equal(3, plan.Actions.Count);
 
             var multi = plan.FilterForLine(new[] { 10, 30 });
@@ -176,7 +259,7 @@ namespace PipingSpecPlugin.Tests
             line.AllProperties["srok"] = "20";
             // line.AllProperties["Corrosion"] is empty
 
-            var rows = LineSyncService.BuildLedger(new List<LineGroupInfo> { line });
+            var rows = LineLedgerProjection.BuildLedger(new List<LineGroupInfo> { line });
             var row = Assert.Single(rows);
             Assert.Equal("2", row.Values["Corrosion"]);
         }
@@ -189,9 +272,46 @@ namespace PipingSpecPlugin.Tests
             line.AllProperties["CorrosionSpeed"] = "0.1";
             // line.AllProperties["srok"] is empty
 
-            var rows = LineSyncService.BuildLedger(new List<LineGroupInfo> { line });
+            var rows = LineLedgerProjection.BuildLedger(new List<LineGroupInfo> { line });
             var row = Assert.Single(rows);
             Assert.Equal("20", row.Values["srok"]);
+        }
+
+        [Fact]
+        public void Pressure_Only_Does_Not_Recalculate_Corrosion_Or_Override_Explicit_Test_Note()
+        {
+            var line = Line(10);
+            line.AllProperties["Corrosion"] = "3";
+            line.AllProperties["CorrosionSpeed"] = "0.1";
+            line.AllProperties["srok"] = "20";
+            var vt = new VtRowData { NN = "1", WorkPressure = "2", TestStrength = "2.0/1.6", TestTightness = "не требуется" };
+            var plan = LineSyncPlanner.BuildPlan(new List<VtRowData> { vt }, new List<LineGroupInfo> { line });
+            var action = Assert.Single(plan.Actions);
+            Assert.Contains(action.Changes, change => change.PropertyName == "Pwork");
+            Assert.DoesNotContain(action.Changes, change => change.PropertyName == "Corrosion" || change.PropertyName == "TestW");
+        }
+
+        [Fact]
+        public void Write_Check_Detects_Stale_Identity_Dependency_And_Missing_Readback()
+        {
+            var line = Line(10);
+            line.AllProperties["srok"] = "20";
+            var action = new LineSyncAction { Line = line };
+            action.Changes.Add(new FieldChange { PropertyName = "Corrosion", OldValue = "3", NewValue = "2" });
+            var current = new Dictionary<string, string> { ["ID"] = "1", ["Tag"] = line.Tag, ["srok"] = "20.0", ["Corrosion"] = "3,0" };
+            Assert.Empty(LineSyncPlanner.FindWriteMismatches(action, current, afterWrite: false));
+            Assert.Equal(new[] { "Corrosion" }, LineSyncPlanner.FindWriteMismatches(action, current, afterWrite: true));
+            current["ID"] = "2";
+            current["srok"] = "21";
+            Assert.Equal(new[] { "ID", "srok" }, LineSyncPlanner.FindWriteMismatches(action, current, afterWrite: false));
+        }
+
+        [Fact]
+        public void IdFill_Matches_Model_Tag_With_A_Parenthesised_Remark()
+        {
+            var line = new LineGroupInfo { RowId = 10, Tag = "TAG-A (примечание)" };
+            var rows = new[] { new VtRowData { NN = "1", Designation = "TAG-A" } };
+            Assert.Single(LineSyncPlanner.BuildIdFillPlan(rows, new[] { line }, new[] { line }).Actions);
         }
 
         [Fact]
@@ -205,7 +325,7 @@ namespace PipingSpecPlugin.Tests
                 new() { NN = "1", CorrosionRate = "0.1" }
             };
 
-            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var plan = LineSyncPlanner.BuildPlan(vtRows, new List<LineGroupInfo> { line });
             var action = Assert.Single(plan.Actions);
             var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
             Assert.NotNull(change);
@@ -223,7 +343,7 @@ namespace PipingSpecPlugin.Tests
                 new() { NN = "1", ServiceLife = "20" }
             };
 
-            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var plan = LineSyncPlanner.BuildPlan(vtRows, new List<LineGroupInfo> { line });
             var action = Assert.Single(plan.Actions);
             var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
             Assert.NotNull(change);
@@ -240,7 +360,7 @@ namespace PipingSpecPlugin.Tests
                 new() { NN = "1", CorrosionRate = "0.1", ServiceLife = "20" }
             };
 
-            var plan = LineSyncService.BuildPlan(vtRows, new List<LineGroupInfo> { line });
+            var plan = LineSyncPlanner.BuildPlan(vtRows, new List<LineGroupInfo> { line });
             var action = Assert.Single(plan.Actions);
             var change = action.Changes.Find(c => c.PropertyName == "Corrosion");
             Assert.NotNull(change);

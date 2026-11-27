@@ -140,7 +140,36 @@ namespace Plant3dMcp
             return ti;
         }
 
-        sealed class JointPlan { public int Row; public ObjectId Prev, Next; public string Label; }
+        static (SpecPart tee, string teeDesc, SpecPart red, string redDesc, double branchDn)? PickTeeReducer(
+            SpecManager manager, string spec, string key, List<(SpecPart part, double wall, string desc)> tees,
+            double runOd, double runWall, double bypassOd, double bypassWall)
+        {
+            var reducers = new List<(SpecPart part, string desc, double dn)>();
+            foreach (double dn in new[] { 65.0, 80, 100, 125 })
+            {
+                try { reducers.AddRange(CollectParts(manager, spec, key, "Reducer", dn).Select(r => (r.part, r.desc, dn))); }
+                catch (InvalidOperationException) { /* no reducers of this size */ }
+            }
+
+            (SpecPart tee, string teeDesc, SpecPart red, string redDesc, double branchDn)? chosen = null;
+            double bestScore = double.MaxValue;
+            foreach (var tee in tees)
+            {
+                if (!TwoSizes(tee.desc, out double mainOd, out double mainWall, out double branchOd, out double branchWall)) continue;
+                if (Math.Abs(mainOd - runOd) > 0.5 || mainWall + 1e-3 < runWall) continue;
+                foreach (var reducer in reducers)
+                {
+                    if (!TwoSizes(reducer.desc, out double bigOd, out double bigWall, out double smallOd, out double smallWall)) continue;
+                    if (Math.Abs(bigOd - branchOd) > 0.5 || Math.Abs(smallOd - bypassOd) > 0.5) continue;
+                    if (bigWall + 1e-3 < branchWall || smallWall + 1e-3 < bypassWall) continue;
+                    double score = mainWall * 1000 + branchWall * 100 + bigWall * 10 + smallWall;
+                    if (score >= bestScore) continue;
+                    bestScore = score;
+                    chosen = (tee.part, tee.desc, reducer.part, reducer.desc, reducer.dn);
+                }
+            }
+            return chosen;
+        }
 
         public static object CreateBypass(JsonElement args)
         {
@@ -178,29 +207,9 @@ namespace Plant3dMcp
             // Reducing tee: main OD = run OD, main wall >= run wall; its branch must have a reducer down to the bypass pipe whose
             // big-end wall >= the tee branch wall and small-end wall >= the bypass pipe wall (user rule: fittings are never thinner than the pipe).
             var teeCands = CollectParts(sm, specName, key, "Tee", runNd).Where(c => (c.desc ?? "").IndexOf("переходной", StringComparison.OrdinalIgnoreCase) >= 0).ToList();
-            var reducerCands = new List<(SpecPart part, double wall, string desc)>();
-            foreach (double dn in new[] { 65.0, 80, 100, 125 })
-                try { reducerCands.AddRange(CollectParts(sm, specName, key, "Reducer", dn)); } catch (Exception) { /* no reducers of this size */ }
-            (SpecPart tee, string teeDesc, double brOd, double brWall, SpecPart red, string redDesc)? chosen = null;
-            double bestScore = double.MaxValue;
-            foreach (var tc in teeCands)
-            {
-                if (!TwoSizes(tc.desc, out double mOd, out double mWall, out double bOd, out double bWall)) continue;
-                if (Math.Abs(mOd - runOd) > 0.5 || mWall + 1e-3 < runWall) continue;
-                foreach (var rc in reducerCands)
-                {
-                    if (!TwoSizes(rc.desc, out double bigOd, out double bigWall, out double smOd, out double smWall)) continue;
-                    if (Math.Abs(bigOd - bOd) > 0.5 || Math.Abs(smOd - byOd) > 0.5) continue;
-                    if (bigWall + 1e-3 < bWall || smWall + 1e-3 < byWall) continue;
-                    double score = mWall * 1000 + bWall * 100 + bigWall * 10 + smWall;   // thinnest allowed wall first
-                    if (score < bestScore) { bestScore = score; chosen = (tc.part, tc.desc, bOd, bWall, rc.part, rc.desc); }
-                }
-            }
-            if (chosen == null)
-                throw new InvalidOperationException("No reducing tee for the DN" + runNd + " run (wall >= " + runWall + ") with a reducer to OD " + byOd + " (wall >= " + byWall + ") in the spec. Tees: " +
+            var ch = PickTeeReducer(sm, specName, key, teeCands, runOd, runWall, byOd, byWall)
+                ?? throw new InvalidOperationException("No reducing tee for the DN" + runNd + " run (wall >= " + runWall + ") with a reducer to OD " + byOd + " (wall >= " + byWall + ") in the spec. Tees: " +
                     string.Join(" | ", teeCands.Select(c => c.desc)));
-            var ch = chosen.Value;
-
             var elbowSel = CollectParts(sm, specName, key, "Elbow", bypNd).Where(c => Math.Abs(ElbowAngle(c.part, c.desc) - 90) < 0.05 && Math.Abs(c.wall - byWall) < 1e-3 && OdMatches(c.part, byOd)).ToList();
             if (elbowSel.Count != 1) throw new InvalidOperationException("Need exactly one 90-degree DN" + bypNd + " elbow with wall " + byWall + ", found " + elbowSel.Count);
             SpecPart elbowPart = elbowSel[0].part;
@@ -243,8 +252,6 @@ namespace Plant3dMcp
             var before = ModelRows(doc, dlm);
             var added = new HashSet<int>();
             var log = new List<string>();
-            var joints = new List<JointPlan>();
-            var parts = new List<(string label, int row, ObjectId id)>();
             try
             {
                 var rowOf = new Dictionary<string, int>();
@@ -263,7 +270,6 @@ namespace Plant3dMcp
 
                     tee1 = PlaceTee(doc, adder, dlm, ch.tee, "tee 1", A(s1), r, u, log, added);
                     tee2 = PlaceTee(doc, adder, dlm, ch.tee, "tee 2", A(s2), r, u, log, added);
-                    parts.Add(("tee 1", tee1.Row, tee1.Id)); parts.Add(("tee 2", tee2.Row, tee2.Id));
 
                     int AddP(string label, SpecPart part, Point3d a, Point3d b, double od, double wallMm)
                     {
@@ -323,7 +329,7 @@ namespace Plant3dMcp
                     weldRows.Add((Weld(tee1.PortDown, r, runNd, "tee 1|run 1"), "tee 1", "run 1", "tee 1|run 1"));
                     weldRows.Add((Weld(tee2.PortUp, r, runNd, "run 1|tee 2"), "run 1", "tee 2", "run 1|tee 2"));
                     weldRows.Add((Weld(tee2.PortDown, r, runNd, "tee 2|run 2"), "tee 2", "run 2", "tee 2|run 2"));
-                    weldRows.Add((Weld(tee1.PortBranch, u, 100, "tee 1|reducer 1"), "tee 1", "reducer 1", "tee 1|reducer 1"));
+                    weldRows.Add((Weld(tee1.PortBranch, u, ch.branchDn, "tee 1|reducer 1"), "tee 1", "reducer 1", "tee 1|reducer 1"));
                     weldRows.Add((Weld(red1.PortB, u, bypNd, "reducer 1|leg 1"), "reducer 1", "leg 1", "reducer 1|leg 1"));
                     weldRows.Add((Weld(e1.TIn, u, bypNd, "leg 1|elbow 1"), "leg 1", "elbow 1", "leg 1|elbow 1"));
                     weldRows.Add((Weld(e1.TOut, r, bypNd, "elbow 1|pipe A"), "elbow 1", "pipe A", "elbow 1|pipe A"));
@@ -334,7 +340,7 @@ namespace Plant3dMcp
                     weldRows.Add((Weld(e2.TIn, r, bypNd, "pipe B|elbow 2"), "pipe B", "elbow 2", "pipe B|elbow 2"));
                     weldRows.Add((Weld(e2.TOut, u.Negate(), bypNd, "elbow 2|leg 2"), "elbow 2", "leg 2", "elbow 2|leg 2"));
                     weldRows.Add((Weld(red2.PortB, u.Negate(), bypNd, "leg 2|reducer 2"), "leg 2", "reducer 2", "leg 2|reducer 2"));
-                    weldRows.Add((Weld(tee2.PortBranch, u.Negate(), 100, "reducer 2|tee 2"), "reducer 2", "tee 2", "reducer 2|tee 2"));
+                    weldRows.Add((Weld(tee2.PortBranch, u.Negate(), ch.branchDn, "reducer 2|tee 2"), "reducer 2", "tee 2", "reducer 2|tee 2"));
                     rowOf["reducer 1"] = red1.Row; rowOf["reducer 2"] = red2.Row; rowOf["flange L"] = flL.Row; rowOf["valve"] = va.Row; rowOf["flange R"] = flR.Row;
                     rowOf["tee 1"] = tee1.Row; rowOf["tee 2"] = tee2.Row;
                 }

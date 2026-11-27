@@ -43,8 +43,9 @@ public sealed record ModelIsoMarker(string Handle,string HostHandle,string HostP
 public sealed record BoundaryTapAxis(string Handle,string Port,ModelPoint Axis);
 // Connections come from Plant topology; proximity alone is not a connection.
 public sealed record Connection(string FirstHandle, string FirstPort, string SecondHandle, string SecondPort);
+public sealed record EquipmentConnection(string OwnerHandle,string OwnerPort,string EquipmentHandle,string EquipmentPort,string Tag,string Nozzle,double? EquipmentElevation=null);
 public sealed record PipelineSnapshot(int SchemaVersion, string SourceDrawing,
-    IReadOnlyList<Part> Parts, IReadOnlyList<Connection> Connections, IReadOnlyList<string> Warnings,IReadOnlyList<Part>? Accessories=null,IReadOnlyList<ModelIsoMarker>? IsoMarkers=null,IReadOnlyList<Connection>? RequiredCuts=null,IReadOnlyList<BoundaryTapAxis>? BoundaryTapAxes=null,IReadOnlyList<ExternalLineContext>? ExternalLineContexts=null);
+    IReadOnlyList<Part> Parts, IReadOnlyList<Connection> Connections, IReadOnlyList<string> Warnings,IReadOnlyList<Part>? Accessories=null,IReadOnlyList<ModelIsoMarker>? IsoMarkers=null,IReadOnlyList<Connection>? RequiredCuts=null,IReadOnlyList<BoundaryTapAxis>? BoundaryTapAxes=null,IReadOnlyList<ExternalLineContext>? ExternalLineContexts=null,IReadOnlyList<EquipmentConnection>? EquipmentConnections=null);
 
 public static class IsometricProjection
 {

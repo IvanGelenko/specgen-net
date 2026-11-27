@@ -16,10 +16,8 @@ namespace PipingSpecPlugin.Spec
     {
         public List<PartRecord> Records = new();
         public HashSet<int> EquipmentOwnedPnPIds = new();
-        // PnPID -> neighbouring PnPIDs through P3dPartConnection. Built
-        // by calling DataLinksManager.GetRelatedRowIds on every row;
-        // includes connectors (Buttweld, Universal) as standalone nodes
-        // so valve-companion discovery can walk Valve → Connector → Flange.
+        // Drawing-local connection graph from ConnectionManager, with
+        // outgoing edges from connectors to their own sub-part rows.
         public Dictionary<int, List<int>> Topology = new();
         // Diagnostic counts so WRITESPEC can show whether topology /
         // equipment recognition found anything. Updated by BuildTopology.
@@ -34,6 +32,8 @@ namespace PipingSpecPlugin.Spec
         // longer stop WRITESPEC (the old "strict mode"): the command turns
         // them into rows of the «Позиции, требующие проверки» section.
         public List<(int RowId, string Reason)> SkippedRowDetails = new();
+        // Physical Plant objects with no readable row id, located by DWG handle.
+        public List<(string Handle, string ClassName, string Reason)> UnlinkedParts = new();
         // True if the WorkingDatabase swap for a side-DB read failed — the
         // read may then hit RowNotInThisDatabase on some rows.
         public bool WorkingDbSwapFailed;
@@ -199,40 +199,80 @@ namespace PipingSpecPlugin.Spec
                         rowIdSet.Add(id);
                 }
 
-                // Supplement: scan model space for unsaved/new Plant 3D components in memory
+                // Supplement DLM's row list with model entities and their
+                // connector sub-parts, and record missing part links.
+                var modelRows = new HashSet<int>();
+                var markerRows = new HashSet<int>();
+                bool hasIsoMarkers = false;
                 using (var tr = db.TransactionManager.StartTransaction())
                 {
-                    try
+                    var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
+                    var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
+                    foreach (ObjectId entId in ms)
                     {
-                        var msId = SymbolUtilityServices.GetBlockModelSpaceId(db);
-                        if (!msId.IsNull)
-                        {
-                            var ms = (BlockTableRecord)tr.GetObject(msId, OpenMode.ForRead);
-                            foreach (ObjectId entId in ms)
-                            {
-                                var className = entId.ObjectClass?.Name;
-                                if (className != null && className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
-                                {
-                                    int rowId = 0;
-                                    try { rowId = dlm.FindAcPpRowId(entId); } catch { }
-                                    if (rowId != 0)
-                                    {
-                                        rowIdSet.Add(rowId);
-                                    }
-                                }
-                            }
-                        }
-                        tr.Commit();
-                    }
-                    catch { }
-                }
+                        var className = entId.ObjectClass?.Name;
+                        if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
+                            continue;
 
-                // Units of Position X/Y/Z for ValveCompanionFinder's
-                // proximity radius (see PartRecord.DrawingMmPerUnit).
-                double? drawingMmPerUnit = null;
-                try { drawingMmPerUnit = MillimetresPerUnit(db.Insunits); }
-                catch (System.Exception ex)
-                { Trace($"PartReader: INSUNITS не прочитан — {ex.GetType().Name}: {ex.Message}"); }
+                        int rowId = 0;
+                        string linkError = null;
+                        try { rowId = dlm.FindAcPpRowId(entId); }
+                        catch (System.Exception ex) { linkError = $"{ex.GetType().Name}: {ex.Message}"; }
+                        if (IsIsoMarker(entId))
+                        {
+                            hasIsoMarkers = true;
+                            if (rowId > 0) markerRows.Add(rowId);
+                            continue;
+                        }
+                        if (rowId > 0) modelRows.Add(rowId);
+
+                        var entity = tr.GetObject(entId, OpenMode.ForRead);
+                        if (entity is Connector connector)
+                        {
+                            bool hasLinkedSubPart = false;
+                            // A linked row still belongs to this object when
+                            // the SDK's sub-part index base differs.
+                            int subPartCount = connector.NumSubParts;
+                            for (int i = 0; subPartCount > 0 && i <= subPartCount; i++)
+                            {
+                                int subRow;
+                                try { subRow = dlm.FindAcPpRowId(dlm.MakeAcPpObjectId(entId, i)); }
+                                catch { continue; }
+                                if (subRow <= 0 || subRow == rowId) continue;
+                                hasLinkedSubPart = true;
+                                modelRows.Add(subRow);
+                                if (rowId > 0) AddEdge(result.Topology, rowId, subRow);
+                            }
+                            if (rowId > 0 || hasLinkedSubPart) continue;
+                        }
+                        else if (rowId > 0 || entity is not Part)
+                            continue;
+
+                        var handle = entId.Handle.ToString();
+                        var reason = linkError ?? "строка PnP не найдена";
+                        result.UnlinkedParts.Add((handle, className, reason));
+                        Trace($"PartReader: объект {handle} ({className}) пропущен — {reason}.");
+                    }
+                    tr.Commit();
+                }
+                rowIdSet.UnionWith(modelRows);
+                if (hasIsoMarkers)
+                {
+                    // A marker can share a row with its host pipe. Remove
+                    // a row only when there is evidence of marker ownership
+                    // and no linked physical object in this drawing.
+                    rowIdSet.RemoveWhere(rowId =>
+                    {
+                        if (modelRows.Contains(rowId)) return false;
+                        bool hasMarker = markerRows.Contains(rowId);
+                        foreach (var id in PartEntityIndex.EntityIdsForRow(dlm, rowId, db))
+                        {
+                            if (!IsIsoMarker(id)) return false;
+                            hasMarker = true;
+                        }
+                        return hasMarker;
+                    });
+                }
 
                 foreach (int rowId in rowIdSet)
                 {
@@ -258,7 +298,6 @@ namespace PipingSpecPlugin.Spec
                         Trace($"PartReader: rowId {rowId} пропущен — {ex.GetType().Name}: {ex.Message}");
                     }
                     if (rec == null) continue;
-                    rec.DrawingMmPerUnit = drawingMmPerUnit;
                     result.Records.Add(rec);
                 }
 
@@ -326,6 +365,13 @@ namespace PipingSpecPlugin.Spec
             }
         }
 
+        static bool IsIsoMarker(ObjectId id)
+        {
+            for (var rx = id.ObjectClass; rx != null; rx = rx.MyParent)
+                if (PartPropertyReader.IsIsoMarkerClass(rx.Name)) return true;
+            return false;
+        }
+
         /// <summary>
         /// Iterate every entity in model space and ask ConnectionManager
         /// for its *direct* P3dPartConnection neighbours. Each Connection
@@ -366,7 +412,8 @@ namespace PipingSpecPlugin.Spec
                         // Fast filter: skip native AutoCAD entities (like lines, circles, blocks)
                         // by checking their class name prefix. All Plant 3D entities start with "AcPp".
                         var className = entId.ObjectClass?.Name;
-                        if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase))
+                        if (className == null || !className.StartsWith("AcPp", System.StringComparison.OrdinalIgnoreCase)
+                            || IsIsoMarker(entId))
                             continue;
 
                         int fromRowId = 0;
@@ -401,7 +448,7 @@ namespace PipingSpecPlugin.Spec
                             var otherId = c.ObjectId1 == entId
                                 ? c.ObjectId2
                                 : (c.ObjectId2 == entId ? c.ObjectId1 : ObjectId.Null);
-                            if (otherId.IsNull) continue;
+                            if (otherId.IsNull || IsIsoMarker(otherId)) continue;
                             int toRowId = 0;
                             try { toRowId = dlm.FindAcPpRowId(otherId); }
                             catch { continue; }
@@ -499,20 +546,6 @@ namespace PipingSpecPlugin.Spec
                     markOwned(toRow, "Topology(equipment→connector→part)");
             }
         }
-
-        // Drawing units (INSUNITS) — for coordinates only; part dimensions
-        // such as WallThickness are in the part's catalogue LengthUnit.
-        // Unitless / exotic units → null ("unknown"; ValveCompanionFinder
-        // assumes mm).
-        static double? MillimetresPerUnit(UnitsValue units) => units switch
-        {
-            UnitsValue.Millimeters => 1,
-            UnitsValue.Centimeters => 10,
-            UnitsValue.Meters => 1000,
-            UnitsValue.Inches => 25.4,
-            UnitsValue.Feet => 304.8,
-            _ => null,
-        };
 
         static void AddEdge(Dictionary<int, List<int>> graph, int from, int to)
         {

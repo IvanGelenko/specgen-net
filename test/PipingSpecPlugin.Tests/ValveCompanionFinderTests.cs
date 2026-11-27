@@ -66,29 +66,29 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
-        public void Picks_Nearest_Same_Size_Gasket_And_Bolt()
+        public void Excludes_Only_Gasket_And_Bolt_Of_Valve_Joint()
         {
-            // Two gaskets — one at the flange, one a metre away. The near
-            // one must be picked; the far one stays in the spec.
             var v = Make(1, "Valves", "Valve");
             var c = Make(2, "", "P3dConnector");
             var f = Make(3, "Flanges", "Flange", x: 0, y: 0, z: 0);
             var nearGasket = Make(10, "Fasteners", "Gasket", desc: "Gasket near",
-                                  x: 5, y: 0, z: 0);
-            var farGasket  = Make(11, "Fasteners", "Gasket", desc: "Gasket far",
                                   x: 5000, y: 0, z: 0);
+            var farGasket  = Make(11, "Fasteners", "Gasket", desc: "Gasket far",
+                                  x: 5, y: 0, z: 0);
             var nearBolt = Make(20, "Fasteners", "BoltSet", desc: "BoltSet near",
-                                x: 5, y: 0, z: 0);
-            var farBolt  = Make(21, "Fasteners", "BoltSet", desc: "BoltSet far",
                                 x: 5000, y: 0, z: 0);
+            var farBolt  = Make(21, "Fasteners", "BoltSet", desc: "BoltSet far",
+                                x: 5, y: 0, z: 0);
+            var otherJoint = Make(30, "", "P3dConnector");
             var topology = new Dictionary<int, List<int>>
             {
                 { 1, new List<int> { 2 } },
-                { 2, new List<int> { 1, 3 } },
+                { 2, new List<int> { 1, 3, 10, 20 } },
                 { 3, new List<int> { 2 } },
+                { 30, new List<int> { 11, 21 } },
             };
             var drop = ValveCompanionFinder.Discover(
-                new[] { v, c, f, nearGasket, farGasket, nearBolt, farBolt }, topology);
+                new[] { v, c, f, nearGasket, farGasket, nearBolt, farBolt, otherJoint }, topology);
             Assert.Contains(3, drop);
             Assert.Contains(10, drop);
             Assert.Contains(20, drop);
@@ -97,13 +97,8 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
-        public void Equidistant_Gaskets_Pick_Is_Deterministic()
+        public void Keeps_Equidistant_Gaskets_Without_Joint_Links()
         {
-            // Two gaskets at the SAME distance from the flange. The pick must
-            // be the lower PnPID regardless of the order they're passed in —
-            // otherwise the spec wobbles between runs depending on DWG read
-            // order. (Regression for the tie-break that never fired because
-            // equidistant candidates were rejected before it.)
             PartRecord[] Scene(bool lowFirst)
             {
                 var v = Make(1, "Valves", "Valve");
@@ -124,9 +119,8 @@ namespace PipingSpecPlugin.Tests
             };
             var dropA = ValveCompanionFinder.Discover(Scene(lowFirst: true), topo);
             var dropB = ValveCompanionFinder.Discover(Scene(lowFirst: false), topo);
-            // Lower PnPID (10) chosen both ways; 11 stays in the spec.
-            Assert.Contains(10, dropA);
-            Assert.Contains(10, dropB);
+            Assert.DoesNotContain(10, dropA);
+            Assert.DoesNotContain(10, dropB);
             Assert.DoesNotContain(11, dropA);
             Assert.DoesNotContain(11, dropB);
         }

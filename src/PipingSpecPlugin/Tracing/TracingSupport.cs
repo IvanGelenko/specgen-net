@@ -35,14 +35,19 @@ namespace PipingSpecPlugin.Tracing
         // ---- SetLayer (from BendTools.cs)
         // set_layer: puts objects on a layer (created with the given AutoCAD colour index if missing). Used to colour the tracing without touching the colour
         // of the Plant objects themselves.
-        public static object SetLayer(JsonElement args)
+        public static object SetLayer(JsonElement args, bool dryRun = false)
         {
             var doc = ActiveDocument();
-            string layer = args.GetProperty("layer").GetString();
-            int color = args.TryGetProperty("color", out var cj) && cj.ValueKind == JsonValueKind.Number ? cj.GetInt32() : 1;
-            var handles = args.GetProperty("handles").EnumerateArray().Select(e => e.GetString()).Distinct().ToList();
+            string layer = Plant3dMcp.Tools.Required(args, "layer", JsonValueKind.String).GetString();
+            if (string.IsNullOrWhiteSpace(layer)) throw new ArgumentException("Specify a layer name.");
+            int color = Plant3dMcp.Tools.OptionalInt(args, "color") ?? 1;
+            if (color is < 1 or > 255) throw new ArgumentOutOfRangeException("color", "Expected an AutoCAD color index from 1 to 255.");
+            var handles = Plant3dMcp.Tools.Required(args, "handles", JsonValueKind.Array).EnumerateArray()
+                .Select(e => e.GetString()).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (handles.Count == 0 || handles.Count > 200) throw new ArgumentException("handles: 1..200");
             var ids = handles.Select(h => IdFromHandle(doc.Database, h)).ToList();
+            bool byLayer = !(args.TryGetProperty("by_layer", out var blj) && blj.ValueKind == JsonValueKind.False);
+            if (dryRun) return new { dry_run = true, document = doc.Name, layer, color, by_layer = byLayer, handles };
             using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
@@ -53,7 +58,6 @@ namespace PipingSpecPlugin.Tracing
                     var rec = new LayerTableRecord { Name = layer, Color = Autodesk.AutoCAD.Colors.Color.FromColorIndex(Autodesk.AutoCAD.Colors.ColorMethod.ByAci, (short)color) };
                     lt.Add(rec); tr.AddNewlyCreatedDBObject(rec, true);
                 }
-                bool byLayer = !(args.TryGetProperty("by_layer", out var blj) && blj.ValueKind == JsonValueKind.False);   // the colour of the objects follows the layer
                 foreach (var id in ids) { var ent = (Entity)tr.GetObject(id, OpenMode.ForWrite); ent.Layer = layer; if (byLayer) ent.ColorIndex = 256; }
                 tr.Commit();
             }
@@ -72,6 +76,61 @@ namespace PipingSpecPlugin.Tracing
                 tr.Commit();
             }
             return rows;
+        }
+
+        static HashSet<ObjectId> ModelIds(Document doc)
+        {
+            using var tr = doc.Database.TransactionManager.StartTransaction();
+            var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(doc.Database), OpenMode.ForRead);
+            var ids = ms.Cast<ObjectId>().ToHashSet();
+            tr.Commit();
+            return ids;
+        }
+
+        const string TracingRegApp = "SPECGEN_TRACING";
+
+        static (string route, string item) ReadTracingStamp(Entity entity)
+        {
+            using var data = entity.GetXDataForApplication(TracingRegApp);
+            var values = data?.AsArray();
+            return values?.Length == 3 ? (values[1].Value as string, values[2].Value as string) : default;
+        }
+
+        static Dictionary<string, List<ObjectId>> FindTracingItems(Document doc, string routeKey)
+        {
+            var result = new Dictionary<string, List<ObjectId>>(StringComparer.Ordinal);
+            using var lockDoc = doc.LockDocument();
+            using var tr = doc.Database.TransactionManager.StartTransaction();
+            if (!((RegAppTable)tr.GetObject(doc.Database.RegAppTableId, OpenMode.ForRead)).Has(TracingRegApp)) return result;
+            var space = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(doc.Database), OpenMode.ForRead);
+            foreach (ObjectId id in space)
+            {
+                if (!(tr.GetObject(id, OpenMode.ForRead) is Entity entity)) continue;
+                var stamp = ReadTracingStamp(entity);
+                if (stamp.route != routeKey || string.IsNullOrWhiteSpace(stamp.item)) continue;
+                if (!result.TryGetValue(stamp.item, out var matches)) result.Add(stamp.item, matches = new List<ObjectId>());
+                matches.Add(id);
+            }
+            tr.Commit();
+            return result;
+        }
+
+        static void StampTracingItem(Document doc, ObjectId id, string routeKey, string itemKey)
+        {
+            using var tr = doc.Database.TransactionManager.StartTransaction();
+            var table = (RegAppTable)tr.GetObject(doc.Database.RegAppTableId, OpenMode.ForRead);
+            if (!table.Has(TracingRegApp))
+            {
+                table.UpgradeOpen();
+                var app = new RegAppTableRecord { Name = TracingRegApp };
+                table.Add(app);
+                tr.AddNewlyCreatedDBObject(app, true);
+            }
+            var entity = (Entity)tr.GetObject(id, OpenMode.ForWrite);
+            using var data = new ResultBuffer(new TypedValue((int)DxfCode.ExtendedDataRegAppName, TracingRegApp),
+                new TypedValue((int)DxfCode.ExtendedDataAsciiString, routeKey), new TypedValue((int)DxfCode.ExtendedDataAsciiString, itemKey));
+            entity.XData = data;
+            tr.Commit();
         }
 
         // ---- DescOf (from BranchTools.cs)
@@ -132,8 +191,13 @@ namespace PipingSpecPlugin.Tracing
         // Port positions as plain tuples (for geometry checks).
         static List<(string name, Point3d pos, Vector3d dir)> PortsOf(Document doc, ObjectId id)
         {
-            var res = new List<(string, Point3d, Vector3d)>();
             using (doc.LockDocument())
+                return ReadPortsInLockedDocument(doc, id);
+        }
+
+        static List<(string name, Point3d pos, Vector3d dir)> ReadPortsInLockedDocument(Document doc, ObjectId id)
+        {
+            var res = new List<(string, Point3d, Vector3d)>();
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var part = (Part)tr.GetObject(id, OpenMode.ForRead);
@@ -145,17 +209,6 @@ namespace PipingSpecPlugin.Tracing
         }
 
         // ---- ConnectionCount (from PipelineTools.cs)
-        static int ConnectionCount(Document doc, ObjectId id)
-        {
-            try
-            {
-                using (doc.LockDocument())
-                using (var cm = new ConnectionManager())
-                    return cm.GetConnections(id).Count;
-            }
-            catch (Exception) { return -1; }
-        }
-
         // ---- EraseIds (from PipelineTools.cs)
         static void EraseIds(Document doc, IEnumerable<ObjectId> ids)
         {
@@ -215,15 +268,15 @@ namespace PipingSpecPlugin.Tracing
             return sb.ToString();
         }
 
-        // ---- FindByRow (from PipelineTools.cs)
-        static ObjectId FindByRow(Document doc, DataLinksManager dlm, int rowId)
+        // The placement loop already holds the lock. Re-entering LockDocument
+        // after PipingObjectAdder.Add can trigger eInvalidOpenState in Plant 3D.
+        static ObjectId FindPlacedPart(Document doc, DataLinksManager dlm, int rowId, HashSet<ObjectId> prior)
         {
-            using (doc.LockDocument())
             using (var tr = doc.Database.TransactionManager.StartTransaction())
             {
                 var ms = (BlockTableRecord)tr.GetObject(SymbolUtilityServices.GetBlockModelSpaceId(doc.Database), OpenMode.ForRead);
                 foreach (ObjectId id in ms)
-                    if (RowId(dlm, id) == rowId) { tr.Commit(); return id; }
+                    if (!prior.Contains(id) && RowId(dlm, id) == rowId) { tr.Commit(); return id; }
                 tr.Commit();
             }
             throw new InvalidOperationException("New object with row " + rowId + " not found in model space");

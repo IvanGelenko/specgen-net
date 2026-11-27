@@ -66,6 +66,11 @@ namespace PipingSpecPlugin.Tests
         [InlineData("0,1", "0.1")]
         [InlineData("0,1 мм/год", "0.1")]
         [InlineData("0.05*", "0.05")]
+        [InlineData("1E-3", "0.001")]
+        [InlineData("0.00004", "0.00004")]
+        [InlineData("-0.1", null)]
+        [InlineData("0.1–0.3", null)]
+        [InlineData("сноска 2: 0,1", null)]
         public void ExtractCorrosionRate_Extracts_Rate_From_Cell(string cell, string expected)
         {
             Assert.Equal(expected, VtValueParsing.ExtractCorrosionRate(cell));
@@ -85,6 +90,7 @@ namespace PipingSpecPlugin.Tests
         [InlineData("15,5/1", "15.5")]
         [InlineData("20 лет", "20")]
         [InlineData("20 лет / 2 мм", "20")]
+        [InlineData("24 мес.", null)]
         public void ExtractServiceLifeYears_Takes_First_Number_Of_Composite_Cell(string cell, string expected)
         {
             Assert.Equal(expected, VtValueParsing.ExtractServiceLifeYears(cell));
@@ -104,6 +110,8 @@ namespace PipingSpecPlugin.Tests
         [InlineData("0.5", "15,5/1", "7.75")]
         [InlineData("0,1 мм/год", "20 лет", "2")]
         [InlineData("0.08", "25", "2")]
+        [InlineData("1E-3", "25", "0.025")]
+        [InlineData("0.00004", "25", "0.001")]
         public void ComputeCorrosionAllowance_Multiplies_Rate_By_Service_Life_Years(
             string rateCell, string serviceLifeCell, string expected)
         {

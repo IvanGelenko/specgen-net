@@ -5,6 +5,15 @@ namespace PipingSpecPlugin.Spec
 {
     public static class PartPropertyReader
     {
+        internal static bool IsIsoMarkerClass(string className)
+        {
+            var name = className?.Trim();
+            return name != null && (name.StartsWith("AcPpDb3dIso", StringComparison.OrdinalIgnoreCase)
+                || name.StartsWith("Iso", StringComparison.OrdinalIgnoreCase)
+                    && (name.EndsWith("Symbol", StringComparison.OrdinalIgnoreCase)
+                        || name.Equals("IsoRefDim", StringComparison.OrdinalIgnoreCase)));
+        }
+
         public static PartRecord Build(int rowId, IEnumerable<KeyValuePair<string, string>> props,
                                        string resolvedLineNumberTag = null)
         {
@@ -33,9 +42,12 @@ namespace PipingSpecPlugin.Spec
                 return null;
             }
 
+            var className = Get("PnPClassName");
+            if (IsIsoMarkerClass(className)) return null;
+
             if (string.IsNullOrEmpty(resolvedLineNumberTag))
                 resolvedLineNumberTag = Get("LineNumberTag");
-            var isBend = (Get("PnPClassName") ?? "").IndexOf("PipeBend", StringComparison.OrdinalIgnoreCase) >= 0;
+            var isBend = (className ?? "").IndexOf("PipeBend", StringComparison.OrdinalIgnoreCase) >= 0;
 
             return new PartRecord
             {
@@ -78,7 +90,7 @@ namespace PipingSpecPlugin.Spec
                 CogX = Get("COG X"),
                 CogY = Get("COG Y"),
                 CogZ = Get("COG Z"),
-                PnPClassName = Get("PnPClassName"),
+                PnPClassName = className,
                 PressureClass = Get("PressureClass"),
                 Facing = Get("Facing"),
                 // Bolt sets carry their piece count under "NumberInSet"

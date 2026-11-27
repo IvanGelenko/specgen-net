@@ -1,7 +1,7 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -29,21 +29,21 @@ namespace PipingSpecPlugin.Mcp
         const string Prefix = "http://" + HostHeader + "/";
         const int MaxBody = 1 << 20;
         static readonly TimeSpan UiWait = TimeSpan.FromSeconds(60);
+        static readonly object Lifecycle = new object();
         static HttpListener _listener;
         static SynchronizationContext _ui;
-        static byte[] _token;
-        static bool _ownsToken;
+        static CancellationTokenSource _stopping;
         static readonly JsonElement EmptyArgs = JsonDocument.Parse("{}").RootElement.Clone();
 
         static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Plant3dMcp");
         public static string TokenPath => Path.Combine(Dir, "token");
         public static string AutostartPath => Path.Combine(Dir, "autostart");
-        public static bool IsRunning => _listener != null && _listener.IsListening;
+        public static bool IsRunning { get { lock (Lifecycle) return _listener?.IsListening == true; } }
 
         /// <summary>Called when the plug-in loads (on the UI thread): starts the server only when the user has opted in.</summary>
         public static void AutoStart()
         {
-            _ui = SynchronizationContext.Current;
+            lock (Lifecycle) _ui = SynchronizationContext.Current;
             bool on = Environment.GetEnvironmentVariable("PLANT3D_MCP_AUTOSTART") == "1" || File.Exists(AutostartPath);
             if (!on) return;
             try { Start(); }
@@ -55,40 +55,50 @@ namespace PipingSpecPlugin.Mcp
 
         public static void Start()
         {
-            if (_ui == null) _ui = SynchronizationContext.Current;
-            if (_ui == null) throw new InvalidOperationException("контекст интерфейса недоступен: запустите PSMCP из Plant 3D");
-            if (IsRunning) return;
-
-            // Listen first: when the port is taken (another Plant 3D, or the development host) Start throws and the other token stays intact.
-            var listener = new HttpListener();
-            listener.Prefixes.Add(Prefix);
-            try { listener.Start(); }
-            catch (HttpListenerException ex) { throw new InvalidOperationException("порт 18765 занят другой программой или другим Plant 3D (" + ex.Message + ")"); }
-            _listener = listener;
-
-            _token = RandomNumberGenerator.GetBytes(32);
-            try
+            lock (Lifecycle)
             {
-                Directory.CreateDirectory(Dir);
-                File.WriteAllText(TokenPath, Convert.ToHexString(_token));
-                _ownsToken = true;
+                if (_listener != null) return;
+                var ui = _ui ?? SynchronizationContext.Current
+                    ?? throw new InvalidOperationException("контекст интерфейса недоступен: запустите PSMCP из Plant 3D");
+                var listener = new HttpListener();
+                listener.Prefixes.Add(Prefix);
+                var token = RandomNumberGenerator.GetBytes(32);
+                var temp = TokenPath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    // Keep the existing token intact if another instance owns the port.
+                    listener.Start();
+                    Directory.CreateDirectory(Dir);
+                    File.WriteAllText(temp, Convert.ToHexString(token));
+                    File.Move(temp, TokenPath, overwrite: true);
+                }
+                catch
+                {
+                    listener.Close();
+                    try { File.Delete(temp); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                    throw;
+                }
+                _ui = ui;
+                _listener = listener;
+                _stopping = new CancellationTokenSource();
+                var stopping = _stopping.Token;
+                _ = Task.Run(() => Loop(listener, ui, token, stopping));
             }
-            catch
-            {
-                try { listener.Close(); } catch { }
-                _listener = null; _token = null;
-                throw;
-            }
-            var l = _listener;
-            Task.Run(() => Loop(l));
             AcadApp.DocumentManager.MdiActiveDocument?.Editor.WriteMessage("\n[PipingSpecPlugin] Сервер MCP запущен: " + Prefix + "\n");
         }
 
         public static void Stop()
         {
-            try { _listener?.Close(); } catch { }
-            _listener = null;
-            if (_ownsToken) { try { File.Delete(TokenPath); } catch { } _ownsToken = false; }
+            lock (Lifecycle)
+            {
+                if (_listener == null) return;
+                _stopping.Cancel();
+                // Delete before releasing the port so that a new instance cannot replace the token first.
+                try { File.Delete(TokenPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+                _listener.Close();
+                _listener = null;
+                _stopping = null;
+            }
         }
 
         public static void SetAutostart(bool on)
@@ -98,40 +108,40 @@ namespace PipingSpecPlugin.Mcp
             else if (File.Exists(AutostartPath)) File.Delete(AutostartPath);
         }
 
-        static async Task Loop(HttpListener l)
+        static async Task Loop(HttpListener l, SynchronizationContext ui, byte[] token, CancellationToken stopping)
         {
-            while (l.IsListening)
+            while (!stopping.IsCancellationRequested)
             {
                 HttpListenerContext ctx;
                 try { ctx = await l.GetContextAsync(); } catch { break; }
-                _ = Task.Run(() => Handle(ctx));
+                _ = Handle(ctx, ui, token, stopping);
             }
         }
 
-        static bool Authorized(HttpListenerRequest req)
+        static bool Authorized(HttpListenerRequest req, byte[] token)
         {
             if (req.HttpMethod != "POST") return false;
             if (req.Headers["Origin"] != null) return false;                       // browsers always send it cross-site
             if (req.Headers["Host"] != HostHeader) return false;                   // DNS rebinding
-            if (req.ContentType == null || !req.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!string.Equals(req.ContentType?.Split(';', 2)[0].Trim(), "application/json", StringComparison.OrdinalIgnoreCase)) return false;
             if (req.ContentLength64 > MaxBody) return false;
             string auth = req.Headers["Authorization"];
             if (auth == null || !auth.StartsWith("Bearer ", StringComparison.Ordinal)) return false;
             try
             {
                 byte[] given = Convert.FromHexString(auth.Substring(7).Trim());
-                return _token != null && CryptographicOperations.FixedTimeEquals(given, _token);
+                return CryptographicOperations.FixedTimeEquals(given, token);
             }
             catch (FormatException) { return false; }
         }
 
-        static void Handle(HttpListenerContext ctx)
+        static async Task Handle(HttpListenerContext ctx, SynchronizationContext ui, byte[] token, CancellationToken stopping)
         {
             string result; int status = 200;
             try
             {
-                if (!Authorized(ctx.Request)) { status = 403; result = JsonSerializer.Serialize(new { ok = false, error = "forbidden" }); }
-                else result = Execute(ctx.Request);
+                if (!Authorized(ctx.Request, token)) { status = 403; result = JsonSerializer.Serialize(new { ok = false, error = "forbidden" }); }
+                else result = await Execute(ctx.Request, ui, stopping).ConfigureAwait(false);
             }
             catch (Exception e)
             {
@@ -142,53 +152,54 @@ namespace PipingSpecPlugin.Mcp
                 var bytes = Encoding.UTF8.GetBytes(result);
                 ctx.Response.StatusCode = status;
                 ctx.Response.ContentType = "application/json; charset=utf-8";
-                ctx.Response.OutputStream.Write(bytes, 0, bytes.Length);
+                await ctx.Response.OutputStream.WriteAsync(bytes, stopping).ConfigureAwait(false);
             }
             catch { }
             finally { try { ctx.Response.Close(); } catch { } }
         }
 
-        static string Execute(HttpListenerRequest req)
+        static async Task<string> Execute(HttpListenerRequest req, SynchronizationContext ui, CancellationToken stopping)
         {
-            string body;
-            using (var r = new StreamReader(req.InputStream, Encoding.UTF8))
+            using var body = new MemoryStream();
+            var buffer = new byte[8192];
+            int count;
+            while ((count = await req.InputStream.ReadAsync(buffer, stopping).ConfigureAwait(false)) != 0)
             {
-                var buf = new char[8192]; var sb = new StringBuilder(); int n;
-                while ((n = r.Read(buf, 0, buf.Length)) > 0)
-                {
-                    sb.Append(buf, 0, n);
-                    if (sb.Length > MaxBody) throw new InvalidOperationException("request body too large");
-                }
-                body = sb.ToString();
+                if (body.Length + count > MaxBody) throw new InvalidOperationException("request body too large");
+                body.Write(buffer, 0, count);
             }
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("tool", out var toolEl) || toolEl.ValueKind != JsonValueKind.String)
+            var json = body.GetBuffer().AsMemory(0, (int)body.Length);
+            if (json.Span.StartsWith(Encoding.UTF8.Preamble)) json = json.Slice(Encoding.UTF8.Preamble.Length);
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object ||
+                !doc.RootElement.TryGetProperty("tool", out var toolEl) || toolEl.ValueKind != JsonValueKind.String)
                 throw new ArgumentException("request must contain a string field 'tool'");
             string tool = toolEl.GetString();
-            JsonElement args = doc.RootElement.TryGetProperty("args", out var a) && a.ValueKind == JsonValueKind.Object ? a.Clone() : EmptyArgs;
-            if (_ui == null) throw new InvalidOperationException("UI context unavailable: run PSMCP in Plant 3D");
+            JsonElement args = EmptyArgs;
+            if (doc.RootElement.TryGetProperty("args", out var supplied))
+            {
+                if (supplied.ValueKind != JsonValueKind.Object) throw new ArgumentException("'args' must be an object");
+                args = supplied.Clone();
+            }
 
             int state = 0; // 0 queued, 1 started, 2 cancelled
-            object value = null; Exception err = null;
-            using (var done = new ManualResetEventSlim())
+            var done = new TaskCompletionSource<(object Value, Exception Error)>(TaskCreationOptions.RunContinuationsAsynchronously);
+            ui.Post(_ =>
             {
-                _ui.Post(_ =>
-                {
-                    if (Interlocked.CompareExchange(ref state, 1, 0) != 0) return;
-                    try { value = Plant3dMcp.Tools.Run(tool, args); }
-                    catch (KeyNotFoundException) { err = new ArgumentException("missing required argument for '" + tool + "' (see the tool's input schema)"); }
-                    catch (Exception e) { err = e; }
-                    finally { done.Set(); }
-                }, null);
-                if (!done.Wait(UiWait))
-                {
-                    if (Interlocked.CompareExchange(ref state, 2, 0) == 0)
-                        throw new TimeoutException("AutoCAD is busy (modal dialog or running command); the request was cancelled");
-                    done.Wait(); // already running: wait for the real result
-                }
+                if (stopping.IsCancellationRequested || Interlocked.CompareExchange(ref state, 1, 0) != 0) return;
+                try { done.SetResult((Plant3dMcp.Tools.Run(tool, args), null)); }
+                catch (Exception e) { done.SetResult((null, e)); }
+            }, null);
+            (object Value, Exception Error) outcome;
+            try { outcome = await done.Task.WaitAsync(UiWait, stopping).ConfigureAwait(false); }
+            catch (TimeoutException)
+            {
+                if (Interlocked.CompareExchange(ref state, 2, 0) == 0)
+                    throw new TimeoutException("AutoCAD is busy; the queued request was cancelled");
+                throw new TimeoutException("The operation started in AutoCAD and may still finish. Check the drawing before retrying.");
             }
-            if (err != null) throw err;
-            return JsonSerializer.Serialize(new { ok = true, result = value });
+            if (outcome.Error != null) ExceptionDispatchInfo.Throw(outcome.Error);
+            return JsonSerializer.Serialize(new { ok = true, result = outcome.Value });
         }
     }
 

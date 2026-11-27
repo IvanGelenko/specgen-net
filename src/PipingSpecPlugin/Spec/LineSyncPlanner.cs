@@ -1,99 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using static PipingSpecPlugin.Spec.VtFieldMappings;
 
 namespace PipingSpecPlugin.Spec
 {
-    public static partial class LineSyncService
+    public static class LineSyncPlanner
     {
-        // Straight ВТ-field -> P3dLineGroup column mappings that need no
-        // value translation (both sides are free text / numeric text).
-        // Left out on purpose: Плотность / t°C-при-плотности have no
-        // P3dLineGroup column yet. Срок службы now has one (`srok`,
-        // added by the user) — handled below alongside the Прибавка на
-        // коррозию calculation that depends on it, not through this
-        // table (writing srok alone wouldn't also update Corrosion).
-        static readonly (string Label, Func<VtRowData, string> VtValue, string Property)[] DirectFields =
-        {
-            ("Классификация по ГОСТ 32569",              r => r.GostGroup,           "GostGroup"),
-            ("Классификация по ТР ТС 032-2013",          r => r.TrTsGroup,           "TRTSGroup"),
-            ("Давление рабочее, МПа",                    r => r.WorkPressure,        "Pwork"),
-            ("Температура рабочая, С",                   r => r.WorkTemperature,     "Tworking"),
-            ("Давление расчетное, МПа",                  r => r.DesignPressure,      "PressureDesign"),
-            ("Температура расчетная, С",                 r => r.DesignTemperature,   "Tdesign"),
-            ("Скорость коррозии, мм/год",                r => r.CorrosionRate,       "CorrosionSpeed"),
-            ("Термообработка",                           r => r.HeatTreatment,       "Thermo"),
-            ("Доп. указания",                             r => r.Additional,          "Additional"),
-            ("Толщина изоляции, мм",                      r => r.InsulationThickness, "InsulationThickness"),
-            // Испытания на прочность/плотность come from ВТ as one cell
-            // ("2,0/1,6") but TestD/TestW are separate numeric fields —
-            // handled by VtValueParsing.SplitTestValues below, not
-            // through this table.
-            // Объем контроля швов comes from ВТ as "РД/УЗК 10%" (method +
-            // percent in one cell) but NDControl is numeric-only —
-            // handled by VtValueParsing.ExtractNdPercent below, also not
-            // through here.
-            // Срок службы / Прибавка на коррозию: srok is written as-is,
-            // Corrosion is CorrosionSpeed × srok — both handled below,
-            // not through this table, so the calculation always uses the
-            // value about to be written rather than whatever's stale in
-            // the project already.
-        };
-
-        // Fields decoded straight out of the "Обозначение" segment code
-        // (see LineDesignationParser) rather than a separate ВТ column.
-        // The letters/digits Plant 3D's own tag format encodes ARE the
-        // picklist codes already (e.g. designation segment "H" ==
-        // InsulationType code "H" — "Изоляция от теплопотерь"), so unlike
-        // a text ВТ column these never go through the user's text->code
-        // mapping table. A code that fails PnPTable validation is still
-        // reported, never silently dropped. Material and environment code
-        // are decoded from here (not from ВТ's own "Материал трубопровода"
-        // / "Наименование транспортируемого продукта" text columns) per
-        // the user's explicit call — the designation's letter codes
-        // already ARE the picklist codes, the ВТ text columns would need
-        // a lossy text->code guess instead. "Спутник" is Heat_type, not a
-        // separate field — confirmed against the live P3dLineGroup
-        // property list (Heat_type shows as "Тип обогрева" in the UI).
-        static readonly (string Label, Func<LineDesignationParts, string> Value, string Property)[] DesignationFields =
-        {
-            ("Размер (ГОСТ)",                     p => p.NominalSize,     "Size2"),
-            ("Код среды",                         p => p.EnvironmentCode, "Код_трубопровода"),
-            ("Материал трубопровода",             p => p.MaterialCode,    "Material_pipe"),
-            ("Код условного давления",            p => p.PressureCode,    "Ysl_pressure"),
-            ("Тип присоединения арматуры",        p => p.FlangeCode,      "flanges"),
-            ("Тип изоляции",                      p => p.InsulationCode,  "InsulationType"),
-            ("Тип обогрева (Спутник)",            p => p.SputnikCode,     "Heat_type"),
-            // "Номер" is handled separately: exactly three digits after the environment code.
-        };
-
-        public static string[] KnownLineGroupColumns =>
-            DirectFields.Select(f => f.Property)
-                .Concat(DesignationFields.Select(f => f.Property))
-                .Concat(new[] { "Tag", "Номер", "TestD", "TestW", "NDControl", "srok", "Corrosion" })
-                .ToArray();
-
-        // Russian display labels for KnownLineGroupColumns, used by the
-        // review window to render the "внутренняя ведомость" grid header
-        // without duplicating this list a third time.
-        public static IReadOnlyDictionary<string, string> KnownLineGroupColumnLabels
-        {
-            get
-            {
-                var d = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                foreach (var (label, _, property) in DirectFields) d[property] = label;
-                foreach (var (label, _, property) in DesignationFields) d[property] = label;
-                d["Tag"] = "Идентификатор";
-                d["Номер"] = "Номер линии";
-                d["TestD"] = "Испытания на прочность, МПа";
-                d["TestW"] = "Испытания на плотность, МПа";
-                d["NDControl"] = "Объем контроля швов, %";
-                d["srok"] = "Срок службы, лет";
-                d["Corrosion"] = "Прибавка на коррозию (расч.)";
-                return d;
-            }
-        }
-
         /// <summary>
         /// Builds a dry-run plan: matches every ВТ row's "n/n" (row
         /// ordinal, e.g. "1", "3.1") to a project line's `ID` property
@@ -124,8 +37,6 @@ namespace PipingSpecPlugin.Spec
                 list.Add(line);
             }
 
-            var matchedLineRowIds = new HashSet<int>();
-
             // n/n must be unique across the whole ВТ workbook to be a
             // usable sync key — a value repeated on several rows (e.g.
             // section numbering restarting at 1 per Цех) makes it
@@ -143,277 +54,239 @@ namespace PipingSpecPlugin.Spec
                 if (string.IsNullOrWhiteSpace(vt.NN)) continue;
                 var nn = vt.NN.Trim();
                 if (nnCounts.TryGetValue(nn, out var nnCount) && nnCount > 1)
-                {
-                    plan.UnmatchedVtRows.Add(vt);
                     continue;
-                }
                 if (!byId.TryGetValue(nn, out var candidates) || candidates.Count == 0)
                 {
                     plan.UnmatchedVtRows.Add(vt);
                     continue;
                 }
+                var designationTags = ReadDesignationTags(vt.Designation).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                bool allowEmptyTag = candidates.Count == 1 && designationTags.Count == 1;
+                var matchingLines = designationTags.Count == 0
+                    ? candidates
+                    : candidates.Where(line =>
+                    {
+                        var tag = ReadLineTag(line);
+                        return designationTags.Contains(LineDesignationParser.TagOf(tag))
+                            || (allowEmptyTag && string.IsNullOrWhiteSpace(tag));
+                    }).ToList();
                 if (candidates.Count > 1)
                 {
                     plan.DuplicateIds.Add(nn);
-                    // Still plan changes against every matching line — the
-                    // user resolves the duplicate in Plant 3D, not here.
+                    if (designationTags.Count == 0 || matchingLines.Count != 1)
+                    {
+                        foreach (var line in candidates)
+                            plan.BlockedLines[line.RowId] = $"ID «{nn}» повторяется, однозначного совпадения по обозначению нет.";
+                        continue;
+                    }
                 }
 
-                foreach (var line in candidates)
+                foreach (var line in candidates.Except(matchingLines))
+                    plan.BlockedLines[line.RowId] = $"ID «{nn}», линия «{line.Tag}» не совпадает с обозначением в строке {vt.RowNumber} ВТ.";
+
+                foreach (var line in matchingLines)
                 {
-                    matchedLineRowIds.Add(line.RowId);
-                    var action = new LineSyncAction { VtRow = vt, Line = line };
-
-                    // line.AllProperties was already populated by
-                    // ReadAllLines — no need for a second GetAllProperties
-                    // round-trip per matched line.
-                    string CurrentOf(string prop) =>
-                        line.AllProperties.TryGetValue(prop, out var v) ? v : null;
-
-                    foreach (var (label, vtValue, property) in DirectFields)
-                    {
-                        var newVal = (vtValue(vt) ?? "").Trim();
-                        if (newVal == "") continue; // don't blank out an existing value from an empty ВТ cell.
-                        var oldVal = CurrentOf(property) ?? "";
-                        if (!SameFieldValue(property, newVal, oldVal))
-                            action.Changes.Add(new FieldChange
-                            {
-                                PropertyName = property,
-                                DisplayLabel = label,
-                                OldValue = oldVal,
-                                NewValue = newVal,
-                            });
-                    }
-
-                    // Испытания на прочность: ВТ carries one "2,0/1,6"
-                    // cell, TestD is a separate numeric field — split
-                    // rather than trying to write the raw string (which
-                    // is why this field went unfilled before: TestD
-                    // rejected "2,0/1,6" as not a number).
-                    var (testD, testStrengthTestW) = VtValueParsing.SplitTestValues(vt.TestStrength);
-                    if (testD != null)
-                    {
-                        var oldVal = CurrentOf("TestD") ?? "";
-                        if (!SameFieldValue("TestD", testD, oldVal))
-                            action.Changes.Add(new FieldChange { PropertyName = "TestD", DisplayLabel = "Испытания на прочность, МПа", OldValue = oldVal, NewValue = testD });
-                    }
-
-                    // Испытания на плотность (TestW): ВТ has a DEDICATED
-                    // "На герметичность" column (vt.TestTightness) that is
-                    // NOT always equal to the second half of TestStrength
-                    // — confirmed on real data, e.g. rows 3.1/3.2 in
-                    // 873.РД-ТХМ.ВТ have TestStrength="1,29/0,39" but
-                    // TestTightness="0,41"/"0,45" respectively. Prefer
-                    // TestTightness when it parses; fall back to
-                    // TestStrength's second half only when TestTightness
-                    // is blank/unparsable (some ВТ rows leave it empty and
-                    // only carry the combined cell).
-                    var testWFromTightness = VtValueParsing.SplitTestValues(vt.TestTightness).testD;
-                    var testW = testWFromTightness ?? testStrengthTestW;
-                    if (testW != null)
-                    {
-                        var oldVal = CurrentOf("TestW") ?? "";
-                        if (!SameFieldValue("TestW", testW, oldVal))
-                            action.Changes.Add(new FieldChange { PropertyName = "TestW", DisplayLabel = "Испытания на плотность, МПа", OldValue = oldVal, NewValue = testW });
-                    }
-                    // Неразрушающий контроль: ВТ carries "РД/УЗК 10%",
-                    // NDControl is numeric-only — pull just the percent.
-                    var ndPercent = VtValueParsing.ExtractNdPercent(vt.NdControl);
-                    if (ndPercent != null)
-                    {
-                        var oldVal = CurrentOf("NDControl") ?? "";
-                        if (!SameFieldValue("NDControl", ndPercent, oldVal))
-                            action.Changes.Add(new FieldChange { PropertyName = "NDControl", DisplayLabel = "Объем контроля швов, %", OldValue = oldVal, NewValue = ndPercent });
-                    }
-
-                    // Срок службы (srok) -> years extracted from ВТ's
-                    // cell (e.g. "20", "20/2", "20 лет").
-                    var srokYears = VtValueParsing.ExtractServiceLifeYears(vt.ServiceLife);
-                    if (srokYears != null)
-                    {
-                        var oldSrok = CurrentOf("srok") ?? "";
-                        if (!SameFieldValue("srok", srokYears, oldSrok))
-                            action.Changes.Add(new FieldChange { PropertyName = "srok", DisplayLabel = "Срок службы, лет", OldValue = oldSrok, NewValue = srokYears });
-                    }
-
-                    // Прибавка на коррозию (Corrosion) = Скорость коррозии × Срок службы.
-                    // Uses values provided in ВТ this run, falling back to the line's existing
-                    // Plant 3D property if only one of the inputs was specified/updated.
-                    var effectiveRate = !string.IsNullOrWhiteSpace(vt.CorrosionRate) ? vt.CorrosionRate : CurrentOf("CorrosionSpeed");
-                    var effectiveLife = !string.IsNullOrWhiteSpace(vt.ServiceLife) ? vt.ServiceLife : CurrentOf("srok");
-                    var corrosion = VtValueParsing.ComputeCorrosionAllowance(effectiveRate, effectiveLife);
-                    if (corrosion != null)
-                    {
-                        var oldCorrosion = CurrentOf("Corrosion") ?? "";
-                        if (!SameFieldValue("Corrosion", corrosion, oldCorrosion))
-                            action.Changes.Add(new FieldChange { PropertyName = "Corrosion", DisplayLabel = "Прибавка на коррозию (расч.)", OldValue = oldCorrosion, NewValue = corrosion });
-                    }
-
-                    // Tag keeps the designation minus ВТ remarks in parentheses; Номер receives only the three-digit line number.
-                    var designationTag = LineDesignationParser.TagOf(vt.Designation);
-                    if (designationTag != "")
-                    {
-                        var oldTag = CurrentOf("Tag") ?? "";
-                        if (!string.Equals(designationTag, oldTag.Trim(), StringComparison.Ordinal))
-                            action.Changes.Add(new FieldChange { PropertyName = "Tag", DisplayLabel = "Идентификатор", OldValue = oldTag, NewValue = designationTag });
-                    }
-                    var lineNumber = LineDesignationParser.ParseSyncLineNumber(designationTag);
-                    if (lineNumber != null)
-                    {
-                        var oldNumber = CurrentOf("Номер") ?? "";
-                        if (!string.Equals(lineNumber, oldNumber.Trim(), StringComparison.Ordinal))
-                            action.Changes.Add(new FieldChange { PropertyName = "Номер", DisplayLabel = "Номер линии", OldValue = oldNumber, NewValue = lineNumber });
-                    }
-                    else if (!string.IsNullOrWhiteSpace(vt.Designation))
-                        action.PicklistRejections.Add("Трёхзначный номер после кода среды не распознан; поле Номер оставлено без изменений.");
-
-                    var parts = LineDesignationParser.Parse(designationTag);
-                    if (parts == null)
-                    {
-                        // Older tag formats (e.g. "P-22002") don't carry
-                        // the segment encoding at all — not an error, just
-                        // nothing to decode. Only flag it when ВТ actually
-                        // has a designation that failed to parse, so a
-                        // genuinely blank cell doesn't spam the review.
-                        if (!string.IsNullOrWhiteSpace(vt.Designation))
-                            action.PicklistRejections.Add(
-                                $"Обозначение «{vt.Designation.Split('\n')[0].Trim()}» не распознано форматом "
-                                + "«размер-код+номер-материал+давление+фланец-изоляция+спутник» — "
-                                + "поля Size2/Material_pipe/Ysl_pressure/flanges/InsulationType/Sputnik не заполнены из него.");
-                    }
-                    else
-                    {
-                        foreach (var (label, value, property) in DesignationFields)
-                        {
-                            var newVal = value(parts);
-                            if (string.IsNullOrEmpty(newVal)) continue; // optional segment (e.g. flanges) can be absent.
-                            var oldVal = CurrentOf(property) ?? "";
-                            if (!string.Equals(newVal, oldVal.Trim(), StringComparison.Ordinal))
-                                action.Changes.Add(new FieldChange
-                                {
-                                    PropertyName = property,
-                                    DisplayLabel = label,
-                                    OldValue = oldVal,
-                                    NewValue = newVal,
-                                });
-                        }
-                    }
-
+                    plan.MatchedRowIds.Add(line.RowId);
+                    var action = BuildAction(vt, line, designationTags);
                     if (action.Changes.Count > 0 || action.PicklistRejections.Count > 0)
                         plan.Actions.Add(action);
                 }
             }
 
             foreach (var line in lines)
-                if (!string.IsNullOrWhiteSpace(line.Id) && !matchedLineRowIds.Contains(line.RowId))
+                if (!string.IsNullOrWhiteSpace(line.Id) && !nnCounts.ContainsKey(line.Id.Trim()))
                     plan.UnmatchedLines.Add(line);
 
             return plan;
         }
 
-        /// <summary>
-        /// Builds the "внутренняя ведомость" review table: every project
-        /// line with a non-blank Id, one row per line, with every
-        /// property СИНХРОНИЗАЦИЯ ВТ can write (KnownLineGroupColumns).
-        /// Reflects current Plant 3D state — call again after Apply to
-        /// see the result rather than trying to predict it here. Sorted
-        /// by Id so repeated runs render in a stable order.
-        /// </summary>
-        public static List<LineLedgerRow> BuildLedger(List<LineGroupInfo> lines, bool collapseDuplicates = false)
+        static LineSyncAction BuildAction(VtRowData vt, LineGroupInfo line, IReadOnlySet<string> designationTags)
         {
-            var rows = new List<LineLedgerRow>();
-            foreach (var line in lines)
+            var action = new LineSyncAction { VtRow = vt, Line = line };
+            foreach (var field in DirectFields)
+                AddChange(action, field.Property, field.ValueFor(vt));
+
+            AddTestChanges(action);
+            AddChange(action, NdControl.Property, NdControl.ValueFor(vt));
+            AddCorrosionChanges(action);
+            AddDesignationChanges(action, designationTags);
+            return action;
+        }
+
+        static void AddTestChanges(LineSyncAction action)
+        {
+            var vt = action.VtRow;
+            var (testD, combinedTestW) = VtValueParsing.SplitTestValues(vt.TestStrength);
+            AddChange(action, "TestD", testD);
+
+            bool hasTightness = !string.IsNullOrWhiteSpace(vt.TestTightness);
+            var testW = hasTightness ? VtValueParsing.SplitTestValues(vt.TestTightness).testD : combinedTestW;
+            if (hasTightness && testW == null)
+                action.PicklistRejections.Add($"«На герметичность»: значение «{vt.TestTightness}» не является давлением. Поле TestW не будет изменено.");
+            AddChange(action, "TestW", testW);
+        }
+
+        static void AddCorrosionChanges(LineSyncAction action)
+        {
+            var vt = action.VtRow;
+            var years = VtValueParsing.ExtractServiceLifeYears(vt.ServiceLife);
+            if (years == null && !string.IsNullOrWhiteSpace(vt.ServiceLife))
+                action.PicklistRejections.Add($"Срок службы «{vt.ServiceLife}» не распознан как срок в годах.");
+            AddChange(action, "srok", years);
+
+            var rate = VtValueParsing.ExtractCorrosionRate(vt.CorrosionRate);
+            if (rate == null && !string.IsNullOrWhiteSpace(vt.CorrosionRate))
+                action.PicklistRejections.Add($"Скорость коррозии «{vt.CorrosionRate}» не распознана как скорость в мм/год.");
+            AddChange(action, "CorrosionSpeed", rate);
+
+            if (rate == null && years == null) return;
+            // Reuse a model value only when the corresponding Excel cell is blank.
+            var effectiveRate = string.IsNullOrWhiteSpace(vt.CorrosionRate)
+                ? action.Line.AllProperties.GetValueOrDefault("CorrosionSpeed") : rate;
+            var effectiveYears = string.IsNullOrWhiteSpace(vt.ServiceLife)
+                ? action.Line.AllProperties.GetValueOrDefault("srok") : years;
+            AddChange(action, "Corrosion", VtValueParsing.ComputeCorrosionAllowance(effectiveRate, effectiveYears));
+        }
+
+        static void AddDesignationChanges(LineSyncAction action, IReadOnlySet<string> designationTags)
+        {
+            var vt = action.VtRow;
+            var oldTag = ReadLineTag(action.Line).Trim();
+            var designationTag = "";
+            if (designationTags.Count > 0)
             {
-                if (string.IsNullOrWhiteSpace(line.Id)) continue;
-                var row = new LineLedgerRow
-                {
-                    RowId = line.RowId,
-                    RowIds = new List<int> { line.RowId },
-                    Id = line.Id,
-                    Tag = line.Tag
-                };
-                foreach (var col in KnownLineGroupColumns)
-                    row.Values[col] = line.AllProperties.TryGetValue(col, out var v) ? v : "";
-
-                // If srok is empty in the Plant 3D database, but Corrosion and CorrosionSpeed are present,
-                // compute srok = Corrosion / CorrosionSpeed dynamically as a fallback.
-                if (string.IsNullOrWhiteSpace(row.Values["srok"]))
-                {
-                    var calcLife = VtValueParsing.ComputeServiceLifeFromCorrosion(
-                        row.Values.TryGetValue("Corrosion", out var corr) ? corr : null,
-                        row.Values.TryGetValue("CorrosionSpeed", out var cs) ? cs : null);
-                    if (calcLife != null)
-                        row.Values["srok"] = calcLife;
-                }
-
-                // If Corrosion is not explicitly saved in the Plant 3D line properties,
-                // but CorrosionSpeed and srok are present, compute Corrosion dynamically
-                // so the calculated column displays properly in the ledger.
-                if (string.IsNullOrWhiteSpace(row.Values["Corrosion"]))
-                {
-                    var calc = VtValueParsing.ComputeCorrosionAllowance(
-                        row.Values.TryGetValue("CorrosionSpeed", out var cs) ? cs : null,
-                        row.Values.TryGetValue("srok", out var sr) ? sr : null);
-                    if (calc != null)
-                        row.Values["Corrosion"] = calc;
-                }
-
-                rows.Add(row);
+                designationTag = oldTag.Length == 0 ? designationTags.Single() : LineDesignationParser.TagOf(oldTag);
+                AddChange(action, "Tag", designationTag, oldTag);
             }
-            if (collapseDuplicates)
-                rows = rows.GroupBy(r => new { Id = r.Id.Trim().ToUpperInvariant(), Tag = (r.Tag ?? "").Trim() })
-                    .Select(group =>
-                    {
-                        var first = group.First();
-                        var merged = new LineLedgerRow
-                        {
-                            RowId = first.RowId,
-                            RowIds = group.SelectMany(r => r.AllRowIds).Distinct().ToList(),
-                            Id = first.Id.Trim(),
-                            Tag = (first.Tag ?? "").Trim()
-                        };
-                        foreach (var col in KnownLineGroupColumns)
-                        {
-                            var values = group.Select(r => (r.Values[col] ?? "").Trim()).Distinct(StringComparer.Ordinal).ToList();
-                            merged.Values[col] = values.Count == 1 ? values[0] :
-                                "⚠ " + string.Join(" | ", values.Select(v => v.Length == 0 ? "(пусто)" : v));
-                        }
-                        return merged;
-                    }).ToList();
-            // Plain string.Compare puts "1.10" before "1.2" (lexical: '1'
-            // < '2' at the first differing character) even though the
-            // user's "раздел.номер" ID scheme (e.g. "1.1"…"1.13", "3.1",
-            // "3.2") means 1.10 belongs after 1.9. VtValueParsing.
-            // NaturalCompare splits each Id into alternating digit/non-
-            // digit runs and compares digit runs numerically — falls back
-            // to ordinary text comparison for non-numeric Ids (e.g.
-            // "asdd", "P-22002"), which aren't part of this scheme but
-            // still need a stable, sensible order.
-            rows.Sort((a, b) => VtValueParsing.NaturalCompare(a.Id, b.Id));
 
-            // A genuine duplicate Id (two distinct RowIds sharing the
-            // same "ID" column value — legitimate, tracked elsewhere as
-            // LineSyncPlan.DuplicateIds) should stay visible as separate
-            // rows rather than silently collapsing, but flagged so it
-            // doesn't read as a rendering bug.
-            var idCounts = rows.GroupBy(r => r.Id, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-            foreach (var row in rows)
-                if (idCounts.TryGetValue(row.Id, out var n) && n > 1)
-                    row.Tag = $"⚠ дубль ID · {row.Tag}";
+            var lineNumber = LineDesignationParser.ParseSyncLineNumber(designationTag);
+            if (lineNumber == null && !string.IsNullOrWhiteSpace(vt.Designation))
+                action.PicklistRejections.Add("Трёхзначный номер после кода среды не распознан; поле Номер оставлено без изменений.");
+            AddChange(action, "Номер", lineNumber);
 
-            return rows;
+            var parts = LineDesignationParser.Parse(designationTag);
+            if (parts == null)
+            {
+                if (!string.IsNullOrWhiteSpace(vt.Designation))
+                    action.PicklistRejections.Add(
+                        $"Обозначение «{vt.Designation.Split('\n')[0].Trim()}» не распознано форматом "
+                        + "«размер-код+номер-материал+давление+фланец-изоляция+спутник» — "
+                        + "поля Size2/Material_pipe/Ysl_pressure/flanges/InsulationType/Sputnik не заполнены из него.");
+                return;
+            }
+
+            foreach (var field in DesignationFields)
+                AddChange(action, field.Property, field.Value(parts));
+        }
+
+        static void AddChange(LineSyncAction action, string property, string newValue, string oldValue = null)
+        {
+            if (string.IsNullOrEmpty(newValue)) return;
+            oldValue ??= action.Line.AllProperties.GetValueOrDefault(property) ?? "";
+            if (SameFieldValue(property, newValue, oldValue)) return;
+
+            action.Changes.Add(new FieldChange
+            {
+                PropertyName = property,
+                DisplayLabel = KnownLineGroupColumnLabels[property],
+                OldValue = oldValue,
+                NewValue = newValue,
+            });
+        }
+
+
+        static string ReadLineTag(LineGroupInfo line) => line.Tag ?? line.AllProperties.GetValueOrDefault("Tag") ?? "";
+
+        static IEnumerable<string> ReadDesignationTags(string designation) => (designation ?? "")
+            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(LineDesignationParser.TagOf)
+            .Where(tag => tag.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase);
+
+        internal static LineSyncPlan BuildIdFillPlan(IEnumerable<VtRowData> vtRows,
+            IEnumerable<LineGroupInfo> drawingLines, IEnumerable<LineGroupInfo> projectLines)
+        {
+            var comparer = StringComparer.OrdinalIgnoreCase;
+            var rows = vtRows.Where(row => !string.IsNullOrWhiteSpace(row.NN)).ToList();
+            var availableIds = rows.GroupBy(row => row.NN.Trim(), comparer)
+                .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet(comparer);
+            availableIds.ExceptWith(projectLines.Where(line => !string.IsNullOrWhiteSpace(line.Id))
+                .Select(line => line.Id.Trim()));
+            var rowsByTag = rows.SelectMany(row => ReadDesignationTags(row.Designation).Select(tag => (Tag: tag, Row: row)))
+                .ToLookup(entry => entry.Tag, entry => entry.Row, comparer);
+
+            var plan = new LineSyncPlan();
+            var candidates = new List<LineSyncAction>();
+            foreach (var lines in drawingLines.GroupBy(line => LineDesignationParser.TagOf(ReadLineTag(line)), comparer)
+                .Where(group => group.Key.Length > 0))
+            {
+                if (!lines.Any(line => string.IsNullOrWhiteSpace(line.Id))) continue;
+                var matches = rowsByTag[lines.Key].ToArray();
+                if (matches.Length == 0) continue;
+                if (lines.Count() != 1 || matches.Length != 1)
+                {
+                    plan.IdFillSkips.Add($"«{lines.Key}»: обозначение повторяется на чертеже или в ВТ.");
+                    continue;
+                }
+                var line = lines.First();
+                var row = matches[0];
+                var id = row.NN.Trim();
+                if (!availableIds.Contains(id))
+                {
+                    plan.IdFillSkips.Add($"«{lines.Key}»: n/n «{id}» повторяется в ВТ или такой ID уже используется в проекте.");
+                    continue;
+                }
+                candidates.Add(new LineSyncAction
+                {
+                    Line = line,
+                    VtRow = row,
+                    Changes = { new FieldChange { PropertyName = "ID", DisplayLabel = "ID", OldValue = line.Id, NewValue = id } },
+                });
+            }
+
+            foreach (var matches in candidates.GroupBy(action => action.Changes[0].NewValue, comparer))
+            {
+                if (matches.Count() == 1)
+                    plan.Actions.Add(matches.First());
+                else
+                    plan.IdFillSkips.Add($"n/n «{matches.Key}» соответствует нескольким линиям на чертеже.");
+            }
+            return plan;
         }
 
         // P3dLineGroup columns that hold a plain number. Only these are
         // compared numerically; codes/identifiers (Номер "001", Tag, picklist
         // codes, ГОСТ groups) stay strictly textual — "001" vs "1" IS a
         // change there.
-        static readonly HashSet<string> NumericProperties = new(StringComparer.OrdinalIgnoreCase)
+        internal static List<string> FindWriteMismatches(LineSyncAction action,
+            IReadOnlyDictionary<string, string> current, bool afterWrite)
         {
-            "Pwork", "Tworking", "PressureDesign", "Tdesign", "CorrosionSpeed",
-            "InsulationThickness", "TestD", "TestW", "NDControl", "srok", "Corrosion",
-        };
+            var mismatches = new List<string>();
+            void Check(string name, string expected)
+            {
+                if (!SameFieldValue(name, expected, current.GetValueOrDefault(name)) && !mismatches.Contains(name))
+                    mismatches.Add(name);
+            }
+
+            if (!afterWrite)
+            {
+                Check("ID", action.Line.Id);
+                Check("Tag", ReadLineTag(action.Line));
+                if (action.Changes.Any(change => change.PropertyName == "Corrosion"))
+                {
+                    Check("CorrosionSpeed", action.Line.AllProperties.GetValueOrDefault("CorrosionSpeed"));
+                    Check("srok", action.Line.AllProperties.GetValueOrDefault("srok"));
+                }
+            }
+            foreach (var change in action.Changes)
+                Check(change.PropertyName, afterWrite ? change.NewValue : change.OldValue);
+            return mismatches;
+        }
+
+        static readonly HashSet<string> NumericProperties = ImportedFields
+            .Where(field => field.Numeric).Select(field => field.Property)
+            .Concat(new[] { "CorrosionSpeed", "TestD", "TestW", "srok", "Corrosion" })
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         /// <summary>
         /// True when the ВТ value and the current P3dLineGroup value are the
@@ -444,9 +317,7 @@ namespace PipingSpecPlugin.Spec
                 System.Globalization.CultureInfo.InvariantCulture, out value);
         }
 
-        public static bool IsLedgerVisibleColumn(string column) =>
-            !string.Equals(column, "Tag", StringComparison.OrdinalIgnoreCase) &&
-            !string.Equals(column, "Номер", StringComparison.OrdinalIgnoreCase);
+
 
     }
 }

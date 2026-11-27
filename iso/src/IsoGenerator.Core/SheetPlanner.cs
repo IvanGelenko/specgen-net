@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text.RegularExpressions;
 namespace IsoGenerator.Core;
 
 public sealed record Stroke(string SourceId, string Role, IReadOnlyList<SheetPoint> Points);
@@ -26,57 +25,6 @@ public sealed record SheetScene(string Line, IReadOnlyList<Stroke> Strokes, IRea
     IReadOnlyList<PipeDimension> Dimensions, IReadOnlyList<BomRow> BillOfMaterials, IReadOnlyList<string> Warnings, int SourcePartCount, IReadOnlyList<SymbolGlyph>? Symbols = null, string SourceDrawing = "", IReadOnlyDictionary<string,string>? SourceGuids = null, IReadOnlyList<WeldMarker>? Welds = null,int LayoutLevel = 0,IReadOnlyDictionary<string,double>? PipeExtensions = null,int QuarterTurns = 0,bool ExcludeFlangeHardware = false,bool BomOnly = false,IReadOnlyList<string>? FittingSourceIds = null,IReadOnlyDictionary<string,string>? OriginalHandles = null,bool InstrumentCalloutsOnly=false,double PaperMargin=0,int NonGridPipeCount=0,double? GeometryScale=null);
 public static class SheetPlanner
 {
-    static string BomDescription(Part part)
-    {
-        var description=Get(part,"PartSizeLongDesc");
-        return string.IsNullOrWhiteSpace(description)?Get(part,"PartFamilyLongDesc"):description;
-    }
-    const RegexOptions CatalogTextOptions = RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
-    const string BendNumber = @"\d+(?:[.,]\d+)?";
-    static readonly Regex BendRadius = new(@"(?<![\p{L}\d])(?:[РR]|радиус(?:\s+(?:гиба|изгиба))?)\s*=\s*("+BendNumber+@")\b(?:\s*мм\b)?",CatalogTextOptions);
-    static readonly Regex BendAngle = new(@"(?<![\p{L}\d])(?:У|угол(?:\s+(?:гиба|изгиба))?)\s*=\s*("+BendNumber+@")\b(?:\s*(?:°|град\b\.?))?",CatalogTextOptions);
-    static readonly Regex BendLength = new(@"(?<![\p{L}\d])длина(?:\s+трубы)?\s*=\s*("+BendNumber+@")\b(?:\s*мм\b)?",CatalogTextOptions);
-    static readonly Regex BendTails = new(@"[,;]\s*[ДD][12]\s*=\s*"+BendNumber+@"(?:\s*мм\b)?(?=\s*[,;]|\s*$)",CatalogTextOptions);
-    static readonly Regex PipeName = new(@"(?<!\p{L})труба(?!\p{L})",CatalogTextOptions);
-    static readonly Regex BomStandard = new(
-        @"(?<![\p{L}\p{N}])(?:ГОСТ(?:\s*Р)?|ОСТ)\s*\d+(?:\s*[-‐‑–—.]\s*\d+)*(?![\p{L}\p{N}]|\s*[-‐‑–—.]\s*\d)",
-        CatalogTextOptions);
-    static string FormatBendBomDescription(string description)
-    {
-        description=BendRadius.Replace(description,"Р=$1");
-        description=BendAngle.Replace(description,"α=$1°");
-        description=BendLength.Replace(description,"L=$1");
-        return BendTails.Replace(description,"");
-    }
-    static string ExtractPipeStandard(string description,out string pipeStandard)
-    {
-        // The slash separates the pipe standard from the material grade and its standard.
-        pipeStandard="";
-        var pipe=PipeName.Match(description);
-        if(!pipe.Success)return description;
-        var standard=BomStandard.Match(description,pipe.Index+pipe.Length);
-        if(!standard.Success)return description;
-        var afterStandard=description.AsSpan(standard.Index+standard.Length).TrimStart();
-        if(afterStandard.IsEmpty||afterStandard[0]!='/')return description;
-        pipeStandard=standard.Value;
-        return description[..standard.Index]+afterStandard[1..].TrimStart().ToString();
-    }
-    internal static string RemoveRepeatedStandards(string description,string designation)
-    {
-        static string Key(string value)=>string.Concat(value.Where(c=>!char.IsWhiteSpace(c)))
-            .Replace('‐','-').Replace('‑','-').Replace('–','-').Replace('—','-').ToUpperInvariant();
-        var standards=BomStandard.Matches(designation).Select(match=>Key(match.Value)).ToHashSet();
-        if(standards.Count==0)return description;
-        var duplicates=BomStandard.Matches(description).Where(match=>standards.Contains(Key(match.Value))).ToArray();
-        foreach(var match in duplicates.Reverse())
-        {
-            int start=match.Index,end=match.Index+match.Length;
-            if(start>0&&"-‐‑–—".Contains(description[start-1]))start--;
-            if(end<description.Length&&description[end]=='/')end++;
-            description=description[..start]+description[end..];
-        }
-        return duplicates.Length==0?description:System.Text.RegularExpressions.Regex.Replace(description,@"[ 	]{2,}"," ").Trim();
-    }
     static string Get(Part p,string name) => p.Properties.TryGetValue(name,out var value)?value:"";
     static Port[] Ends(Part p)=>p.Ports.Where(q=>q.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase)).ToArray();
     static ModelPoint Sub(ModelPoint a,ModelPoint b)=>new(a.X-b.X,a.Y-b.Y,a.Z-b.Z);
@@ -100,7 +48,8 @@ public static class SheetPlanner
         if(lineNames.Length!=1)throw new InvalidDataException("Prototype supports one line per sheet");
         var ports=physical.SelectMany(p=>p.Ports).ToArray();
         if(ports.Length==0)throw new InvalidDataException("No geometry");
-        var layout=new SchematicLayout(snapshot,input.Topology,quarterTurns,compactLevel,pipeExtensions,symbolMap,paperMargin,fixedScale,execution);
+        var layout=new SchematicLayout(snapshot,input.Topology,quarterTurns,compactLevel,pipeExtensions,
+            symbolMap is null?null:symbolMap.ResolveGeometry,paperMargin,fixedScale,execution);
         string? projectionSource=null;
         SheetPoint Project(ModelPoint p)=>layout.Project(p,projectionSource);
         warnings.Add($"Schematic layout: {layout.EnlargedEdges} short edges enlarged; true dimensions unchanged");
@@ -109,34 +58,8 @@ public static class SheetPlanner
                 string.Join(", ",layout.NonGridPipes)+".");
         if(layout.ClosedLoops>0)warnings.Add($"Совместно замкнуто контуров: {layout.ClosedLoops}; размеры элементов и реальные координаты сохранены.");
         var symbols=new List<SymbolGlyph>();var strokes=new List<Stroke>();var labels=new List<Annotation>();var dimensions=new List<PipeDimension>();
-        var rows=new List<BomRow>();var positions=new Dictionary<string,int>();
-        foreach(var group in physical.Concat(snapshot.Accessories??Array.Empty<Part>())
-            .Where(p=>BomQuantities.Includes(p,input.ValveKitExclusions,instrumentCalloutsOnly))
-            .GroupBy(p=>string.Join("\u001f",p.CatalogClass,BomDescription(p),Get(p,"DesignStd"),Get(p,"Size"),Get(p,"WallThickness"),Get(p,"Spec"),Get(p,"Material"),BomCategories.Classify(p)==BomCategory.Fasteners?Get(p,"Length"):"",Get(p,"BoltSize"),BomQuantities.Unit(p,excludeFlangeHardware),PartIdentifier.Read(p))).OrderBy(g=>BomCategories.Classify(g.First())).ThenBy(g=>PartDiameter.Read(g.First())??double.MaxValue).ThenBy(g=>BomCategories.FittingOrder(g.First())).ThenBy(g=>g.Key,StringComparer.Ordinal))
-        {
-            var first=group.First();
-            double qty=group.Sum(BomQuantities.Amount);
-            int position=rows.Count+1;
-            string standard=Get(first,"DesignStd"),identifier=PartIdentifier.Read(first);
-            var description=BomDescription(first);
-            string pipeStandard="";
-            if(first.CatalogClass=="PipeBend")
-                description=FormatBendBomDescription(description);
-            if(first.Component==ComponentKind.Pipe||first.CatalogClass=="PipeBend")
-                description=ExtractPipeStandard(description,out pipeStandard);
-            if(pipeStandard.Length>0)
-            {
-                standard=pipeStandard;
-                if(identifier.Length>0&&!BomStandard.Matches(identifier).Any(match=>match.Value.Equals(pipeStandard,StringComparison.OrdinalIgnoreCase)))
-                    identifier+=" / "+pipeStandard;
-            }
-            else description=RemoveRepeatedStandards(description,string.IsNullOrWhiteSpace(identifier)?standard:identifier);
-            if(BomCategories.Classify(first)==BomCategory.Fasteners&&Get(first,"Length").Length>0)description+=" (L="+Get(first,"Length")+" мм)";
-            var category=BomCategories.Classify(first);
-            string unit=BomQuantities.Unit(first,excludeFlangeHardware);
-            rows.Add(new(position,first.CatalogClass,description,standard,qty,unit,group.Select(p=>p.Handle).ToArray(),identifier,category));
-            foreach(var p in group)positions[p.Handle]=position;
-        }
+        var (rows,positions)=SheetBom.Build(physical.Concat(snapshot.Accessories??Array.Empty<Part>()),
+            input.ValveKitExclusions,excludeFlangeHardware,instrumentCalloutsOnly);
         foreach(var p in physical)
         {
             projectionSource=p.Handle;
@@ -372,6 +295,30 @@ public static class SheetPlanner
                 LocalLink:new(continuation.Mark,continuation.OtherSheet)));
         }
         ExternalLineContextPlanner.Add(snapshot,layout,quarterTurns,symbolMap,strokes,symbols,labels);
+        foreach(var connection in snapshot.EquipmentConnections??Array.Empty<EquipmentConnection>())
+        {
+            var owner=snapshot.Parts.FirstOrDefault(p=>p.Handle.Equals(connection.OwnerHandle,StringComparison.OrdinalIgnoreCase));
+            if(owner is null)continue;
+            var port=owner.Ports.FirstOrDefault(p=>p.Name.Equals(connection.OwnerPort,StringComparison.OrdinalIgnoreCase));
+            if(port is null)continue;
+            var anchor=layout.Project(port.Position,connection.OwnerHandle);
+            string equipment=string.IsNullOrWhiteSpace(connection.Tag)?"оборудованию":connection.Tag;
+            string text="Подключение к "+equipment;
+            if(!string.IsNullOrWhiteSpace(connection.Nozzle))text+=", штуцер "+connection.Nozzle;
+            else if(!string.IsNullOrWhiteSpace(connection.EquipmentPort))text+=", порт "+connection.EquipmentPort;
+            double level=connection.EquipmentElevation is {} equipmentZ&&double.IsFinite(equipmentZ)?equipmentZ:port.Position.Z;
+            text+="\n"+ElevationNotation.Format(level);
+            double axisLengthSquared=Dot(port.Direction,port.Direction);
+            if(symbolMap?.Catalog is {} catalog&&catalog.Find("EndEquipment") is not null&&
+                double.IsFinite(axisLengthSquared)&&axisLengthSquared>1e-16)
+            {
+                symbols.Add(IsoSymbolPlacement.Terminal(owner,"EndEquipment",catalog,anchor,port.Direction,quarterTurns)
+                    with{Variant="equipment-nozzle-"+port.Name,Context=true});
+                if(owner.IsConnector)
+                    strokes.RemoveAll(stroke=>stroke.Role=="joint"&&stroke.SourceId.Equals(owner.Handle,StringComparison.OrdinalIgnoreCase));
+            }
+            labels.Add(new(connection.OwnerHandle,"equipment-connection",anchor,text,Anchor:anchor));
+        }
         strokes.AddRange(contextStrokes??Array.Empty<Stroke>());
         symbols.AddRange(contextSymbols??Array.Empty<SymbolGlyph>());
         if(execution is not null)PipeCrossingBreaks.CheckProjectedOverlaps(strokes);
@@ -434,9 +381,7 @@ public static class SheetPlanner
         warnings.Add("CONTROL PREVIEW: simplified symbols; gaskets and fasteners included in BOM");
         labels.Add(new("","title",new(75,385),lineNames[0]+$" — лист {sheetNumber} из {sheetCount}",4));
         labels.Add(new("","status",new(75,375),"КОНТРОЛЬНЫЙ ЛИСТ — НЕ ДЛЯ МОНТАЖА",3));
-        var gap=symbolMap?.Catalog?.Style?.PipeGapLength??IsoAdvancedSettings.Current.PipeGap;
-        if(Environment.GetEnvironmentVariable("ISO_PIPE_GAP_LENGTH") is {} rawGap&&double.TryParse(rawGap,NumberStyles.Float,CultureInfo.InvariantCulture,out double envGap)&&envGap>0)
-            gap=envGap;
+        var gap=IsoAdvancedSettings.Current.ResolvePipeGap(symbolMap?.Catalog?.Style);
         strokes=PipeCrossingBreaks.Apply(strokes,snapshot.Parts,quarterTurns,gap,symbols,checkValveClearance?snapshot.Connections:null).ToList();
         return new(lineNames[0],strokes,labels,dimensions,rows,warnings,snapshot.Parts.Count,symbols,snapshot.SourceDrawing,snapshot.Parts.ToDictionary(p=>p.Handle,p=>Get(p,"PnPGuid")),welds.Markers,compactLevel,pipeExtensions,quarterTurns,excludeFlangeHardware,OriginalHandles:snapshot.Parts.ToDictionary(p=>p.Handle,p=>Get(p,"IsoOriginalHandle").Length>0?Get(p,"IsoOriginalHandle"):p.Handle),InstrumentCalloutsOnly:instrumentCalloutsOnly,PaperMargin:paperMargin,NonGridPipeCount:layout.NonGridPipes.Count,GeometryScale:fixedScale);
     }

@@ -49,13 +49,15 @@ namespace PipingSpecPlugin.Spec
         public List<VtRowData> UnmatchedVtRows = new();      // Id in ВТ not found among project lines.
         public List<LineGroupInfo> UnmatchedLines = new();   // Lines with an Id not present in ВТ.
         public List<string> DuplicateIds = new();            // Ids that matched more than one P3dLineGroup row.
+        public HashSet<int> MatchedRowIds = new();
+        public Dictionary<int, string> BlockedLines = new();
+        public List<string> IdFillSkips = new();
 
         // "n/n" values that appear on more than one ВТ row (e.g. section
         // numbering restarts at 1 per Цех in a multi-section workbook).
         // Every ВТ row sharing such a value is ambiguous — it's unclear
         // which one a given Plant 3D line's ID should match — so all of
-        // them are skipped entirely (added to UnmatchedVtRows) rather
-        // than guessed at. Populated by BuildPlan.
+        // them are skipped entirely. Populated by BuildPlan.
         public List<string> DuplicateVtNN = new();
 
         public int TotalChangedFields()
@@ -76,7 +78,9 @@ namespace PipingSpecPlugin.Spec
                 Actions = Actions.Where(a => a.Line != null && targetIds.Contains(a.Line.RowId)).ToList(),
                 DuplicateIds = DuplicateIds.ToList(),
                 DuplicateVtNN = DuplicateVtNN.ToList(),
-                UnmatchedLines = UnmatchedLines.Where(l => targetIds.Contains(l.RowId)).ToList()
+                UnmatchedLines = UnmatchedLines.Where(l => targetIds.Contains(l.RowId)).ToList(),
+                MatchedRowIds = MatchedRowIds.Where(targetIds.Contains).ToHashSet(),
+                BlockedLines = BlockedLines.Where(item => targetIds.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value)
             };
         }
 
@@ -92,11 +96,14 @@ namespace PipingSpecPlugin.Spec
     /// </summary>
     public class LineLedgerRow
     {
-        public int RowId;
+        public int RowId { get; init; }
         public List<int> RowIds = new();
-        public string Id;
-        public string Tag;
-        public System.Collections.Generic.Dictionary<string, string> Values = new(System.StringComparer.OrdinalIgnoreCase);
+        public string Id { get; init; }
+        public string Tag { get; init; }
+        public bool HasProjectDuplicate { get; internal set; }
+        internal bool HasVisibleDuplicate { get; set; }
+        public string DisplayTag => HasVisibleDuplicate ? $"⚠ дубль ID · {Tag}" : Tag ?? "";
+        public Dictionary<string, string> Values { get; } = new(System.StringComparer.OrdinalIgnoreCase);
 
         public IEnumerable<int> AllRowIds => RowIds != null && RowIds.Count > 0 ? RowIds : new[] { RowId };
     }

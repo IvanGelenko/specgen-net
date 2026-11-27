@@ -2,6 +2,7 @@ using System.Text.Json;
 using IsoGenerator.Core;
 try {
 if(args.Length<2||args.Length>4)throw new ArgumentException("Usage: snapshot.json scene.json [symbol-map.xml] [--sheets]");
+if(args.Length==4&&args[3]!="--sheets")throw new ArgumentException("Unknown option "+args[3]);
 IProgress<PlanningProgress>? progress=Environment.GetEnvironmentVariable("ISO_LAYOUT_PROGRESS_LOG") is {} progressFile?new PlanningLog(progressFile):null;
 var snapshot=JsonSerializer.Deserialize<PipelineSnapshot>(File.ReadAllText(args[0]))??throw new Exception("Missing snapshot");
 var validation=SnapshotValidation.Validate(snapshot);
@@ -13,11 +14,16 @@ if(Environment.GetEnvironmentVariable("ISO_SYMBOL_SCALE") is {} rawScale&&(!doub
 if(catalog is not null)catalog=catalog with{SymbolScale=symbolScale,Style=null};
 var map=args.Length>=3?new IsoSymbolMap(File.ReadAllText(args[2]),catalog):null;
 int quarterTurns=int.TryParse(Environment.GetEnvironmentVariable("ISO_QUARTER_TURNS"),out var turns)?turns:0;
+IsoAdvancedSettings? advancedSettings=null;
+if(double.TryParse(Environment.GetEnvironmentVariable("ISO_PIPE_GAP_LENGTH"),System.Globalization.NumberStyles.Float,
+    System.Globalization.CultureInfo.InvariantCulture,out double gap)&&double.IsFinite(gap)&&gap>0)
+    advancedSettings=new IsoAdvancedSettings().WithPipeGapOverride(gap);
+var plans=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",
+    progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1",
+    instrumentCalloutsOnly:Environment.GetEnvironmentVariable("ISO_INSTRUMENT_CALLOUTS_ONLY")!="0",advancedSettings:advancedSettings);
 if(args.Length==4)
 {
-    if(args[3]!="--sheets")throw new ArgumentException("Unknown option "+args[3]);
-    var sheets=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1",instrumentCalloutsOnly:Environment.GetEnvironmentVariable("ISO_INSTRUMENT_CALLOUTS_ONLY")!="0");
-    foreach(var sheet in sheets)
+    foreach(var sheet in plans)
     {
         var target=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(args[1]))!,Path.GetFileNameWithoutExtension(args[1])+$"-sheet-{sheet.Number:00}.json");
         File.WriteAllText(target,JsonSerializer.Serialize(sheet.Scene,new JsonSerializerOptions{WriteIndented=true}));
@@ -25,7 +31,6 @@ if(args.Length==4)
     }
     return;
 }
-var plans=SheetSetPlanner.Build(snapshot,map,quarterTurns,Environment.GetEnvironmentVariable("ISO_EXCLUDE_FLANGE_HARDWARE")=="1",progress:progress,ignoreBreakPoints:Environment.GetEnvironmentVariable("ISO_IGNORE_BREAK_POINTS")=="1",instrumentCalloutsOnly:Environment.GetEnvironmentVariable("ISO_INSTRUMENT_CALLOUTS_ONLY")!="0");
 if(plans.Count!=1)throw new SheetCapacityException("Линии требуется несколько листов. Используйте --sheets.");
 var scene=plans[0].Scene;
 File.WriteAllText(args[1],JsonSerializer.Serialize(scene,new JsonSerializerOptions{WriteIndented=true}));

@@ -50,6 +50,14 @@ public sealed class IsoSymbolMap
             throw new InvalidDataException($"Ambiguous ISO symbol mapping for {skey}");
         return hits[0].Block;
     }
+
+    internal (IsoBlockDefinition Definition,double Scale)? ResolveGeometry(Part part)
+    {
+        if(Catalog is not {} catalog)return null;
+        var name=Resolve(IsoDefinition.Parse(part.SymbolDefinition).Skey);
+        return name is not null&&catalog.Find(name) is {} definition
+            ?(definition,catalog.ScaleFor(part)):null;
+    }
 }
 public sealed record SymbolGlyph(string SourceId,string SourceGuid,string Definition,string Block,
     SheetPoint Origin,SheetPoint XAxis,SheetPoint YAxis,string Variant = "",bool Context = false,IReadOnlyList<SheetPoint>? LocalBounds=null,IReadOnlyList<IReadOnlyList<SheetPoint>>? LocalContours=null);

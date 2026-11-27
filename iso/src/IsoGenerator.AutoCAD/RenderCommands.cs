@@ -251,6 +251,11 @@ public class RenderCommands
                     Add(reference,glyph.Context?"ISO-CONTEXT":"ISO-GEOMETRY",glyph.SourceId);
 
                     if(glyph.Context){reference.LineWeight=LineWeight.LineWeight013;reference.LinetypeScale=continuationLinetypeScale;}
+                    if(glyph.Variant.StartsWith("equipment-nozzle-",StringComparison.Ordinal))
+                    {
+                        reference.LinetypeId=lineTypes[contextType];
+                        reference.LinetypeScale=Math.Min(1,tuning.ContinuationDashScale)/Math.Max(.0001,db.Ltscale);
+                    }
                 }
             }
             Trace("annotations");
@@ -321,19 +326,20 @@ public class RenderCommands
                     Add(new BlockReference(Pt(origin),blockId),"ISO-ANNOTATION",label.SourceId);
                     continue;
                 }
-                if(label.Role is ("elevation" or "valve-tag" or "instrument-tag" or "external-line" or "support-type" or "continuation")&&label.Anchor is {} anchor&&label.LeaderKnee is {} knee)
+                var presentation=AnnotationPresentation.ForRole(label.Role);
+                if(presentation.Leader&&label.Anchor is {} anchor&&label.LeaderKnee is {} knee)
                 {
                     var leader=new MLeader();leader.SetDatabaseDefaults(db);leader.MLeaderStyle=leaderStyleId;
                     leader.ContentType=ContentType.MTextContent;leader.TextStyleId=gostStyle;leader.TextHeight=tuning.LeaderTextHeight;
                     leader.ArrowSymbolId=arrowId;leader.ArrowSize=tuning.ArrowSize;leader.EnableLanding=true;leader.EnableDogleg=true;leader.DoglegLength=tuning.LeaderLanding;leader.LandingGap=1;
-                    bool external=label.Role=="external-line";
-                    if(external)
+                    bool multilineLeader=presentation.MultilineLeader;
+                    if(multilineLeader)
                     {
                         leader.SetTextAttachmentType(TextAttachmentType.AttachmentBottomOfTopLine,LeaderDirectionType.LeftLeader);
                         leader.SetTextAttachmentType(TextAttachmentType.AttachmentBottomOfTopLine,LeaderDirectionType.RightLeader);
                     }
                     var textLines=label.Text.Split('\n');
-                    var contentLines=external?textLines:textLines.Take(1);
+                    var contentLines=multilineLeader?textLines:textLines.Take(1);
                     using var content=new MText{Contents=string.Join(@"\P",contentLines.Select(text=>text.Replace("\\","\\\\").Replace("{","\\{").Replace("}","\\}"))),TextStyleId=gostStyle,TextHeight=tuning.LeaderTextHeight,Location=Pt(label.Position),Attachment=AttachmentPoint.BottomLeft};
                     leader.MText=content;
                     int cluster=leader.AddLeader();int line=leader.AddLeaderLine(cluster);
@@ -343,7 +349,7 @@ public class RenderCommands
                     leader.TextLocation=Pt(new SheetPoint(label.Position.X,label.Position.Y+4.8));
                     Add(leader,"ISO-ANNOTATION",label.SourceId);
                     leaderIds.Add(leader.ObjectId);
-                    var following=external?Array.Empty<string>():textLines.Skip(1).ToArray();
+                    var following=multilineLeader?Array.Empty<string>():textLines.Skip(1).ToArray();
                     for(int i=0;i<following.Length;i++)
                     {
                         var under=new DBText{Position=Pt(new SheetPoint(label.Position.X,label.Position.Y-3.3-i*4.8)),Height=tuning.LeaderTextHeight,TextString=following[i],TextStyleId=gostStyle,Oblique=Math.PI/12};

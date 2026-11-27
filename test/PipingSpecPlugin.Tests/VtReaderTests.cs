@@ -1,4 +1,5 @@
 using System.IO;
+using System.Collections.Generic;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Spreadsheet;
@@ -133,6 +134,162 @@ namespace PipingSpecPlugin.Tests
                 Assert.Equal("1.6", row.WorkPressure);
                 Assert.Equal("100", row.DesignTemperature);
                 Assert.Equal("2.0", row.DesignPressure);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Combines_Split_Gost_Classification_And_Keeps_TrTs_Separate()
+        {
+            var path = WriteWorkbook(
+                new[] { "n/n", "Классификация по ГОСТ 32569", null, "Классификация по ТР ТС 032-2013" },
+                new[] { null, "Категория\nтрубопровода", "Группа\nрабочей среды", null },
+                new[]
+                {
+                    new[] { "1", " II ", " Б(б) ", "2" },
+                    new[] { "2", null, "Б(б)", "2" },
+                },
+                new[] { "B1:C1" });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Equal(2, result.Rows.Count);
+                Assert.Equal("Б(б) - II", result.Rows[0].GostGroup);
+                Assert.Equal("2", result.Rows[0].TrTsGroup);
+                Assert.True(string.IsNullOrEmpty(result.Rows[1].GostGroup));
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Theory]
+        [InlineData("Группа рабочей среды", "Категория трубопровода", "А(а)", "I", "А(а) - I")]
+        [InlineData("Классификация по ГОСТ 32569", "Обозначение", "А(а) - I", "TAG-1", "А(а) - I")]
+        public void Reads_Flat_Gost_Classification(string firstHeader, string secondHeader,
+            string firstValue, string secondValue, string expected)
+        {
+            var path = WriteWorkbook(new[] { "n/n", firstHeader, secondHeader }, null,
+                new[] { new[] { "1", firstValue, secondValue } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Equal(expected, Assert.Single(result.Rows).GostGroup);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Reads_First_Data_Row_Immediately_After_Flat_Split_Header()
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Группа рабочей среды", "Категория трубопровода" },
+                new[] { "1", "Б(б)", "II" }, new string[0][]);
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Equal("Б(б) - II", Assert.Single(result.Rows).GostGroup);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Shared_Field_Mapping_Imports_And_Plans_Grouped_Pressure_And_Inspection_Percentage()
+        {
+            var path = WriteWorkbook(
+                new[] { "n/n", "Обозначение", "Рабочие условия трубопровода", "Неразрушающий контроль сварных швов, %" },
+                new[] { null, null, "Давление, МПа(изб.)" },
+                new[] { new[] { "1", "50-KSN003-LS016C-HN", "1,6", "РД/УЗК 10%" } });
+            try
+            {
+                var read = VtReader.Read(path);
+                Assert.Null(read.Error);
+                var lines = new List<LineGroupInfo> { new() { RowId = 1, Id = "1", Tag = "50-KSN003-LS016C-HN" } };
+                var changes = Assert.Single(LineSyncPlanner.BuildPlan(read.Rows, lines).Actions).Changes;
+                Assert.Contains(changes, item => item.PropertyName == "Pwork" && item.NewValue == "1,6");
+                Assert.Contains(changes, item => item.PropertyName == "NDControl" && item.NewValue == "10");
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Reads_Row_Two_With_A_Single_Level_Header()
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Обозначение" }, new[] { "1", "FIRST" },
+                new[] { new[] { "2", "SECOND" } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Equal(2, result.Rows.Count);
+                Assert.Equal("FIRST", result.Rows[0].Designation);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Does_Not_Import_Corrosion_Allowance_As_Rate()
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Прибавка на коррозию, мм", "Срок службы" }, null,
+                new[] { new[] { "1", "3", "20" } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Null(Assert.Single(result.Rows).CorrosionRate);
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Fact]
+        public void Retains_Nn_Only_Row_For_Duplicate_Detection_And_Rejects_Months_Header()
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Обозначение", "Срок службы, мес." }, new[] { "51" },
+                new[] { new[] { "51", "TAG", "24" } });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Equal(2, result.Rows.Count);
+                Assert.All(result.Rows, row => { Assert.Equal("51", row.NN); Assert.Null(row.ServiceLife); });
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Theory]
+        [InlineData(2U, "1.10")]
+        [InlineData(14U, null)]
+        public void Numeric_Nn_Preserves_Fixed_Precision_Or_Rejects_Date_Format(uint formatId, string expected)
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Обозначение" }, null,
+                new[] { new[] { "1.1", "TAG" } });
+            try
+            {
+                using (var doc = SpreadsheetDocument.Open(path, true))
+                {
+                    var workbook = doc.WorkbookPart;
+                    var styles = workbook.AddNewPart<WorkbookStylesPart>();
+                    styles.Stylesheet = new Stylesheet(new CellFormats(new CellFormat { NumberFormatId = formatId }));
+                    foreach (var cell in System.Linq.Enumerable.Single(workbook.WorksheetParts).Worksheet.Descendants<Cell>())
+                    {
+                        if (cell.CellReference.Value != "A3") continue;
+                        cell.DataType = CellValues.Number;
+                        cell.InlineString = null;
+                        cell.CellValue = new CellValue("1.1");
+                        cell.StyleIndex = 0U;
+                    }
+                }
+                var result = VtReader.Read(path);
+                if (expected == null)
+                {
+                    Assert.NotNull(result.Error);
+                    Assert.Empty(result.Rows);
+                }
+                else
+                {
+                    Assert.Null(result.Error);
+                    Assert.Equal(expected, Assert.Single(result.Rows).NN);
+                }
             }
             finally { File.Delete(path); }
         }

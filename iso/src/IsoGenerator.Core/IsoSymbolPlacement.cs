@@ -164,9 +164,15 @@ internal static class IsoSymbolPlacement
     }
     public static SymbolGlyph Terminal(Part part,string block,IsoBlockCatalog? catalog,SheetPoint port,int turns,SheetPoint? transverse=null)
     {
-        var definition=catalog?.Find(block)??throw new InvalidDataException($"{part.Handle}: не прочитаны параметры блока {block} из IsoSymbolStyles.dwg");
         var modelPort=part.Ports.First(p=>p.Name.StartsWith("S",StringComparison.OrdinalIgnoreCase));
-        var axis=Unit(new(-modelPort.Direction.X,-modelPort.Direction.Y,-modelPort.Direction.Z));
+        var direction=modelPort.Direction;
+        return Terminal(part,block,catalog,port,new(-direction.X,-direction.Y,-direction.Z),turns,transverse);
+    }
+    internal static SymbolGlyph Terminal(Part part,string block,IsoBlockCatalog? catalog,SheetPoint port,
+        ModelPoint towardSymbol,int turns,SheetPoint? transverse=null)
+    {
+        var definition=catalog?.Find(block)??throw new InvalidDataException($"{part.Handle}: не прочитаны параметры блока {block} из IsoSymbolStyles.dwg");
+        var axis=Unit(towardSymbol);
         var projected=IsometricProjection.Project(axis,quarterTurns:turns);double l=Math.Sqrt(projected.X*projected.X+projected.Y*projected.Y);
         // A terminal has one model port: its axial thickness comes from the library proportions,
         // rather than an invented second port five millimetres away.

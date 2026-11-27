@@ -15,6 +15,8 @@ namespace PipingSpecPlugin.Spec
     {
         public string LineTag;          // SpecConstants.NullLine when untagged
         public double NominalDiameter;  // parsed ND, for exact bore match
+        public string NominalUnit;
+        public string DrawingPath;
         public string Spec;
         public string Material;
         // Same technical identity Compatible() demands for folding — the
@@ -37,10 +39,8 @@ namespace PipingSpecPlugin.Spec
         // identity, so a reroute can match diameter/spec exactly before
         // falling back to a same-line-only match.
         public Dictionary<int, BendOrphanInfo> ExtraPipeOrphanInfo = new();
-        // Target pipe PnPID → bend PnPIDs folded into it. Lets the builder
-        // name the actual bends in the review section when their metres
-        // end up stranded (target pipe filtered out, no same-bore sibling).
-        public Dictionary<int, List<int>> ExtraPipeBendIds = new();
+        // Target pipe PnPID → the selected bends and their measured lengths.
+        internal readonly Dictionary<int, List<(PartRecord Bend, double Metres)>> FoldedBends = new();
         // Bends with a real length but no compatible adjacent pipe. They are
         // NOT consumed (they stay in the spec as their own pipe row), but
         // that is a doubt worth showing — usually a broken connection.
@@ -114,9 +114,9 @@ namespace PipingSpecPlugin.Spec
                 if (pipePid == 0) { result.OrphanBends.Add(bend.PnPID); continue; }  // truly orphan bend
                 metresByPipe.TryGetValue(pipePid, out var acc);
                 metresByPipe[pipePid] = acc + metres;
-                if (!result.ExtraPipeBendIds.TryGetValue(pipePid, out var bendIds))
-                    result.ExtraPipeBendIds[pipePid] = bendIds = new List<int>();
-                bendIds.Add(bend.PnPID);
+                if (!result.FoldedBends.TryGetValue(pipePid, out var bends))
+                    result.FoldedBends[pipePid] = bends = new();
+                bends.Add((bend, (double)metres));
                 // Remember the line the bend belonged to. If two bends
                 // on different lines fold into the same pipe (rare —
                 // physically would need a tee with bends on both sides
@@ -135,6 +135,8 @@ namespace PipingSpecPlugin.Spec
                         // compares this against the builder's rounded ND,
                         // so a raw 3.99999 would never match a 4.000 pipe.
                         NominalDiameter = System.Math.Round(ParseDouble(bend.NominalDiameter), 3),
+                        NominalUnit = bend.NominalUnit,
+                        DrawingPath = bend.SourceDwgPath,
                         Spec = (bend.Spec ?? "").Trim(),
                         Material = (bend.Material ?? "").Trim(),
                         WallThickness = SpecNumber.Parse(bend.WallThickness),
@@ -254,7 +256,8 @@ namespace PipingSpecPlugin.Spec
         }
 
         static bool Compatible(PartRecord bend, PartRecord pipe)
-            => SameItem(bend, pipe) && ParseDouble(pipe.Length) > 0;
+            => SameItem(bend, pipe) && ParseDouble(pipe.Length) > 0
+                && LengthFactor(pipe.LengthUnit).HasValue;
 
         // Same procurement item (drawing, line, material, spec, wall,
         // schedule, pressure class, nominal size). Used for the fold target

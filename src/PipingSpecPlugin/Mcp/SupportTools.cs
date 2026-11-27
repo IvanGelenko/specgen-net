@@ -115,21 +115,22 @@ namespace Plant3dMcp
                                  (sp.ValveA != null || sp.ValveB != null ? " It is next to a valve: put the support on a neighbouring pipe or lengthen this one." : ""));
                     continue;
                 }
-                var anchors = new List<double>();
-                if (sp.ValveA != null) anchors.Add(lo);
-                if (sp.ValveB != null) anchors.Add(hi);
-                bool hasValve = anchors.Count > 0;
-                if (!hasValve) anchors.Add(lo);
+                var anchors = new List<(double Position, string Valve)>();
+                if (sp.ValveA != null) anchors.Add((lo, sp.ValveA));
+                if (sp.ValveB != null) anchors.Add((hi, sp.ValveB));
+                if (anchors.Count == 0) anchors.Add((lo, null));
 
-                var ts = new SortedDictionary<double, bool>();   // t -> anchor
-                foreach (double a in anchors)
+                var ts = new SortedDictionary<double, string>();   // local position -> valve handles, if anchored
+                foreach (var (a, valve) in anchors)
                 {
-                    ts[Math.Round(a, 3)] = hasValve;
-                    for (double t = a + step; t <= hi + 1e-6; t += step) if (!ts.ContainsKey(Math.Round(t, 3))) ts[Math.Round(t, 3)] = false;
-                    for (double t = a - step; t >= lo - 1e-6; t -= step) if (!ts.ContainsKey(Math.Round(t, 3))) ts[Math.Round(t, 3)] = false;
+                    double key = Math.Round(a, 3);
+                    ts.TryGetValue(key, out var previousValve);
+                    ts[key] = previousValve == null || previousValve == valve ? valve : previousValve + ", " + valve;
+                    for (double t = a + step; t <= hi + 1e-6; t += step) ts.TryAdd(Math.Round(t, 3), null);
+                    for (double t = a - step; t >= lo - 1e-6; t -= step) ts.TryAdd(Math.Round(t, 3), null);
                 }
                 // Drop step points that crowd an anchor (closer than half a step).
-                var keep = ts.Where(kv => kv.Value || !ts.Any(o => o.Value && Math.Abs(o.Key - kv.Key) < step / 2)).ToList();
+                var keep = ts.Where(kv => kv.Value != null || !ts.Any(o => o.Value != null && Math.Abs(o.Key - kv.Key) < step / 2));
 
                 foreach (var kv in keep)
                 {
@@ -147,7 +148,7 @@ namespace Plant3dMcp
                     if (double.IsNaN(t)) continue;
                     var p = sp.A + sp.D * t;
                     if (existing.Any(e => (e - p).DotProduct(sp.D) is double al && Math.Abs(al) < 300 && ((e - p) - sp.D * al).Length < sp.Od)) { warnings.Add("Pipe " + sp.H + ": a support already stands at " + Math.Round(t, 0) + " mm; skipped."); continue; }
-                    res.Add(new SItem { Pipe = sp, T = t, P = p, Anchor = kv.Value, Why = kv.Value ? "valve " + (Math.Abs(t - lo) < 1e-3 ? sp.ValveA : sp.ValveB) : "step" });
+                    res.Add(new SItem { Pipe = sp, T = t, P = p, Anchor = kv.Value != null, Why = kv.Value != null ? "valve " + kv.Value : "step" });
                 }
             }
             // On one straight line the pipes are planned separately; a step support that crowds its neighbours is dropped
@@ -174,14 +175,19 @@ namespace Plant3dMcp
                     double gap = (sorted[i + 1].P - sorted[i].P).DotProduct(d0);
                     if (gap <= step + 1e-6) continue;
                     int n = (int)Math.Ceiling(gap / step) - 1;
+                    var start = sorted[i].P;
+                    int inserted = 0;
                     for (int k = 1; k <= n; k++)
                     {
-                        var target = sorted[i].P + d0 * (gap * k / (n + 1));
+                        var target = start + d0 * (gap * k / (n + 1));
+                        // Each host may use either direction along the common axis.
                         var host = pipes.FirstOrDefault(p => { double t = (target - p.A).DotProduct(p.D); return t >= clear - 1e-6 && t <= p.L - clear + 1e-6 && p.Inner.All(s => Math.Abs(t - s) >= clear - 1e-6); });
-                        if (host == null) { warnings.Add("The span after the support at " + Fmt(sorted[i].P) + " is " + Math.Round(gap, 0) + " mm (more than " + step + ") and no pipe has a free place for another support there."); break; }
+                        if (host == null) { warnings.Add("The span after the support at " + Fmt(start) + " is " + Math.Round(gap, 0) + " mm (more than " + step + ") and no pipe has a free place for another support there."); break; }
                         double th = (target - host.A).DotProduct(host.D);
                         sorted.Insert(i + k, new SItem { Pipe = host, T = th, P = host.A + host.D * th, Anchor = false, Why = "span" });
+                        inserted++;
                     }
+                    i += inserted;
                 }
                 res = sorted;
             }
@@ -193,7 +199,7 @@ namespace Plant3dMcp
         {
             string m = (material ?? "").ToUpperInvariant().Replace('C', 'С').Replace('S', 'С').Replace('G', 'Г');   // Latin lookalikes of Cyrillic letters
             if (m.Contains("09Г2С")) return "!_Опоры ОСТ 36-146-88 09Г2С";
-            m = m.Replace('C', 'С').Replace('T', 'Т').Replace('G', 'Г');   // Latin lookalikes
+            m = m.Replace('T', 'Т');
             if (Regex.IsMatch(m.Trim(), @"^(СТ\.?\s*|СТАЛЬ\s*)?20(?![0-9А-ЯA-Z])")) return "!_Опоры ОСТ 36-146-88 ВСт3пс";
             throw new InvalidOperationException("Cannot choose the support spec for pipe material '" + material + "'. Rule: 09Г2С -> '!_Опоры ОСТ 36-146-88 09Г2С', steel 20 -> '!_Опоры ОСТ 36-146-88 ВСт3пс'. Pass 'spec'.");
         }
@@ -216,7 +222,7 @@ namespace Plant3dMcp
             string specArg = args.TryGetProperty("spec", out var sa) && sa.ValueKind == JsonValueKind.String ? sa.GetString() : null;
             if (step < 500) throw new ArgumentException("step must be at least 500 mm");
             if (margin < 100) throw new ArgumentException("weld_margin below 100 mm violates GOST 32569 cl. 10.4.3");
-            var handles = args.GetProperty("pipes").EnumerateArray().Select(e => e.GetString()).Where(h => !string.IsNullOrWhiteSpace(h)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            var handles = Tools.Required(args, "pipes", JsonValueKind.Array).EnumerateArray().Select(e => e.GetString()).Where(h => !string.IsNullOrWhiteSpace(h)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (SteelBusy && !IsDry(args)) throw new InvalidOperationException("The previous add_supports is still creating plates and posts in the background; wait for it (call with its job id) before starting another.");
             if (handles.Count == 0 || handles.Count > 40) throw new ArgumentException("pipes: 1..40 handles");
 
@@ -363,7 +369,7 @@ namespace Plant3dMcp
                     }
                 } while (needReplan);
 
-                var steel = new List<(Point3d a, Point3d b)>(); var plates = new List<(Point3d a, Point3d b)>(); var posts = new List<(Point3d a, Point3d b)>();
+                var plates = new List<(Point3d a, Point3d b)>(); var posts = new List<(Point3d a, Point3d b)>();
                 if (withStructure)
                     foreach (var pl in placed)
                     {
@@ -463,13 +469,16 @@ namespace Plant3dMcp
         // ---- background job: plates and posts through the Plant 3D steel commands -------------------------------------
 
         sealed class SteelJob { public string Id; public string State = "running"; public List<string> Log = new List<string>(); public List<string> Created = new List<string>(); public string Error; public int Total, Done; }
+        // Accessed from the AutoCAD UI thread. The HTTP worker only sees the copied status.
         static readonly Dictionary<string, SteelJob> Jobs = new Dictionary<string, SteelJob>();
+        static readonly Queue<string> JobOrder = new Queue<string>();
+        const int RetainedSteelJobs = 32;
         static volatile bool SteelBusy;   // one background job at a time (it runs real Plant 3D commands)
 
         static object SteelJobStatus(string id)
         {
             if (!Jobs.TryGetValue(id, out var j)) throw new ArgumentException("Unknown job " + id);
-            return new { job = j.Id, state = j.State, done = j.Done, total = j.Total, created = j.Created, error = j.Error, log = j.Log };
+            return new { job = j.Id, state = j.State, done = j.Done, total = j.Total, created = j.Created.ToArray(), error = j.Error, log = j.Log.ToArray() };
         }
 
         static List<(ObjectId id, string cls)> SteelObjects(Document doc)
@@ -504,8 +513,10 @@ namespace Plant3dMcp
 
         static string StartSteelJob(Document doc, List<(Point3d a, Point3d b)> plates, List<(Point3d a, Point3d b)> posts)
         {
-            var job = new SteelJob { Id = Guid.NewGuid().ToString("N").Substring(0, 8), Total = plates.Count + posts.Count };
-            Jobs[job.Id] = job;
+            var job = new SteelJob { Id = Guid.NewGuid().ToString("N"), Total = plates.Count + posts.Count };
+            Jobs.Add(job.Id, job);
+            JobOrder.Enqueue(job.Id);
+            if (JobOrder.Count > RetainedSteelJobs) Jobs.Remove(JobOrder.Dequeue());
             SteelBusy = true;
             try
             {

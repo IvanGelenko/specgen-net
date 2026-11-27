@@ -5,7 +5,7 @@ rem === PipingSpecPlugin (.NET) builder ===
 rem  Reads version from VERSION file, then:
 rem  1) dotnet build -c Release  -> bin\Release-vX.Y.Z\
 rem  2) stage bundle (DLL + OpenXml + icons + version-stamped manifest)
-rem  3) iscc -> dist_installer\PipingSpecPlugin-Setup.exe
+rem  3) iscc -> installer and standalone uninstaller in dist_installer
 
 cd /d "%~dp0"
 
@@ -94,11 +94,17 @@ if errorlevel 1 (
     echo Inno Setup failed.
     exit /b 1
 )
+%ISCC% /DMyAppVersion=%APPVERSION% uninstaller.iss
+if errorlevel 1 (
+    echo Failed to build the standalone uninstaller.
+    exit /b 1
+)
 
 echo.
 echo ============================================================
 echo  Done. Version %APPVERSION%
 echo  Installer: dist_installer\PipingSpecPlugin-Setup.exe
+echo  Uninstaller: dist_installer\SpecGen-Uninstall.exe
 echo  Bundle:    %STAGE%\
 echo ============================================================
 endlocal

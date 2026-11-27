@@ -134,6 +134,8 @@ namespace PipingSpecPlugin.Commands
         {
             if (result == null) return;
             scan.unreadParts.AddRange(ReviewSection.FromUnreadRows(result.SkippedRowDetails, path));
+            foreach (var (handle, className, reason) in result.UnlinkedParts)
+                scan.unreadParts.Add(ReviewSection.ForUnlinkedPart(path, handle, className, reason));
         }
 
         /// <summary>

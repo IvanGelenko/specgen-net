@@ -159,6 +159,17 @@ public class ReviewSectionTests
         Assert.DoesNotContain(rows, r => r.Category == SpecConstants.ReviewSectionHeader);
     }
 
+    [Fact] public void UnlinkedPartIdentifiesTheDrawingAndEntity()
+    {
+        var item = ReviewSection.ForUnlinkedPart(@"C:\project\model.dwg", "9F", "AcPpDb3dPipe", "строка PnP не найдена");
+        var row = Assert.Single(ReviewSection.BuildRows(new[] { item }));
+        Assert.Contains("AcPpDb3dPipe", row.Name);
+        Assert.Contains("9F", row.Name);
+        Assert.Contains("model.dwg", row.Note);
+        Assert.Contains("строка PnP не найдена", row.Note);
+        Assert.Equal(0, row.Qty);
+    }
+
     // ---- docx --------------------------------------------------------------
 
     static string MakeTemplate(string directory)

@@ -70,6 +70,11 @@
                 </GroupBox>
                 <GroupBox Header="Дополнительные правила" Padding="10">
                     <StackPanel>
+                        <CheckBox x:Name="ExcludeValvesAndInstrumentsChk"
+                                  IsChecked="True" Margin="0,2,0,2"
+                                  ToolTip="Действует даже при выбранных категориях «Арматура» и «Приборы».">
+                            <TextBlock Text="Исключить арматуру и КИП" TextWrapping="Wrap"/>
+                        </CheckBox>
                         <CheckBox x:Name="ExcludeValveCompanionsChk"
                                   IsChecked="True" Margin="0,2,0,2">
                             <TextBlock Text="Исключить ответные фланцы арматуры (вместе с прокладкой и комплектом болтов)" TextWrapping="Wrap"/>

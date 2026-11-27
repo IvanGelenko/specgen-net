@@ -11,6 +11,7 @@ public class BendGroupingTests
 {
     const string Forward  = "Изгиб трубы, радиус гиба = 40 мм, угол гиба = 180°, Д1=0 мм, Д2=100мм, длина=325.7 мм, труба 25,0x4,0 ст.20";
     const string Backward = "Изгиб трубы, радиус гиба = 40 мм, угол гиба = 180°, Д1=100 мм, Д2=0мм, длина=325.7 мм, труба 25,0x4,0 ст.20";
+    const string Display = "Изгиб трубы, R40 мм, α=180°, L=325.7 мм, труба 25,0x4,0 ст.20";
 
     static PartRecord Bend(int id, string desc, string length = "325.7") => new()
     {
@@ -27,15 +28,13 @@ public class BendGroupingTests
         Assert.Equal(3, row.Qty);
         Assert.Equal("шт.", row.Unit);
         Assert.Equal("Fittings", row.Category);
-        // Display is the sorted (smaller-first) form — deterministic,
-        // independent of which instance was read first.
-        Assert.Equal(Forward, row.Name);
+        Assert.Equal(Display, row.Name);
     }
 
-    [Fact] public void DisplayIsSortedEvenWhenOnlyBackwardInstancesExist()
+    [Fact] public void DisplayOmitsTailsEvenWhenOnlyBackwardInstancesExist()
     {
         var row = Assert.Single(new SpecRowBuilder().Build(new[] { Bend(1, Backward) }));
-        Assert.Contains("Д1=0 мм, Д2=100мм", row.Name);
+        Assert.Equal(Display, row.Name);
     }
 
     [Fact] public void DifferentTailsStaySeparate()
@@ -63,6 +62,20 @@ public class BendGroupingTests
     static string R(string r, string u, string d1, string d2, string len) => string.Format(Real, r, u, d1, d2, len);
 
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void BendSpecShowsArcAndMovesPipeStandardToDesignation(bool foldBends)
+    {
+        var bend = Bend(1, R("40", "180", "100", "100", "325.6637"));
+        bend.DesignStd = "ГОСТ 8733-74";
+        var options = new SpecBuilderOptions { IncludePipeBendsAsPipe = foldBends };
+        var row = Assert.Single(new SpecRowBuilder(options).Build(new[] { bend }));
+        Assert.Equal("ИЗГИБ ТРУБЫ, R40, α=180°, L=325.6637, Труба 25х4 В 20 ГОСТ 8733-74", row.Name);
+        Assert.Equal("ГОСТ 8734-75", row.TypeMark);
+        Assert.Equal(row.TypeMark, SpecTemplateWriter.SpecRowCells(1, row)[2]);
+    }
+
+    [Theory]
     [InlineData("130", "180", "100", "100", "608.407",  "608.4")]
     [InlineData("40",  "180", "0",   "100", "325.6637", "325.7")]
     [InlineData("90",  "90",  "0",   "100", "241.3717", "241.4")]
@@ -87,7 +100,7 @@ public class BendGroupingTests
         });
         var row = Assert.Single(rows);
         Assert.Equal(2, row.Qty);
-        Assert.Equal(R("90", "90", "0", "100", "241.4"), row.Name);
+        Assert.Equal("ИЗГИБ ТРУБЫ, R90, α=90°, L=241.3717, Труба 25х4 В 20 ГОСТ 8733-74", row.Name);
     }
 
     [Theory]
@@ -105,7 +118,8 @@ public class BendGroupingTests
         var b = Bend(2, Backward.Replace("325.7", "325.71"));
         var row = Assert.Single(new SpecRowBuilder().Build(new[] { a, b }));
         Assert.Equal(2, row.Qty);
-        Assert.Equal(Forward, row.Name);
+        Assert.Equal(Display.Replace("325.7", "325.68"), row.Name);
+        Assert.Equal(row.Name, Assert.Single(new SpecRowBuilder().Build(new[] { b, a })).Name);
     }
 
     [Fact] public void NonBendNamesAreNotTouched()

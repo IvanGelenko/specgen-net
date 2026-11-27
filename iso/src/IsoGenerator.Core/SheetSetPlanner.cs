@@ -366,7 +366,8 @@ public static class SheetSetPlanner
                 var pair=new[]{first,second};
                 var pairOwner=pair.SelectMany((s,i)=>s.Parts.Select(p=>(p.Handle,Sheet:i))).ToDictionary(x=>x.Handle,x=>x.Sheet,StringComparer.OrdinalIgnoreCase);
                 var pairScenes=pair.Select(snapshot=>Plan(snapshot)).ToArray();
-                var pairLayouts=pair.Select((s,i)=>new SchematicLayout(s,Prepare(s).Topology,quarterTurns,pairScenes[i].LayoutLevel,pairScenes[i].PipeExtensions,symbolMap,pairScenes[i].PaperMargin,execution:execution)).ToArray();
+                var pairLayouts=pair.Select((s,i)=>new SchematicLayout(s,Prepare(s).Topology,quarterTurns,pairScenes[i].LayoutLevel,
+                    pairScenes[i].PipeExtensions,symbolMap is null?null:symbolMap.ResolveGeometry,pairScenes[i].PaperMargin,execution:execution)).ToArray();
                 for(int i=0;i<2;i++)
                 {
                     var marks=new List<SheetContinuation>();int mark=0;

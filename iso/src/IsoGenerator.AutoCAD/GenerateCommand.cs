@@ -17,7 +17,7 @@ public sealed class GenerateCommand
     public void Generate()=>App.DocumentManager.MdiActiveDocument?.SendStringToExecute("PSISOMETRIC ",true,false,false);
 
     // Version each contract independently so unrelated rebuilds do not discard accepted work.
-    const int LayoutVersion=45;
+    const int LayoutVersion=50;
     const int DrawingVersion=12;
     const int DocumentVersion=3;
     const int ValveKitBomVersion=1;
@@ -69,6 +69,9 @@ public sealed class GenerateCommand
             string publication=lines.Count==1?lines[0].Line:$"{lines.Count} линий · {pdfStem}";
             view=IsoProgressWindow.Start(publication,App.MainWindow.Handle);var token=view.Token;
             advancedSettings??=new IsoAdvancedSettings();advancedSettings.Validate();
+            if(double.TryParse(Environment.GetEnvironmentVariable("ISO_PIPE_GAP_LENGTH"),System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,out double gap)&&double.IsFinite(gap)&&gap>0)
+                advancedSettings=advancedSettings.WithPipeGapOverride(gap);
             LineLayoutOptions LayoutOptions(LineRequest request)=>new(automaticView&&request.ManualQuarterTurns is null,
                 request.ManualQuarterTurns??quarterTurns,excludeFlangeHardware,ignoreBreakPoints,
                 instrumentCalloutsOnly,minimumPipeLength,advancedSettings);

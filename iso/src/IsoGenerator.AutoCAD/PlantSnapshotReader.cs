@@ -55,7 +55,7 @@ internal static class PlantSnapshotReader
         foreach(ObjectId id in model)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if(tr.GetObject(id,OpenMode.ForRead) is not PlantPart||id.ObjectClass.Name=="AcPpDb3dConnector")continue;
+            if(tr.GetObject(id,OpenMode.ForRead) is not PlantPart or Equipment||id.ObjectClass.Name=="AcPpDb3dConnector")continue;
             if(scope is not null&&!scope.Contains(id.Handle.ToString()))continue;
             Dictionary<string,string> props;
             try{props=Properties(id);}catch(System.Exception ex){throw new InvalidDataException($"Не прочитаны свойства {id.Handle}: {ex.Message}");}
@@ -217,6 +217,46 @@ internal static class PlantSnapshotReader
         // never members of the selected line or its bill of materials.
         var markerHandles=markers.Select(m=>m.Handle).ToHashSet(StringComparer.OrdinalIgnoreCase);
         var externalContexts=new List<ExternalLineContext>();
+        var equipmentConnections=new List<EquipmentConnection>();
+        EquipmentConnection? FindEquipment(string owner,string ownerPort,ObjectId id,string inlet)
+        {
+            var visited=new HashSet<ObjectId>();
+            while(visited.Add(id))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                if(tr.GetObject(id,OpenMode.ForRead) is not PlantPart part)return null;
+                if(part is Equipment equipment)
+                {
+                    var tag=Properties(id).GetValueOrDefault("Tag","").Trim();
+                    var equipmentPort=equipment.GetPorts(PortType.All).Cast<PlantPort>()
+                        .FirstOrDefault(p=>p.Name.Equals(inlet,StringComparison.OrdinalIgnoreCase));
+                    var nozzle=EquipmentNozzle.Read(manager,projectManager,id,equipmentPort);
+                    return new(owner,ownerPort,id.Handle.ToString(),inlet,tag,nozzle,equipmentPort?.Position.Z);
+                }
+
+                // A terminal adapter may be outside the numbered line. Follow
+                // only an unambiguous path through joints and two-port fittings.
+                if(part is not Connector&&(part is not InlineAsset||LineOf(id).Length>0||
+                    part.GetPorts(PortType.Static).Count!=2))return null;
+
+                var next=new HashSet<(ObjectId Id,string Port)>();
+                var attached=connections.GetConnections(id);
+                for(int i=0;i<attached.Count;i++)
+                {
+                    var link=attached[i];
+                    bool first=link.ObjectId1==id;
+                    var port=first?link.Port1:link.Port2;
+                    if(string.Equals(port.Name,inlet,StringComparison.OrdinalIgnoreCase))continue;
+                    var other=first?link.ObjectId2:link.ObjectId1;
+                    if(!other.IsNull&&other.Database==db&&!own.Contains(other.Handle.ToString())&&
+                        !other.IsErased&&!other.IsEffectivelyErased)
+                        next.Add((other,(first?link.Port2:link.Port1).Name));
+                }
+                if(next.Count!=1)return null;
+                (id,inlet)=next.Single();
+            }
+            return null;
+        }
         foreach(var boundary in links.Values)
         {
             cancellationToken.ThrowIfCancellationRequested();
@@ -231,6 +271,11 @@ internal static class PlantSnapshotReader
                 continue;
             }
             if(tr.GetObject(rootId,OpenMode.ForRead) is not PlantPart)continue;
+            if(FindEquipment(local,localPort,rootId,remotePort) is {} equipment)
+            {
+                equipmentConnections.Add(equipment);
+                continue;
+            }
             string otherLine=LineOf(rootId);
             if(otherLine.Length==0||otherLine.Equals(line,StringComparison.OrdinalIgnoreCase))continue;
             var remoteParts=new List<ModelPart>();var remoteLinks=new List<Connection>();var pending=new Queue<ObjectId>();pending.Enqueue(rootId);
@@ -259,6 +304,7 @@ internal static class PlantSnapshotReader
             }
             if(physicalCount>0)externalContexts.Add(new(local,localPort,otherLine,remote,remotePort,remoteParts,remoteLinks.Distinct().ToArray()));
         }
-        return new(1,filename,parts,links.Values.ToArray(),warnings,accessories,markers,ExternalLineContexts:externalContexts);
+        return new(1,filename,parts,links.Values.ToArray(),warnings,accessories,markers,ExternalLineContexts:externalContexts,
+            EquipmentConnections:equipmentConnections.Distinct().ToArray());
     }
 }

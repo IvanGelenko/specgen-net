@@ -166,6 +166,7 @@ namespace PipingSpecPlugin.Commands
                 ExcludeConnectors = false,
                 EquipmentOwnedPnPIds = scan.ownedPnPIds,
                 IncludePipeBendsAsPipe = false,
+                UseCatalogueBendNames = true,
                 Topology = scan.topology,
             });
             List<SpecRow> rows;

@@ -29,9 +29,9 @@ namespace PipingSpecPlugin.Tests
   }
   [Theory]
   [InlineData("", "150-KSN001-LS016C-HN")]
-  [InlineData("150-KSN001-LS016C-HN (Врезка 2; 5)", "150-KSN001-LS016C-HN")]
+  [InlineData("150-KSN001-LS016C-HN (Врезка 2; 5)", null)]
   [InlineData("150-KSN001-LS016C-HN", null)]
-  public void TagIsWrittenWithoutVtRemark(string currentTag, string expectedNewTag)
+  public void EmptyTagIsFilledWithoutRemarkAndExistingTagIsPreserved(string currentTag, string expectedNewTag)
   {
    var line = new LineGroupInfo { RowId=1, Id="1" };
    line.AllProperties["Tag"]=currentTag;

@@ -16,17 +16,17 @@ namespace PipingSpecPlugin.Spec
         /// by Id so repeated runs render in a stable order.
         /// </summary>
         public static List<LineLedgerRow> BuildLedger(List<LineGroupInfo> lines, bool collapseDuplicates = false,
-            IEnumerable<LineGroupInfo> projectLines = null)
+            IEnumerable<LineGroupInfo> projectLines = null, IReadOnlySet<int> matchedRowIds = null)
         {
             var rows = new List<LineLedgerRow>();
             foreach (var line in lines)
             {
-                if (string.IsNullOrWhiteSpace(line.Id)) continue;
+                if (string.IsNullOrWhiteSpace(line.Id) && matchedRowIds?.Contains(line.RowId) != true) continue;
                 var row = new LineLedgerRow
                 {
                     RowId = line.RowId,
                     RowIds = new List<int> { line.RowId },
-                    Id = line.Id,
+                    Id = line.Id ?? "",
                     Tag = line.Tag
                 };
                 foreach (var col in KnownLineGroupColumns)
@@ -58,7 +58,8 @@ namespace PipingSpecPlugin.Spec
                 rows.Add(row);
             }
             if (collapseDuplicates)
-                rows = rows.GroupBy(r => new { Id = r.Id.Trim().ToUpperInvariant(), Tag = (r.Tag ?? "").Trim() })
+                rows = rows.GroupBy(r => new { Id = r.Id.Trim().ToUpperInvariant(), Tag = (r.Tag ?? "").Trim(),
+                    UnassignedRowId = string.IsNullOrWhiteSpace(r.Id) ? r.RowId : 0 })
                     .Select(group =>
                     {
                         var first = group.First();

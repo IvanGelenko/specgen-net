@@ -167,12 +167,8 @@ namespace PipingSpecPlugin.UI
                 }
                 if (vt.Rows.Count == 0)
                 {
-                    // The sync key has been "n/n" since 1.2.4 (VtReader skips
-                    // rows without it); the message still named the old
-                    // «ИД трубопровода» column and sent users to the wrong one.
                     MessageBox.Show(this,
-                        "В файле не найдено ни одной строки с заполненным «n/n» — "
-                        + "по этой колонке строки ВТ сопоставляются с полем ID линий проекта.",
+                        "В файле не найдено ни одной строки ВТ с заполненным «n/n».",
                         "Синхронизация ВТ", MessageBoxButton.OK, MessageBoxImage.Warning);
                     return;
                 }
@@ -226,14 +222,25 @@ namespace PipingSpecPlugin.UI
             if (proposal.Actions.Count == 0) return false;
 
             const int previewLimit = 10;
-            var preview = string.Join("\n", proposal.Actions.Take(previewLimit)
-                .Select(action => $"• {action.Line.Tag} → ID {action.Changes[0].NewValue}"));
-            if (proposal.Actions.Count > previewLimit)
-                preview += $"\n… и ещё {proposal.Actions.Count - previewLimit}.";
+            var releases = proposal.Actions.Where(action => string.IsNullOrEmpty(action.Changes[0].NewValue))
+                .ToDictionary(action => action.Changes[0].OldValue.Trim(), StringComparer.OrdinalIgnoreCase);
+            var assignments = proposal.Actions.Where(action => !string.IsNullOrEmpty(action.Changes[0].NewValue)).ToList();
+            // A transfer must always show both tags in the confirmation, even in a large batch.
+            var previewActions = assignments.Where(action => releases.ContainsKey(action.Changes[0].NewValue))
+                .Concat(assignments.Where(action => !releases.ContainsKey(action.Changes[0].NewValue)).Take(previewLimit)).ToList();
+            var preview = string.Join("\n", previewActions.Select(action =>
+            {
+                var id = action.Changes[0].NewValue;
+                var assignment = $"• {action.Line.Tag} → ID {id}";
+                return releases.TryGetValue(id, out var release)
+                    ? assignment + $"\n  Освободить ID у «{release.Line.Tag}» (PnPID {release.Line.RowId}, запись без деталей)." : assignment;
+            }));
+            if (assignments.Count > previewActions.Count)
+                preview += $"\n… и ещё {assignments.Count - previewActions.Count}.";
 
             Mouse.OverrideCursor = null;
             var confirm = MessageBox.Show(this,
-                $"Найдено совпадений по обозначению на текущем чертеже: {proposal.Actions.Count}.\n\n"
+                $"Найдено линий для заполнения ID на текущем чертеже: {assignments.Count}.\n\n"
                 + $"{preview}\n\nЗаполнить пустые поля ID значениями из колонки n/n ВТ?",
                 "Заполнение ID по обозначению", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No);
             Mouse.OverrideCursor = Cursors.Wait;
@@ -294,7 +301,7 @@ namespace PipingSpecPlugin.UI
             AddLedgerColumn("Тег линии", nameof(LineLedgerRow.DisplayTag), horizontalHeader: true, maxWidth: 170);
             foreach (var name in visibleColumns)
                 AddLedgerColumn(VtFieldMappings.KnownLineGroupColumnLabels[name], $"Values[{name}]");
-            LedgerGrid.ItemsSource = LineLedgerProjection.BuildLedger(lines, projectLines: projectLines);
+            LedgerGrid.ItemsSource = LineLedgerProjection.BuildLedger(lines, projectLines: projectLines, matchedRowIds: Plan?.MatchedRowIds);
         }
 
         void AddLedgerColumn(string header, string path, bool horizontalHeader = false, double maxWidth = 58)
@@ -342,16 +349,17 @@ namespace PipingSpecPlugin.UI
             foreach (var warning in _session.WorkbookWarnings)
                 problems.AppendLine($"⚠ {warning}");
             foreach (var id in Plan.DuplicateIds)
-                problems.AppendLine($"⚠ ID «{id}» встречается у нескольких линий. Запись разрешена при единственном совпадении по обозначению. Дубли без деталей можно удалить в режиме «Весь проект».");
+                problems.AppendLine($"⚠ ID «{id}» встречается у нескольких линий. Такой ID нельзя использовать для сопоставления без обозначения. Дубли без деталей можно удалить в режиме «Весь проект».");
             foreach (var nn in Plan.DuplicateVtNN)
-                problems.AppendLine($"⚠ n/n «{nn}» встречается у нескольких строк в файле ВТ — все они пропущены (неоднозначно, с какой линией сопоставлять). Проверьте нумерацию в ВТ.");
+                problems.AppendLine($"⚠ n/n «{nn}» повторяется в ВТ. Свойства можно синхронизировать по однозначному обозначению. Автозаполнение такого ID заблокировано.");
             foreach (var vtRow in Plan.UnmatchedVtRows)
-                problems.AppendLine($"— n/n «{vtRow.NN}» (строка {vtRow.RowNumber} ВТ) не найден среди линий проекта (поле ID).");
-            foreach (var reason in Plan.BlockedLines.Values)
+                problems.AppendLine($"— Строка {vtRow.RowNumber} ВТ (n/n «{vtRow.NN}», обозначение «{vtRow.Designation?.Trim()}») не сопоставлена с линией проекта.");
+            foreach (var reason in Plan.BlockedLines.Values.Distinct())
                 problems.AppendLine($"— {reason}");
-            if (CurrentDrawingOnly)
-                foreach (var reason in _session.IdFillSkips)
-                    problems.AppendLine($"— При загрузке ВТ ID не заполнен для {reason}");
+            foreach (var reason in Plan.IdConflicts.Values)
+                problems.AppendLine($"⚠ {reason}");
+            foreach (var reason in _session.IdFillSkips)
+                problems.AppendLine($"— Автозаполнение ID на текущем чертеже пропущено. {reason}");
             foreach (var line in Plan.UnmatchedLines)
                 problems.AppendLine($"— Линия «{line.Tag}» (ID «{line.Id}») в проекте не встречается в ВТ.");
             foreach (var action in Plan.Actions)
@@ -546,20 +554,15 @@ namespace PipingSpecPlugin.UI
                 if (SyncSelectedMenuItem != null) SyncSelectedMenuItem.IsEnabled = false;
 
                 var isUnmatchedLine = Plan.UnmatchedLines.Any(l => rowIds.Contains(l.RowId));
-                var isDuplicateVtNN = Plan.DuplicateVtNN.Contains(lineId, StringComparer.OrdinalIgnoreCase);
                 var blockedReason = rowIds.Select(id => Plan.BlockedLines.GetValueOrDefault(id)).FirstOrDefault(reason => reason != null);
 
-                if (isDuplicateVtNN)
-                {
-                    StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): n/n встречается несколько раз в файле ВТ (пропущена).";
-                }
-                else if (blockedReason != null)
+                if (blockedReason != null)
                 {
                     StatusText.Text = blockedReason;
                 }
                 else if (isUnmatchedLine)
                 {
-                    StatusText.Text = $"Выбрана линия «{lineTag}» (ID {lineId}): не найдена в файле ВТ (нет строки с n/n = {lineId}).";
+                    StatusText.Text = $"Линия «{lineTag}» не сопоставлена со строкой ВТ.";
                 }
                 else
                 {

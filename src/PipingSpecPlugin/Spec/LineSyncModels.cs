@@ -45,19 +45,19 @@ namespace PipingSpecPlugin.Spec
 
     public class LineSyncPlan
     {
-        public List<LineSyncAction> Actions = new();        // Id matched to a line, at least one change.
-        public List<VtRowData> UnmatchedVtRows = new();      // Id in ВТ not found among project lines.
-        public List<LineGroupInfo> UnmatchedLines = new();   // Lines with an Id not present in ВТ.
+        public List<LineSyncAction> Actions = new();        // Matched lines with changes or diagnostics.
+        public List<VtRowData> UnmatchedVtRows = new();      // Workbook rows without a project match.
+        public List<LineGroupInfo> UnmatchedLines = new();   // Project lines with an ID and no workbook match.
         public List<string> DuplicateIds = new();            // Ids that matched more than one P3dLineGroup row.
         public HashSet<int> MatchedRowIds = new();
         public Dictionary<int, string> BlockedLines = new();
+        public Dictionary<int, string> IdConflicts = new();
         public List<string> IdFillSkips = new();
 
         // "n/n" values that appear on more than one ВТ row (e.g. section
         // numbering restarts at 1 per Цех in a multi-section workbook).
-        // Every ВТ row sharing such a value is ambiguous — it's unclear
-        // which one a given Plant 3D line's ID should match — so all of
-        // them are skipped entirely. Populated by BuildPlan.
+        // A repeated n/n cannot identify a line on its own. A unique
+        // designation can still identify the line for property sync.
         public List<string> DuplicateVtNN = new();
 
         public int TotalChangedFields()
@@ -80,7 +80,8 @@ namespace PipingSpecPlugin.Spec
                 DuplicateVtNN = DuplicateVtNN.ToList(),
                 UnmatchedLines = UnmatchedLines.Where(l => targetIds.Contains(l.RowId)).ToList(),
                 MatchedRowIds = MatchedRowIds.Where(targetIds.Contains).ToHashSet(),
-                BlockedLines = BlockedLines.Where(item => targetIds.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value)
+                BlockedLines = BlockedLines.Where(item => targetIds.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value),
+                IdConflicts = IdConflicts.Where(item => targetIds.Contains(item.Key)).ToDictionary(item => item.Key, item => item.Value),
             };
         }
 

@@ -47,6 +47,25 @@ namespace PipingSpecPlugin.Tests
         }
 
         [Fact]
+        public void Apply_Id_Fill_Rejects_Transfer_If_Holder_Became_Linked()
+        {
+            var project = new FakeProject();
+            project.Lines.Add(new LineGroupInfo { RowId = 10, Tag = "KSN009" });
+            project.Lines.Add(new LineGroupInfo { RowId = 20, Id = "3", Tag = "KSN009?" });
+            project.DrawingIds.Add(10);
+            var holderUnlinked = true;
+            var workflow = new VtSyncWorkflow(project, project, project, _ => throw new InvalidOperationException(),
+                line => line.RowId == 20 && holderUnlinked);
+            var rows = new List<VtRowData> { new() { NN = "3", Designation = "KSN009" } };
+            var proposal = workflow.Prepare(rows, drawingOnly: true, includeIdFill: true).IdFillProposal;
+            Assert.Equal(2, proposal.Actions.Count);
+
+            holderUnlinked = false;
+            Assert.True(workflow.ApplyIdFill(rows, proposal).Stale);
+            Assert.Null(project.AppliedPlan);
+        }
+
+        [Fact]
         public void Apply_Plan_Requires_Consent_Before_Migration_And_Propagates_Write_Failure()
         {
             var project = new FakeProject { NeedsMigration = true, WriteErrors = new[] { "Конфликт записи" } };

@@ -34,6 +34,8 @@ namespace PipingSpecPlugin.Spec
 
         public IReadOnlyList<string> Apply(LineSyncPlan plan) => LineSyncService.Apply(plan, projectDlm, trace);
 
+        internal bool CanReleaseLineId(LineGroupInfo line) => LineSyncService.CanReleaseLineId(line, projectDlm, trace);
+
         public OrphanLineInfo FindDeletableDuplicate(int rowId, string lineId)
         {
             var matches = ReadProjectLines()

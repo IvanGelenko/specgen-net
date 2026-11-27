@@ -302,13 +302,19 @@ namespace PipingSpecPlugin.Spec
 
                 bool hasSecondHeader = hasMergedHeaderRows || hasGroupedGost || groupedAssign.Count > 0;
                 int firstDataRowIndex = hasSecondHeader ? 3 : 2;
+                bool inNotes = false;
 
                 foreach (var row in rows)
                 {
                     var idx = (int)(row.RowIndex?.Value ?? 0);
                     if (idx < firstDataRowIndex) continue;
-                    if (row.Elements<Cell>().Any(cell => wideMergeRowStartCols.Contains(((uint)idx, ColumnOf(cell.CellReference?.Value ?? "")))))
+                    var sectionTitle = row.Elements<Cell>().FirstOrDefault(cell =>
+                        wideMergeRowStartCols.Contains(((uint)idx, ColumnOf(cell.CellReference?.Value ?? ""))));
+                    if (sectionTitle != null)
+                    {
+                        inNotes = IsNotesHeading(CellText(sectionTitle));
                         continue;
+                    }
 
                     var cellsByCol = new Dictionary<string, string>(StringComparer.Ordinal);
                     foreach (var cell in row.Elements<Cell>())
@@ -318,7 +324,14 @@ namespace PipingSpecPlugin.Spec
                         cellsByCol[col] = col == nnColumn ? ReadSyncKey(cell, styles, CellText(cell)) : CellText(cell);
                     }
                     if (cellsByCol.Count == 0) continue;
-                    // A key-only row still participates in duplicate detection.
+                    if (cellsByCol.TryGetValue(nnColumn, out var key) && !string.IsNullOrWhiteSpace(key))
+                    {
+                        bool keyOnly = !cellsByCol.Any(cell => cell.Key != nnColumn && !string.IsNullOrWhiteSpace(cell.Value));
+                        if (keyOnly && IsNotesHeading(key)) inNotes = true;
+                        if (keyOnly && inNotes) continue;
+                        inNotes = false;
+                    }
+                    // A key-only row outside a notes block participates in duplicate detection.
 
                     var data = new VtRowData { RowNumber = idx };
                     foreach (var kv in cellsByCol)
@@ -352,6 +365,14 @@ namespace PipingSpecPlugin.Spec
                 result.Error = $"Не удалось прочитать файл: {ex.GetType().Name}: {ex.Message}";
                 return result;
             }
+        }
+
+        static bool IsNotesHeading(string value)
+        {
+            var heading = Normalize(value).TrimEnd(':').TrimEnd();
+            return string.Equals(heading, "Комментарии", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(heading, "Примечания", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(heading, "Примечание", StringComparison.OrdinalIgnoreCase);
         }
 
         static string ReadSyncKey(Cell cell, Stylesheet styles, string text)

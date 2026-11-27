@@ -237,6 +237,9 @@ namespace PipingSpecPlugin.Spec
             return result;
         }
 
+        internal static bool CanReleaseLineId(LineGroupInfo line, DataLinksManager projectDlm, Action<string> trace) =>
+            FindOrphanLines(new List<LineGroupInfo> { line }, projectDlm, trace).Count == 1;
+
         /// <summary>
         /// Deletes confirmed-orphan P3dLineGroup rows via
         /// PnPDatabase.DeleteRows(PnPRowIdArray) — the actual delete API
@@ -336,16 +339,10 @@ namespace PipingSpecPlugin.Spec
                             if (mismatches.Count > 0)
                                 throw new InvalidOperationException($"Строка PnPID {rowId} изменилась ({string.Join(", ", mismatches)}). Обновите ведомость.");
                         }
-                        var newIds = actions.SelectMany(action => action.Changes)
-                            .Where(change => change.PropertyName == "ID").Select(change => change.NewValue).ToList();
-                        if (newIds.Count > 0)
-                        {
-                            var occupied = ReadAllLines(projectDlm).Select(line => line.Id?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                            foreach (var id in newIds)
-                                if (!occupied.Add(id))
-                                    throw new InvalidOperationException($"ID «{id}» уже используется. Загрузите ВТ повторно.");
-                        }
-                        foreach (var action in actions)
+                        var ordered = actions.Any(action => action.Changes.Any(change => change.PropertyName == "ID"))
+                            ? LineSyncPlanner.ValidateIdWrites(actions, ReadAllLines(projectDlm), line => CanReleaseLineId(line, projectDlm, trace))
+                            : actions;
+                        foreach (var action in ordered)
                         {
                             var names = new StringCollection();
                             var values = new StringCollection();
@@ -358,7 +355,18 @@ namespace PipingSpecPlugin.Spec
                             catch (Exception ex) { throw new InvalidOperationException($"PnPID {action.Line.RowId}: {ex.Message}", ex); }
                         }
                     },
-                    () => projectDlm.AcceptChanges(),
+                    () =>
+                    {
+                        projectDlm.AcceptChanges();
+                        foreach (var action in actions)
+                        {
+                            var idChange = action.Changes.FirstOrDefault(change => change.PropertyName == "ID");
+                            if (idChange == null) continue;
+                            var current = ReadLineProperties(projectDlm, action.Line.RowId).GetValueOrDefault("ID");
+                            if (!LineSyncPlanner.SameFieldValue("ID", idChange.NewValue, current))
+                                throw new InvalidOperationException($"Не удалось подтвердить запись ID в строке PnPID {action.Line.RowId}.");
+                        }
+                    },
                     () => pnpDb.CommitTransaction(),
                     () => pnpDb.RollbackTransaction());
 

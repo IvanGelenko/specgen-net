@@ -7,100 +7,28 @@ namespace PipingSpecPlugin.Spec
 {
     public static class LineSyncPlanner
     {
-        /// <summary>
-        /// Builds a dry-run plan: matches every ВТ row's "n/n" (row
-        /// ordinal, e.g. "1", "3.1") to a project line's `ID` property
-        /// and computes the field-level diff. Nothing is written here —
-        /// reads only line.AllProperties, already populated by
-        /// ReadAllLines, so no DataLinksManager access happens in this
-        /// method (pure in-memory diff). The sync key used to be ВТ's
-        /// "ИД трубопровода" column; it's now "n/n" per the user's
-        /// explicit switch — the target Plant 3D field (`ID`) is
-        /// unchanged, only the ВТ source column changed. All picklist
-        /// values come pre-coded from ВТ's numeric columns or from
-        /// LineDesignationParser, so unlike an earlier version of this
-        /// method there's no user-maintained text->code mapping table to
-        /// consult.
-        /// </summary>
-        public static LineSyncPlan BuildPlan(
-            List<VtRowData> vtRows,
-            List<LineGroupInfo> lines)
+        /// <summary>Builds a preview by designation, with ID as a restricted fallback.</summary>
+        public static LineSyncPlan BuildPlan(List<VtRowData> vtRows, List<LineGroupInfo> lines,
+            IReadOnlySet<int> drawingIds = null)
         {
             var plan = new LineSyncPlan();
-
-            var byId = new Dictionary<string, List<LineGroupInfo>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var line in lines)
+            foreach (var match in VtLineMatcher.Match(vtRows, lines, plan, drawingIds))
             {
-                if (string.IsNullOrWhiteSpace(line.Id)) continue;
-                var key = line.Id.Trim();
-                if (!byId.TryGetValue(key, out var list)) byId[key] = list = new List<LineGroupInfo>();
-                list.Add(line);
+                var line = match.Line;
+                plan.MatchedRowIds.Add(line.RowId);
+                if (!string.IsNullOrWhiteSpace(line.Id) && !string.Equals(line.Id.Trim(), match.Row.NN.Trim(), StringComparison.OrdinalIgnoreCase))
+                    plan.IdConflicts[line.RowId] = $"«{VtLineMatcher.GetTag(line)}»: сопоставлено по обозначению. ID в модели «{line.Id}», n/n в ВТ «{match.Row.NN}». ID сохранён.";
+                var action = BuildAction(match.Row, line, match.Designation);
+                if (action.Changes.Count > 0 || action.PicklistRejections.Count > 0)
+                    plan.Actions.Add(action);
             }
 
-            // n/n must be unique across the whole ВТ workbook to be a
-            // usable sync key — a value repeated on several rows (e.g.
-            // section numbering restarting at 1 per Цех) makes it
-            // impossible to tell which row a given Plant 3D line's ID
-            // should match. Every ВТ row sharing such a value is skipped
-            // entirely rather than guessed at.
-            var nnCounts = vtRows.Where(r => !string.IsNullOrWhiteSpace(r.NN))
-                .GroupBy(r => r.NN.Trim(), StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(g => g.Key, g => g.Count(), StringComparer.OrdinalIgnoreCase);
-            foreach (var kv in nnCounts)
-                if (kv.Value > 1) plan.DuplicateVtNN.Add(kv.Key);
-
-            foreach (var vt in vtRows)
-            {
-                if (string.IsNullOrWhiteSpace(vt.NN)) continue;
-                var nn = vt.NN.Trim();
-                if (nnCounts.TryGetValue(nn, out var nnCount) && nnCount > 1)
-                    continue;
-                if (!byId.TryGetValue(nn, out var candidates) || candidates.Count == 0)
-                {
-                    plan.UnmatchedVtRows.Add(vt);
-                    continue;
-                }
-                var designationTags = ReadDesignationTags(vt.Designation).ToHashSet(StringComparer.OrdinalIgnoreCase);
-                bool allowEmptyTag = candidates.Count == 1 && designationTags.Count == 1;
-                var matchingLines = designationTags.Count == 0
-                    ? candidates
-                    : candidates.Where(line =>
-                    {
-                        var tag = ReadLineTag(line);
-                        return designationTags.Contains(LineDesignationParser.TagOf(tag))
-                            || (allowEmptyTag && string.IsNullOrWhiteSpace(tag));
-                    }).ToList();
-                if (candidates.Count > 1)
-                {
-                    plan.DuplicateIds.Add(nn);
-                    if (designationTags.Count == 0 || matchingLines.Count != 1)
-                    {
-                        foreach (var line in candidates)
-                            plan.BlockedLines[line.RowId] = $"ID «{nn}» повторяется, однозначного совпадения по обозначению нет.";
-                        continue;
-                    }
-                }
-
-                foreach (var line in candidates.Except(matchingLines))
-                    plan.BlockedLines[line.RowId] = $"ID «{nn}», линия «{line.Tag}» не совпадает с обозначением в строке {vt.RowNumber} ВТ.";
-
-                foreach (var line in matchingLines)
-                {
-                    plan.MatchedRowIds.Add(line.RowId);
-                    var action = BuildAction(vt, line, designationTags);
-                    if (action.Changes.Count > 0 || action.PicklistRejections.Count > 0)
-                        plan.Actions.Add(action);
-                }
-            }
-
-            foreach (var line in lines)
-                if (!string.IsNullOrWhiteSpace(line.Id) && !nnCounts.ContainsKey(line.Id.Trim()))
-                    plan.UnmatchedLines.Add(line);
-
+            plan.UnmatchedLines.AddRange(lines.Where(line => !string.IsNullOrWhiteSpace(line.Id)
+                && !plan.MatchedRowIds.Contains(line.RowId) && !plan.BlockedLines.ContainsKey(line.RowId)));
             return plan;
         }
 
-        static LineSyncAction BuildAction(VtRowData vt, LineGroupInfo line, IReadOnlySet<string> designationTags)
+        static LineSyncAction BuildAction(VtRowData vt, LineGroupInfo line, string designationTag)
         {
             var action = new LineSyncAction { VtRow = vt, Line = line };
             foreach (var field in DirectFields)
@@ -109,7 +37,7 @@ namespace PipingSpecPlugin.Spec
             AddTestChanges(action);
             AddChange(action, NdControl.Property, NdControl.ValueFor(vt));
             AddCorrosionChanges(action);
-            AddDesignationChanges(action, designationTags);
+            AddDesignationChanges(action, designationTag);
             return action;
         }
 
@@ -148,16 +76,12 @@ namespace PipingSpecPlugin.Spec
             AddChange(action, "Corrosion", VtValueParsing.ComputeCorrosionAllowance(effectiveRate, effectiveYears));
         }
 
-        static void AddDesignationChanges(LineSyncAction action, IReadOnlySet<string> designationTags)
+        static void AddDesignationChanges(LineSyncAction action, string designationTag)
         {
             var vt = action.VtRow;
-            var oldTag = ReadLineTag(action.Line).Trim();
-            var designationTag = "";
-            if (designationTags.Count > 0)
-            {
-                designationTag = oldTag.Length == 0 ? designationTags.Single() : LineDesignationParser.TagOf(oldTag);
+            var oldTag = VtLineMatcher.GetTag(action.Line).Trim();
+            if (oldTag.Length == 0)
                 AddChange(action, "Tag", designationTag, oldTag);
-            }
 
             var lineNumber = LineDesignationParser.ParseSyncLineNumber(designationTag);
             if (lineNumber == null && !string.IsNullOrWhiteSpace(vt.Designation))
@@ -195,63 +119,124 @@ namespace PipingSpecPlugin.Spec
         }
 
 
-        static string ReadLineTag(LineGroupInfo line) => line.Tag ?? line.AllProperties.GetValueOrDefault("Tag") ?? "";
-
-        static IEnumerable<string> ReadDesignationTags(string designation) => (designation ?? "")
-            .Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
-            .Select(LineDesignationParser.TagOf)
-            .Where(tag => tag.Length > 0)
-            .Distinct(StringComparer.OrdinalIgnoreCase);
-
         internal static LineSyncPlan BuildIdFillPlan(IEnumerable<VtRowData> vtRows,
-            IEnumerable<LineGroupInfo> drawingLines, IEnumerable<LineGroupInfo> projectLines)
+            IEnumerable<LineGroupInfo> drawingLines, IEnumerable<LineGroupInfo> projectLines,
+            Func<LineGroupInfo, bool> canReleaseId = null)
         {
             var comparer = StringComparer.OrdinalIgnoreCase;
-            var rows = vtRows.Where(row => !string.IsNullOrWhiteSpace(row.NN)).ToList();
-            var availableIds = rows.GroupBy(row => row.NN.Trim(), comparer)
-                .Where(group => group.Count() == 1).Select(group => group.Key).ToHashSet(comparer);
-            availableIds.ExceptWith(projectLines.Where(line => !string.IsNullOrWhiteSpace(line.Id))
-                .Select(line => line.Id.Trim()));
-            var rowsByTag = rows.SelectMany(row => ReadDesignationTags(row.Designation).Select(tag => (Tag: tag, Row: row)))
-                .ToLookup(entry => entry.Tag, entry => entry.Row, comparer);
-
+            var rows = vtRows.ToList();
+            var project = projectLines.ToList();
+            var drawing = drawingLines.ToList();
+            var drawingTargets = drawing.Where(line => string.IsNullOrWhiteSpace(line.Id)).Select(line => line.RowId).ToHashSet();
+            var drawingIds = drawing.Select(line => line.RowId).ToHashSet();
+            var occupiedIds = project.Where(line => !string.IsNullOrWhiteSpace(line.Id)).ToLookup(line => line.Id.Trim(), comparer);
             var plan = new LineSyncPlan();
+            var diagnostics = new LineSyncPlan();
+            var matches = VtLineMatcher.Match(rows, project, diagnostics, drawingIds, allowIdFallback: false);
+            plan.IdFillSkips.AddRange(diagnostics.BlockedLines.Where(item => drawingTargets.Contains(item.Key))
+                .Select(item => item.Value).Distinct());
+            var repeatedIds = diagnostics.DuplicateVtNN.ToHashSet(comparer);
             var candidates = new List<LineSyncAction>();
-            foreach (var lines in drawingLines.GroupBy(line => LineDesignationParser.TagOf(ReadLineTag(line)), comparer)
-                .Where(group => group.Key.Length > 0))
+            var releases = new Dictionary<int, LineSyncAction>();
+
+            foreach (var match in matches.Where(item => drawingTargets.Contains(item.Line.RowId)))
             {
-                if (!lines.Any(line => string.IsNullOrWhiteSpace(line.Id))) continue;
-                var matches = rowsByTag[lines.Key].ToArray();
-                if (matches.Length == 0) continue;
-                if (lines.Count() != 1 || matches.Length != 1)
+                var tag = VtLineMatcher.GetTag(match.Line);
+                var id = match.Row.NN.Trim();
+                if (repeatedIds.Contains(id))
                 {
-                    plan.IdFillSkips.Add($"«{lines.Key}»: обозначение повторяется на чертеже или в ВТ.");
+                    plan.IdFillSkips.Add($"«{tag}»: n/n «{id}» повторяется в ВТ.");
                     continue;
                 }
-                var line = lines.First();
-                var row = matches[0];
-                var id = row.NN.Trim();
-                if (!availableIds.Contains(id))
+
+                if (occupiedIds.Contains(id))
                 {
-                    plan.IdFillSkips.Add($"«{lines.Key}»: n/n «{id}» повторяется в ВТ или такой ID уже используется в проекте.");
-                    continue;
+                    var holders = occupiedIds[id].ToList();
+                    if (holders.Count == 1 && IsIdTransferBetweenSameTags(holders[0], match.Line)
+                        && canReleaseId?.Invoke(holders[0]) == true)
+                    {
+                        var holder = holders[0];
+                        releases.Add(match.Line.RowId, new LineSyncAction
+                        {
+                            Line = holder,
+                            VtRow = match.Row,
+                            Changes = { new FieldChange { PropertyName = "ID", DisplayLabel = "ID", OldValue = holder.Id, NewValue = "" } },
+                        });
+                    }
+                    else
+                    {
+                        var descriptions = string.Join(", ", holders.Select(line => $"«{VtLineMatcher.GetTag(line)}» (PnPID {line.RowId})"));
+                        plan.IdFillSkips.Add($"«{tag}»: ID «{id}» уже занимает {descriptions}.");
+                        continue;
+                    }
                 }
+
                 candidates.Add(new LineSyncAction
                 {
-                    Line = line,
-                    VtRow = row,
-                    Changes = { new FieldChange { PropertyName = "ID", DisplayLabel = "ID", OldValue = line.Id, NewValue = id } },
+                    Line = match.Line,
+                    VtRow = match.Row,
+                    Changes = { new FieldChange { PropertyName = "ID", DisplayLabel = "ID", OldValue = match.Line.Id, NewValue = id } },
                 });
             }
 
-            foreach (var matches in candidates.GroupBy(action => action.Changes[0].NewValue, comparer))
+            foreach (var group in candidates.GroupBy(action => action.Changes[0].NewValue, comparer))
             {
-                if (matches.Count() == 1)
-                    plan.Actions.Add(matches.First());
+                if (group.Count() == 1)
+                {
+                    var assignment = group.First();
+                    if (releases.TryGetValue(assignment.Line.RowId, out var release)) plan.Actions.Add(release);
+                    plan.Actions.Add(assignment);
+                }
                 else
-                    plan.IdFillSkips.Add($"n/n «{matches.Key}» соответствует нескольким линиям на чертеже.");
+                    plan.IdFillSkips.Add($"n/n «{group.Key}» соответствует нескольким линиям на чертеже.");
             }
             return plan;
+        }
+
+        static bool IsIdTransferBetweenSameTags(LineGroupInfo holder, LineGroupInfo recipient)
+        {
+            var tag = VtLineMatcher.GetTag(recipient).Trim();
+            var holderTag = VtLineMatcher.GetTag(holder).Trim().TrimEnd('?').TrimEnd();
+            return holder.RowId != recipient.RowId && tag.Length > 0
+                && string.Equals(holderTag, tag, StringComparison.OrdinalIgnoreCase);
+        }
+
+        internal static List<LineSyncAction> ValidateIdWrites(IReadOnlyList<LineSyncAction> actions,
+            IReadOnlyList<LineGroupInfo> currentLines, Func<LineGroupInfo, bool> canReleaseId)
+        {
+            var comparer = StringComparer.OrdinalIgnoreCase;
+            var currentByRowId = currentLines.ToDictionary(line => line.RowId);
+            var occupied = currentLines.Where(line => !string.IsNullOrWhiteSpace(line.Id))
+                .ToLookup(line => line.Id.Trim(), comparer);
+            var edits = actions.SelectMany(action => action.Changes.Where(change => change.PropertyName == "ID")
+                .Select(change => (action.Line.RowId, Change: change))).ToList();
+            var assignments = edits.Where(edit => !string.IsNullOrWhiteSpace(edit.Change.NewValue))
+                .ToLookup(edit => edit.Change.NewValue.Trim(), comparer);
+            var releasedIds = new HashSet<string>(comparer);
+            var releaseRows = new HashSet<int>();
+
+            foreach (var edit in edits.Where(edit => string.IsNullOrWhiteSpace(edit.Change.NewValue)))
+            {
+                var id = edit.Change.OldValue?.Trim() ?? "";
+                var holders = occupied[id].ToList();
+                var recipients = assignments[id].ToList();
+                if (holders.Count != 1 || holders[0].RowId != edit.RowId || recipients.Count != 1
+                    || !currentByRowId.TryGetValue(recipients[0].RowId, out var recipient)
+                    || !IsIdTransferBetweenSameTags(holders[0], recipient)
+                    || !canReleaseId(holders[0]) || !releasedIds.Add(id))
+                    throw new InvalidOperationException($"Условия переноса ID «{id}» изменились. Загрузите ВТ повторно.");
+                releaseRows.Add(edit.RowId);
+            }
+
+            foreach (var group in assignments)
+            {
+                if (group.Count() != 1 || (occupied.Contains(group.Key) && !releasedIds.Contains(group.Key)))
+                    throw new InvalidOperationException($"ID «{group.Key}» уже используется. Загрузите ВТ повторно.");
+                var recipientId = group.Single().RowId;
+                if (!currentByRowId.TryGetValue(recipientId, out var recipient) || !string.IsNullOrWhiteSpace(recipient.Id))
+                    throw new InvalidOperationException($"Состояние ID строки PnPID {recipientId} изменилось. Загрузите ВТ повторно.");
+            }
+            return actions.OrderByDescending(action => releaseRows.Contains(action.Line.RowId)).ToList();
         }
 
         // P3dLineGroup columns that hold a plain number. Only these are
@@ -271,7 +256,7 @@ namespace PipingSpecPlugin.Spec
             if (!afterWrite)
             {
                 Check("ID", action.Line.Id);
-                Check("Tag", ReadLineTag(action.Line));
+                Check("Tag", VtLineMatcher.GetTag(action.Line));
                 if (action.Changes.Any(change => change.PropertyName == "Corrosion"))
                 {
                     Check("CorrosionSpeed", action.Line.AllProperties.GetValueOrDefault("CorrosionSpeed"));

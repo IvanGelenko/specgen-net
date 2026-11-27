@@ -294,6 +294,32 @@ namespace PipingSpecPlugin.Tests
             finally { File.Delete(path); }
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Ignores_Comment_Block_And_Resumes_At_Next_Data_Section(bool mergedNotesHeading)
+        {
+            var path = WriteWorkbook(new[] { "n/n", "Обозначение" }, null, new[]
+            {
+                new[] { "1", "TAG-A" },
+                new[] { "Комментарии:" },
+                new[] { "873.РД — примечание к линии TAG-A" },
+                new[] { "Цех №3" },
+                new[] { "2" },
+                new[] { "2", "TAG-B" },
+            }, mergedNotesHeading ? new[] { "A4:O4", "A6:O6" } : new[] { "A6:O6" });
+            try
+            {
+                var result = VtReader.Read(path);
+                Assert.Null(result.Error);
+                Assert.Collection(result.Rows,
+                    row => Assert.Equal("TAG-A", row.Designation),
+                    row => { Assert.Equal("2", row.NN); Assert.Null(row.Designation); },
+                    row => Assert.Equal("TAG-B", row.Designation));
+            }
+            finally { File.Delete(path); }
+        }
+
         [Fact]
         public void Skips_Section_Title_Rows_And_Blank_Rows()
         {

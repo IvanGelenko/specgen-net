@@ -29,7 +29,7 @@ namespace PipingSpecPlugin.Spec
     internal sealed record VtApplyResult(bool Cancelled, IReadOnlyList<string> Errors);
 
     internal sealed class VtSyncWorkflow(IVtLineReader reader, IVtPlanWriter writer,
-        IVtSchemaEditor schema, Func<string, VtReadResult> readWorkbook)
+        IVtSchemaEditor schema, Func<string, VtReadResult> readWorkbook, Func<LineGroupInfo, bool> canReleaseId = null)
     {
         internal bool HasDrawing => reader.HasDrawing;
 
@@ -44,10 +44,11 @@ namespace PipingSpecPlugin.Spec
             var visibleLines = drawingOnly ? drawingLines : projectLines;
             if (rows == null) return new VtSyncPreview(visibleLines, projectLines, null, null);
 
-            var plan = LineSyncPlanner.BuildPlan(rows, projectLines);
+            var targets = drawingOnly ? visibleLines.Select(line => line.RowId).ToHashSet() : null;
+            var plan = LineSyncPlanner.BuildPlan(rows, projectLines, targets);
             if (drawingOnly)
             {
-                var scoped = plan.FilterForLine(visibleLines.Select(line => line.RowId));
+                var scoped = plan.FilterForLine(targets);
                 scoped.UnmatchedVtRows = plan.UnmatchedVtRows;
                 var visibleIds = visibleLines.Select(line => line.Id?.Trim()).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 scoped.DuplicateIds.RemoveAll(id => !visibleIds.Contains(id));
@@ -55,7 +56,7 @@ namespace PipingSpecPlugin.Spec
             }
 
             var idFill = includeIdFill && drawingLines != null
-                ? LineSyncPlanner.BuildIdFillPlan(rows, drawingLines, projectLines) : null;
+                ? LineSyncPlanner.BuildIdFillPlan(rows, drawingLines, projectLines, canReleaseId) : null;
             return new VtSyncPreview(visibleLines, projectLines, plan, idFill);
         }
 
@@ -63,7 +64,7 @@ namespace PipingSpecPlugin.Spec
         {
             RequireDrawing();
             var projectLines = reader.ReadProjectLines();
-            var current = LineSyncPlanner.BuildIdFillPlan(rows, ReadDrawingLines(projectLines), projectLines);
+            var current = LineSyncPlanner.BuildIdFillPlan(rows, ReadDrawingLines(projectLines), projectLines, canReleaseId);
             var currentIds = current.Actions.Select(action => (action.Line.RowId, action.Changes[0].NewValue)).ToHashSet();
             if (proposal.Actions.Any(action => !currentIds.Contains((action.Line.RowId, action.Changes[0].NewValue))))
                 return (true, Array.Empty<string>());

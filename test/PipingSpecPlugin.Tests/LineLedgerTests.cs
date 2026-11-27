@@ -136,7 +136,7 @@ namespace PipingSpecPlugin.Tests
 
             line.Id = change.NewValue;
             var sync = LineSyncPlanner.BuildPlan(rows, new List<LineGroupInfo> { line, existing, outside });
-            var syncAction = Assert.Single(sync.Actions);
+            var syncAction = Assert.Single(sync.Actions.FindAll(action => action.Line.RowId == line.RowId));
             Assert.DoesNotContain(syncAction.Changes, item => item.PropertyName == "Tag");
             Assert.Contains(syncAction.Changes, item => item.PropertyName == "Номер" && item.NewValue == "003");
         }
@@ -168,6 +168,79 @@ namespace PipingSpecPlugin.Tests
             var plan = LineSyncPlanner.BuildIdFillPlan(rows, lines, project);
             Assert.Empty(plan.Actions);
             Assert.Equal(5, plan.IdFillSkips.Count);
+        }
+
+        [Fact]
+        public void Exact_Tag_Uses_The_Real_Ksn009_When_Its_Id_Is_Occupied_Elsewhere()
+        {
+            const string tag = "150-KSN009-LS016C-HN";
+            var real = new LineGroupInfo { RowId = 114854, Tag = tag };
+            var stale = new LineGroupInfo { RowId = 46723, Id = "3", Tag = tag + "?" };
+            var branch = new LineGroupInfo { RowId = 165708, Tag = tag + " (врезка №4)" };
+            var rows = new List<VtRowData> { new() { NN = "3", Designation = tag, WorkPressure = "2" } };
+            var project = new List<LineGroupInfo> { stale, real, branch };
+
+            var plan = LineSyncPlanner.BuildPlan(rows, project);
+            var action = Assert.Single(plan.Actions);
+            Assert.Equal(real.RowId, action.Line.RowId);
+            Assert.DoesNotContain(action.Changes, change => change.PropertyName is "ID" or "Tag");
+            var fill = LineSyncPlanner.BuildIdFillPlan(rows, new[] { real, branch }, project);
+            Assert.Empty(fill.Actions);
+            Assert.Contains(fill.IdFillSkips, reason => reason.Contains("46723"));
+            Assert.Contains(LineLedgerProjection.BuildLedger(project, matchedRowIds: plan.MatchedRowIds), row => row.RowId == real.RowId);
+
+            var transfer = LineSyncPlanner.BuildIdFillPlan(rows, new[] { real, branch }, project,
+                canReleaseId: line => line.RowId == stale.RowId);
+            Assert.Empty(transfer.IdFillSkips);
+            Assert.Collection(transfer.Actions,
+                release => { Assert.Equal(stale.RowId, release.Line.RowId); Assert.Equal("", Assert.Single(release.Changes).NewValue); },
+                assign => { Assert.Equal(real.RowId, assign.Line.RowId); Assert.Equal("3", Assert.Single(assign.Changes).NewValue); });
+            var ordered = LineSyncPlanner.ValidateIdWrites(transfer.Actions, project, line => line.RowId == stale.RowId);
+            Assert.Equal(stale.RowId, ordered[0].Line.RowId);
+            Assert.Throws<System.InvalidOperationException>(() => LineSyncPlanner.ValidateIdWrites(transfer.Actions, project, _ => false));
+            stale.Tag = "OTHER";
+            Assert.Throws<System.InvalidOperationException>(() => LineSyncPlanner.ValidateIdWrites(transfer.Actions, project, _ => true));
+        }
+
+        [Fact]
+        public void Exact_Tag_Outside_Drawing_Never_Falls_Back_To_A_Local_Branch()
+        {
+            const string tag = "150-KSN009-LS016C-HN";
+            var main = new LineGroupInfo { RowId = 10, Tag = tag };
+            var branch = new LineGroupInfo { RowId = 20, Tag = tag + " (врезка №4)" };
+            var rows = new List<VtRowData> { new() { NN = "3", Designation = tag, WorkPressure = "2" } };
+            var project = new List<LineGroupInfo> { main, branch };
+            var drawing = new HashSet<int> { branch.RowId };
+
+            var plan = LineSyncPlanner.BuildPlan(rows, project, drawing).FilterForLine(drawing);
+            Assert.Empty(plan.Actions);
+            Assert.Empty(LineSyncPlanner.BuildIdFillPlan(rows, new[] { branch }, project).Actions);
+
+            rows[0].Designation = branch.Tag;
+            var branchAction = Assert.Single(LineSyncPlanner.BuildPlan(rows, project, drawing).Actions);
+            Assert.Equal(branch.RowId, branchAction.Line.RowId);
+            Assert.DoesNotContain(branchAction.Changes, change => change.PropertyName == "Tag");
+        }
+
+        [Fact]
+        public void Repeated_Nn_Can_Sync_Two_Unique_Tags_And_An_Ambiguous_Workbook_Tag_Is_Blocked()
+        {
+            var first = new LineGroupInfo { RowId = 10, Tag = "FIRST" };
+            var second = new LineGroupInfo { RowId = 20, Tag = "SECOND" };
+            var project = new List<LineGroupInfo> { first, second };
+            var rows = new List<VtRowData>
+            {
+                new() { RowNumber = 3, NN = "1", Designation = "FIRST", WorkPressure = "2" },
+                new() { RowNumber = 4, NN = "1", Designation = "SECOND", WorkPressure = "3" },
+            };
+
+            Assert.Equal(2, LineSyncPlanner.BuildPlan(rows, project).Actions.Count);
+            Assert.Empty(LineSyncPlanner.BuildIdFillPlan(rows, project, project).Actions);
+
+            rows.Add(new VtRowData { RowNumber = 5, NN = "2", Designation = "FIRST", WorkPressure = "4" });
+            var plan = LineSyncPlanner.BuildPlan(rows, project);
+            Assert.Equal(second.RowId, Assert.Single(plan.Actions).Line.RowId);
+            Assert.Contains("3, 5", plan.BlockedLines[first.RowId]);
         }
 
         [Fact]

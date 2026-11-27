@@ -42,7 +42,7 @@
                                       ToolTipService.ShowOnDisabled="True"/>
                         <ComboBoxItem x:Name="ProjectScopeItem" Content="Весь проект"/>
                     </ComboBox>
-                    <TextBlock Text="Внутренняя ведомость трубопроводов (линии с ID)"
+                    <TextBlock Text="Внутренняя ведомость трубопроводов"
                                VerticalAlignment="Center"/>
                 </DockPanel>
             </GroupBox.Header>

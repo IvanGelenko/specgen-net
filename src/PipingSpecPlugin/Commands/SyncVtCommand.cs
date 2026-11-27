@@ -74,7 +74,7 @@ namespace PipingSpecPlugin.Commands
             }
 
             var projectAdapter = new PlantVtProject(projectDlm, isProjectDrawing ? drawing : null, Trace);
-            var workflow = new VtSyncWorkflow(projectAdapter, projectAdapter, projectAdapter, VtReader.Read);
+            var workflow = new VtSyncWorkflow(projectAdapter, projectAdapter, projectAdapter, VtReader.Read, projectAdapter.CanReleaseLineId);
             var win = new SyncVtWindow(workflow, projectAdapter, settings, Trace);
             new WindowInteropHelper(win).Owner = AcadApp.MainWindow.Handle;
             win.ShowDialog();

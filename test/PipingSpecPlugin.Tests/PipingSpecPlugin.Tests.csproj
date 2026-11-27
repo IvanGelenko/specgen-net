@@ -33,6 +33,7 @@
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\LengthUnits.cs" Link="Spec\LengthUnits.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\DrawingPartIds.cs" Link="Spec\DrawingPartIds.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\LineSyncPlanner.cs" Link="Spec\LineSyncPlanner.cs" />
+    <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtLineMatcher.cs" Link="Spec\VtLineMatcher.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\LineSyncModels.cs" Link="Spec\LineSyncModels.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtSyncWorkflow.cs" Link="Spec\VtSyncWorkflow.cs" />
     <Compile Include="..\..\src\PipingSpecPlugin\Spec\VtSyncSession.cs" Link="Spec\VtSyncSession.cs" />

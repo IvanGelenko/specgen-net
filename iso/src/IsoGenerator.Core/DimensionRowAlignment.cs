@@ -49,44 +49,83 @@ public static class DimensionRowAlignment
     }
 
     public static IReadOnlyList<PipeDimension> AlignAdjacent(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke>? strokes=null,IReadOnlyList<SymbolGlyph>? symbols=null)
+        =>AlignAdjacent(input,strokes,symbols,finalizeOveralls:false);
+
+    internal static IReadOnlyList<PipeDimension> AlignAdjacent(IReadOnlyList<PipeDimension> input,IReadOnlyList<Stroke>? strokes,IReadOnlyList<SymbolGlyph>? symbols,bool finalizeOveralls,
+        Func<IReadOnlyList<PipeDimension>,bool>? acceptFinal=null)
     {
         var groups=input.GroupBy(d=>d.ChainId).ToArray();var parent=Enumerable.Range(0,groups.Length).ToArray();
         int Find(int i){while(parent[i]!=i)i=parent[i];return i;}
         var links=new List<(int A,int B,double Gap)>();
+        var overallJoins=new List<(int A,int B)>();
         bool Same(ModelPoint? a,ModelPoint? b,SheetPoint p,SheetPoint q)=>a is {} x&&b is {} y&&x.DistanceTo(y)<.001&&Math.Sqrt(Math.Pow(p.X-q.X,2)+Math.Pow(p.Y-q.Y,2))<.01;
+        // AutoCAD stores the witness as an axis. Either vector orientation can
+        // describe the same line, so compare offsets along one orientation.
+        static SheetPoint WitnessAxis(SheetPoint axis)
+        {
+            double dominant=Math.Abs(axis.X)>Math.Abs(axis.Y)?axis.X:axis.Y;
+            return dominant<0?new(-axis.X,-axis.Y):axis;
+        }
         for(int i=0;i<groups.Length;i++)for(int j=i+1;j<groups.Length;j++)
         {
             var a=groups[i].FirstOrDefault(d=>d.Role=="overall")??groups[i].First();var b=groups[j].FirstOrDefault(d=>d.Role=="overall")??groups[j].First();
-            if(a.ExtensionDirection is not {} ea||b.ExtensionDirection is not {} eb||ea.X*eb.X+ea.Y*eb.Y<.999)continue;
+            if(a.ExtensionDirection is not {} ea||b.ExtensionDirection is not {} eb)continue;
+            double directions=ea.X*eb.X+ea.Y*eb.Y;
+            if(Math.Abs(directions)<.999)continue;
             // Routing has already selected the clearer side of each run. Adjacent
             // rows on opposite sides must not be pulled through the pipe to align.
-            var aChain=groups[i].FirstOrDefault(d=>d.Role=="chain")??a;
-            var bChain=groups[j].FirstOrDefault(d=>d.Role=="chain")??b;
-            if(Distance(aChain)*Distance(bChain)<=0)continue;
+            var aChain=finalizeOveralls?a:groups[i].FirstOrDefault(d=>d.Role=="chain")??a;
+            var bChain=finalizeOveralls?b:groups[j].FirstOrDefault(d=>d.Role=="chain")??b;
+            bool normalize=finalizeOveralls||directions<0;
+            double aDistance=Distance(aChain,normalize),bDistance=Distance(bChain,normalize);
+            if(aDistance*bDistance<=0)continue;
             if(Same(a.ModelStart,b.ModelStart,a.Start,b.Start)||Same(a.ModelStart,b.ModelEnd,a.Start,b.End)||Same(a.ModelEnd,b.ModelStart,a.End,b.Start)||Same(a.ModelEnd,b.ModelEnd,a.End,b.End))
             {
-                links.Add((i,j,Math.Abs(Distance(aChain)-Distance(bChain))));
-                parent[Find(j)]=Find(i);
+                if(finalizeOveralls)
+                {
+                    if(Math.Abs(directions)>.99999999&&a.Role=="overall"&&b.Role=="overall")overallJoins.Add((i,j));
+                }
+                else if(directions>0)
+                {
+                    links.Add((i,j,Math.Abs(aDistance-bDistance)));
+                    parent[Find(j)]=Find(i);
+                }
+                else if(a.Role=="overall"&&b.Role=="overall")
+                    overallJoins.Add((i,j));
             }
         }
         var result=input.ToArray();var index=groups.Select((g,i)=>(g.Key,i)).ToDictionary(p=>p.Key,p=>p.i);
         var fittings=symbols??Array.Empty<SymbolGlyph>();
-        double Distance(PipeDimension d)
+        double Distance(PipeDimension d,bool normalize=false)
         {
-            var ex=d.ExtensionDirection!.Value;double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y;
+            var ex=d.ExtensionDirection!.Value;if(normalize)ex=WitnessAxis(ex);
+            double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y;
             return ((d.DimensionLinePoint!.Value.X-d.Start.X)*(-dy)+(d.DimensionLinePoint.Value.Y-d.Start.Y)*dx)/(-dy*ex.X+dx*ex.Y);
         }
-        bool TryAlign(IReadOnlyCollection<int> members)
+        bool TryAlign(IReadOnlyCollection<int> members,bool overallOnly=false,double? overallTarget=null)
         {
             var trial=result.ToArray();
             foreach(var role in Enumerable.Range(0,result.Length)
-                .Where(i=>members.Contains(index[result[i].ChainId])).GroupBy(i=>result[i].Role))
+                .Where(i=>members.Contains(index[result[i].ChainId])&&(!overallOnly||result[i].Role=="overall"))
+                .GroupBy(i=>result[i].Role))
             {
-                double target=role.Select(i=>Distance(result[i])).MaxBy(Math.Abs);
+                double target=overallTarget??role.Select(i=>Distance(result[i],overallOnly)).MaxBy(Math.Abs);
                 foreach(int i in role)
                 {
-                    var d=result[i];double delta=target-Distance(d);var ex=d.ExtensionDirection!.Value;var line=d.DimensionLinePoint!.Value;
+                    var d=result[i];double delta=target-Distance(d,overallOnly);var ex=d.ExtensionDirection!.Value;
+                    if(overallOnly)ex=WitnessAxis(ex);
+                    var line=d.DimensionLinePoint!.Value;
                     trial[i]=d with{DimensionLinePoint=new(line.X+ex.X*delta,line.Y+ex.Y*delta),TextPosition=d.TextPosition is {} text?new(text.X+ex.X*delta,text.Y+ex.Y*delta):null};
+                }
+            }
+            if(finalizeOveralls)
+            {
+                var ordered=EnforceChainOrder(trial);
+                for(int i=0;i<trial.Length;i++)
+                {
+                    if(trial[i]==result[i])continue;
+                    var current=trial[i].DimensionLinePoint!.Value;var required=ordered[i].DimensionLinePoint!.Value;
+                    if(Math.Abs(current.X-required.X)>1e-7||Math.Abs(current.Y-required.Y)>1e-7)return false;
                 }
             }
             if(strokes is not null)
@@ -99,23 +138,58 @@ public static class DimensionRowAlignment
                    (DimensionRouting.LongWitnessThroughParallelRun(trial,strokes) is not null&&
                     DimensionRouting.LongWitnessThroughParallelRun(result,strokes) is null))return false;
             }
+            if(acceptFinal is not null&&!acceptFinal(trial))return false;
             result=trial;
             return true;
         }
-        foreach(var family in Enumerable.Range(0,groups.Length).GroupBy(Find).Where(g=>g.Count()>1))
+        if(!finalizeOveralls)
         {
-            var members=family.ToArray();
-            if(TryAlign(members)||members.Length==2)continue;
-
-            // If one long witness blocks the family, keep the nearest safe joins.
-            var connected=members.ToDictionary(i=>i,i=>new HashSet<int>{i});
-            foreach(var link in links.Where(link=>Find(link.A)==family.Key).OrderBy(link=>link.Gap))
+            foreach(var family in Enumerable.Range(0,groups.Length).GroupBy(Find).Where(g=>g.Count()>1))
             {
-                var first=connected[link.A];var second=connected[link.B];
-                if(ReferenceEquals(first,second))continue;
-                var joined=first.Concat(second).ToHashSet();
-                if(TryAlign(joined))foreach(int member in joined)connected[member]=joined;
+                var members=family.ToArray();
+                if(TryAlign(members)||members.Length==2)continue;
+
+                // If one long witness blocks the family, keep the nearest safe joins.
+                var connected=members.ToDictionary(i=>i,i=>new HashSet<int>{i});
+                foreach(var link in links.Where(link=>Find(link.A)==family.Key).OrderBy(link=>link.Gap))
+                {
+                    var first=connected[link.A];var second=connected[link.B];
+                    if(ReferenceEquals(first,second))continue;
+                    var joined=first.Concat(second).ToHashSet();
+                    if(TryAlign(joined))foreach(int member in joined)connected[member]=joined;
+                }
             }
+            foreach(var (first,second) in overallJoins)
+            {
+                var a=result.First(d=>d.ChainId==groups[first].Key&&d.Role=="overall");
+                var b=result.First(d=>d.ChainId==groups[second].Key&&d.Role=="overall");
+                double distance=Distance(a,true),other=Distance(b,true);
+                if(distance*other>0&&Math.Abs(distance-other)<=1)
+                    TryAlign(new[]{first,second},overallOnly:true);
+            }
+            return result;
+        }
+        if(overallJoins.Count==0)return result;
+        var offsets=result.Where(d=>d.Role=="overall").ToDictionary(d=>index[d.ChainId],d=>Distance(d,true));
+        var overallGroups=offsets.Keys.ToDictionary(i=>i,i=>new HashSet<int>{i});
+        var rowStep=IsoAdvancedSettings.Current.DimensionRowStep;
+        void JoinOveralls(int first,int second)
+        {
+            if(!offsets.TryGetValue(first,out double a)||!offsets.TryGetValue(second,out double b)||
+                a*b<=0||ReferenceEquals(overallGroups[first],overallGroups[second]))return;
+            var members=overallGroups[first].Concat(overallGroups[second]).ToHashSet();
+            if(members.Max(i=>offsets[i])-members.Min(i=>offsets[i])>rowStep)return;
+            foreach(int member in members)overallGroups[member]=members;
+        }
+        // Merge the closest tips first, including joins the router already made.
+        foreach(var (first,second) in overallJoins.OrderBy(link=>Math.Abs(offsets[link.A]-offsets[link.B])))
+            JoinOveralls(first,second);
+        foreach(var members in overallGroups.Values.Distinct().Where(members=>members.Count>1))
+        {
+            var targets=members.Select(i=>offsets[i]).Distinct().ToArray();
+            if(targets.Max()-targets.Min()<=1e-8)continue;
+            foreach(double target in targets.OrderByDescending(Math.Abs))
+                if(TryAlign(members,overallOnly:true,overallTarget:target))break;
         }
         return result;
     }

@@ -22,6 +22,46 @@ if(Math.Abs(projected.X-sourceLength.Millimeters)<1) throw new Exception("Expect
 
 
 void Assert(bool value,string message){checks++;if(!value)throw new Exception(message);}
+var cornerDirection=new SheetPoint(Math.Sqrt(.5),Math.Sqrt(.5));
+var cornerInner=new PipeDimension("corner-horizontal",new(-20,0),new(0,0),20,"chain","corner-horizontal",
+    new(0,7),cornerDirection);
+var cornerOverall=cornerInner with{Start=new(-50,0),Role="overall",DimensionLinePoint=new(0,14)};
+var cornerVertical=new PipeDimension("corner-vertical",new(0,0),new(0,-40),40,"overall","corner-vertical",
+    new(10,0),cornerDirection);
+var cornerEnds=new Dictionary<string,DimensionRunEnds>
+{
+    ["corner-horizontal"]=new(0,1,cornerOverall.Start,cornerOverall.End),
+    ["corner-vertical"]=new(1,2,cornerVertical.Start,cornerVertical.End)
+};
+var cornerRows=DimensionCorners.Align(new[]{cornerInner,cornerOverall,cornerVertical},cornerEnds,new[]{cornerDirection});
+SheetPoint Arrow(PipeDimension row,bool atEnd)
+{
+    var baseline=DimensionRouting.GetSegments(new[]{row}).Single(segment=>segment.Baseline);
+    return atEnd?baseline.B:baseline.A;
+}
+Near(Arrow(cornerRows[1],true).X,Arrow(cornerRows[2],false).X);
+Near(Arrow(cornerRows[1],true).Y,Arrow(cornerRows[2],false).Y);
+Assert(Arrow(cornerRows[0],true)!=Arrow(cornerRows[2],false),"A chain arrow must not determine the overall corner");
+var cornerModel=new ModelPoint(0,0,0);
+var routedCorner=DimensionRowAlignment.AlignAdjacent(new[]{
+    cornerInner with{ModelEnd=cornerModel},
+    cornerOverall with{ModelEnd=cornerModel},
+    cornerVertical with{ModelStart=cornerModel,DimensionLinePoint=new(13.5,0),
+        ExtensionDirection=new(-cornerDirection.X,-cornerDirection.Y)}});
+Near(Arrow(routedCorner[1],true).X,Arrow(routedCorner[2],false).X);
+Near(Arrow(routedCorner[1],true).Y,Arrow(routedCorner[2],false).Y);
+Assert(routedCorner[0].DimensionLinePoint==cornerInner.DimensionLinePoint,"Snapping overall arrows leaves the chain row in place");
+var lowerCornerModel=new ModelPoint(0,0,-40);
+var lowerCorner=cornerOverall with{SourceId="corner-lower",ChainId="corner-lower",
+    Start=new(-50,-40),End=new(0,-40),ModelEnd=lowerCornerModel,DimensionLinePoint=new(0,-21.5)};
+var overallGroup=DimensionRowAlignment.AlignAdjacent(new[]{
+    cornerInner with{ModelEnd=cornerModel},
+    cornerOverall with{ModelEnd=cornerModel},
+    cornerVertical with{ModelStart=cornerModel,ModelEnd=lowerCornerModel,DimensionLinePoint=new(18,0),
+        ExtensionDirection=new(-cornerDirection.X,-cornerDirection.Y)},
+    lowerCorner},null,null,finalizeOveralls:true);
+Near(Arrow(overallGroup[1],true).X,Arrow(overallGroup[2],false).X);
+Near(Arrow(overallGroup[3],true).X,Arrow(overallGroup[2],true).X);
 foreach(var sample in new[]{(Value:1.01,Text:"1,01"),(Value:1.2,Text:"1,20"),(Value:.001,Text:"0,00"),
     (Value:2.0,Text:"2,00"),(Value:1.234567,Text:"1,23"),(Value:1.235,Text:"1,24"),(Value:.005,Text:"0,01")})
 {
@@ -385,6 +425,18 @@ var joint=new Part("test.dwg","J","AcPpDb3dConnector","L1",new[]{new Port("S1",n
 var withJoint=Snapshot(new[]{weldA,joint,weldB},new[]{new Connection("A","S2","J","S1"),new Connection("J","S2","B","S1")});
 var throughJoint=WeldPlanner.Build(withJoint,Plain);
 Assert(throughJoint.Markers.Count==1&&throughJoint.Markers[0].SourceId=="J","One connector produces one weld linked to the connector");
+var weldedElbow=weldA with{Properties=new Dictionary<string,string>{{"PnPClassName","Elbow"},
+    {"ContentIsoSymbolDefinition","SKEY=BEBW,TYPE=BEND"}},
+    Ports=weldA.Ports.Select(p=>p with{EndCondition=p.Name=="S1"?"BV":""}).ToArray()};
+var elbowJoint=withJoint with{Parts=new[]{weldedElbow,joint,weldB}};
+var elbowWeld=WeldPlanner.Build(elbowJoint,Plain);
+Assert(elbowWeld.Markers.Count==1&&elbowWeld.Markers[0].FirstEndCondition=="BV",
+    "A Plant BEBW elbow with a blank S2 retains its connected butt weld");
+Assert(WeldPlanner.Build(elbowJoint with{Parts=new[]{weldedElbow,joint,flangedB}},Plain).Markers.Count==0,
+    "A blank S2 on a butt-weld elbow does not turn a flanged counterpart into a weld");
+var unclassifiedElbow=weldedElbow with{Properties=new Dictionary<string,string>{{"PnPClassName","Elbow"}}};
+Assert(WeldPlanner.Build(elbowJoint with{Parts=new[]{unclassifiedElbow,joint,weldB}},Plain).Markers.Count==0,
+    "A blank elbow port without a butt-weld symbol retains its unknown status");
 if(File.Exists(file)){
     var live=System.Text.Json.JsonSerializer.Deserialize<PipelineSnapshot>(File.ReadAllText(file))!;
     var liveScene=SheetPlanner.Build(live);

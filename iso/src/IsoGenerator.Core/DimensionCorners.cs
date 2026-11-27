@@ -7,13 +7,14 @@ internal static class DimensionCorners
         var result=input.ToArray();var ids=ends.Keys.ToArray();var locked=new Dictionary<string,SheetPoint>();
         static double Dot(SheetPoint a,SheetPoint b)=>a.X*b.X+a.Y*b.Y;
         static SheetPoint Normal(PipeDimension d){double dx=d.End.X-d.Start.X,dy=d.End.Y-d.Start.Y,l=Math.Sqrt(dx*dx+dy*dy);var n=new SheetPoint(-dy/l,dx/l);return Dot(n,d.ExtensionDirection!.Value)<0?new(-n.X,-n.Y):n;}
-        PipeDimension Inner(string id)=>result.FirstOrDefault(d=>d.ChainId==id&&d.Role=="chain")??result.First(d=>d.ChainId==id);
+        PipeDimension? Overall(string id)=>result.FirstOrDefault(d=>d.ChainId==id&&d.Role=="overall");
         for(int i=0;i<ids.Length;i++)for(int j=i+1;j<ids.Length;j++)
         {
             if(constrainedChains?.Contains(ids[i])==true||constrainedChains?.Contains(ids[j])==true)continue;
             var ea=ends[ids[i]];var eb=ends[ids[j]];
             int shared=ea.Start==eb.Start||ea.Start==eb.End?ea.Start:ea.End==eb.Start||ea.End==eb.End?ea.End:-1;if(shared<0)continue;
-            var a=Inner(ids[i]);var b=Inner(ids[j]);var na=Normal(a);var nb=Normal(b);if(Math.Abs(Dot(na,nb))>.999)continue;
+            var a=Overall(ids[i]);var b=Overall(ids[j]);if(a is null||b is null)continue;
+            var na=Normal(a);var nb=Normal(b);if(Math.Abs(Dot(na,nb))>.999)continue;
             var point=ea.Start==shared?ea.StartPoint:ea.EndPoint;
             double oa=Dot(new(a.DimensionLinePoint!.Value.X-point.X,a.DimensionLinePoint.Value.Y-point.Y),na),ob=Dot(new(b.DimensionLinePoint!.Value.X-point.X,b.DimensionLinePoint.Value.Y-point.Y),nb);
             SheetPoint? chosen=null;double da=0,db=0,best=double.MaxValue;

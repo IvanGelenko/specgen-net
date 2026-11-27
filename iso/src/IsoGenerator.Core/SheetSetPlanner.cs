@@ -288,11 +288,43 @@ public static class SheetSetPlanner
             finally{execution.PreferDimensionCorners=false;}
             return baseline;
         }
+        PlannedSheet JoinOverallCorners(PlannedSheet sheet)
+        {
+            var scene=sheet.Scene;
+            if(scene.BomOnly)return sheet;
+            var symbols=scene.Symbols??Array.Empty<SymbolGlyph>();
+            bool Fits(IReadOnlyList<PipeDimension> trial)
+            {
+                var obstacles=DimensionRouting.TextObstacles(scene.Strokes,symbols);
+                if(DimensionTextPlacement.FinalCollisions(trial,obstacles).Length>0)return false;
+                var labels=scene.Annotations.Where(label=>label.Role is not ("title" or "status"))
+                    .Select(AnnotationPlacement.Bounds).ToArray();
+                foreach(var (before,after) in scene.Dimensions.Zip(trial).Where(pair=>pair.First!=pair.Second))
+                {
+                    var beforeInk=AnnotationPlacement.DimensionBox(before);
+                    var afterInk=AnnotationPlacement.DimensionBox(after);
+                    var beforeLines=DimensionRouting.GetSegments(new[]{before});
+                    var afterLines=DimensionRouting.GetSegments(new[]{after});
+                    bool Hits(DimensionRouting.Segment[] lines,AnnotationPlacement.Box label)=>
+                        lines.Any(line=>AnnotationPlacement.Hits(line.A,line.B,label));
+                    if(labels.Any(label=>(afterInk.Overlaps(label)&&!beforeInk.Overlaps(label))||
+                        (Hits(afterLines,label)&&!Hits(beforeLines,label))))return false;
+                }
+                var paper=SheetComposition.Paper;
+                var reserved=SheetComposition.Reserved(BomCategories.BodyHeight(scene.BillOfMaterials)/IsoAdvancedSettings.Current.BomRowHeight);
+                return !SheetComposition.Pieces(scene with{Dimensions=trial}).Any(piece=>piece.Left<paper.Left-.01||
+                    piece.Right>paper.Right+.01||piece.Bottom<paper.Bottom-.01||piece.Top>paper.Top+.01||reserved.Any(piece.Overlaps));
+            }
+            var dimensions=DimensionRowAlignment.AlignAdjacent(scene.Dimensions,scene.Strokes,symbols,finalizeOveralls:true,acceptFinal:Fits);
+            return scene.Dimensions.SequenceEqual(dimensions)?sheet:sheet with{Scene=scene with{Dimensions=dimensions}};
+        }
         IReadOnlyList<PlannedSheet> Finish(IReadOnlyList<PlannedSheet> sheets)
         {
-            SheetSetIntegrity.Validate(source,sheets,excludeFlangeHardware,valveKitExclusions);
-            remember?.Invoke(new RememberedLayout(source,sheets,minimumPipeLength,IsoAdvancedSettings.Signature));
-            return sheets;
+            var candidates=sheets.Select(JoinOverallCorners).ToArray();
+            var finalized=candidates.SequenceEqual(sheets)?sheets:candidates;
+            SheetSetIntegrity.Validate(source,finalized,excludeFlangeHardware,valveKitExclusions);
+            remember?.Invoke(new RememberedLayout(source,finalized,minimumPipeLength,IsoAdvancedSettings.Signature));
+            return finalized;
         }
         if(remembered is not null)
         {

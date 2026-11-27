@@ -322,18 +322,15 @@ public static class DimensionRouting
                 corners[(second.ChainId,first.ChainId)]=(endB,endA);
             }
         }
-        SheetPoint InnerEnd(PipeDimension[] rows,bool atEnd)
+        SheetPoint OverallEnd(PipeDimension[] rows,bool atEnd)
         {
-            var overall=Overall(rows);
-            var point=atEnd?overall.End:overall.Start;
-            var row=rows.FirstOrDefault(d=>d.Role=="chain"&&(d.Start==point||d.End==point))??overall;
-            var line=Line(row);
-            return row.Start==point?line.A:line.B;
+            var line=Line(Overall(rows));
+            return atEnd?line.B:line.A;
         }
         double CornerCost(PipeDimension[] first,PipeDimension[] second)
         {
             if(!corners.TryGetValue((first[0].ChainId,second[0].ChainId),out var ends))return 0;
-            var delta=Sub(InnerEnd(first,ends.FirstAtEnd),InnerEnd(second,ends.SecondAtEnd));
+            var delta=Sub(OverallEnd(first,ends.FirstAtEnd),OverallEnd(second,ends.SecondAtEnd));
             double gap=Math.Sqrt(Dot(delta,delta));
             return Math.Min(gap,30)*3;
         }

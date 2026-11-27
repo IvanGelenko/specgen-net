@@ -5,6 +5,17 @@ public sealed record WeldPlan(IReadOnlyList<WeldMarker> Markers,IReadOnlyList<st
 public static class WeldPlanner
 {
     static bool Weldable(string end)=>end.Trim().ToUpperInvariant() is "PL" or "BV";
+    static string EndCondition(Part part,Port port)
+    {
+        string end=port.EndCondition.Trim().ToUpperInvariant();
+        if(end.Length>0||!part.CatalogClass.Equals("Elbow",StringComparison.OrdinalIgnoreCase)||
+            !port.Name.Equals("S2",StringComparison.OrdinalIgnoreCase))return end;
+
+        // Some Plant catalogs supply the bevel on S1 only for butt-weld elbows.
+        bool bevelOnFirstPort=part.Ports.Any(p=>p.Name.Equals("S1",StringComparison.OrdinalIgnoreCase)&&
+            p.EndCondition.Trim().Equals("BV",StringComparison.OrdinalIgnoreCase));
+        return bevelOnFirstPort&&IsoDefinition.Parse(part.SymbolDefinition) is {Type:"BEND",Skey:"BEBW"}?"BV":end;
+    }
     public static WeldPlan Build(PipelineSnapshot snapshot,Func<ModelPoint,SheetPoint> project,Func<ModelPoint,string,SheetPoint>? projectSource=null)
     {
         var parts=snapshot.Parts.ToDictionary(p=>p.Handle,StringComparer.OrdinalIgnoreCase);
@@ -17,7 +28,7 @@ public static class WeldPlanner
             if(a.Properties.ContainsKey("IsoCalloutHost")||b.Properties.ContainsKey("IsoCalloutHost"))return;
             var pa=a.Ports.FirstOrDefault(p=>p.Name==ap);var pb=b.Ports.FirstOrDefault(p=>p.Name==bp);
             if(pa is null||pb is null){warnings.Add($"{source}: cannot read weld endpoints");return;}
-            string ea=pa.EndCondition.Trim().ToUpperInvariant(),eb=pb.EndCondition.Trim().ToUpperInvariant();
+            string ea=EndCondition(a,pa),eb=EndCondition(b,pb);
             if(ea.Length==0||eb.Length==0){warnings.Add($"{source}: missing per-port end condition at {ah}:{ap}/{bh}:{bp}; weld not guessed");return;}
             bool butt=Weldable(ea)&&Weldable(eb);
             bool tap=(ea=="TAP"&&Weldable(eb))||(eb=="TAP"&&Weldable(ea));

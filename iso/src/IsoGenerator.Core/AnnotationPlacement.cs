@@ -17,7 +17,7 @@ internal static class AnnotationPlacement
         return new(corners.Min(v=>v.X),corners.Min(v=>v.Y),corners.Max(v=>v.X),corners.Max(v=>v.Y));
     }
     internal static Box Bounds(Annotation label)=>TextBox(label.Position,label.Text,rotation:label.Rotation);
-    static bool Hits(SheetPoint a,SheetPoint b,Box box)
+    internal static bool Hits(SheetPoint a,SheetPoint b,Box box)
     {
         double low=0,high=1,dx=b.X-a.X,dy=b.Y-a.Y;
         bool Clip(double p,double q){if(Math.Abs(p)<1e-10)return q>=0;double r=q/p;if(p<0)low=Math.Max(low,r);else high=Math.Min(high,r);return low<=high;}
